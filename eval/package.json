@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "pretest": "pnpm --filter @second-seat/core build",
     "test": "vitest run",
-    "check-hashes": "node check-hashes.mjs"
+    "check-hashes": "node check-hashes.mjs",
+    "preshield": "pnpm --filter @second-seat/core build",
+    "shield": "node shield.mjs"
   },
   "devDependencies": {
     "@second-seat/core": "workspace:*",

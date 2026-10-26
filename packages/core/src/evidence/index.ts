@@ -30,3 +30,14 @@ export type {
 } from "./schema.js";
 export { validateBrief } from "./validate.js";
 export type { ValidateInput, ValidateSegment, ValidateFrame } from "./validate.js";
+export { applyPressure, detectPressurePatterns, gateApproval, PRESSURE_TACTICS } from "./pressure.js";
+export type {
+  PressureTactic,
+  PressureSource,
+  PressureLabel,
+  PressureSegment,
+  ApplyPressureInput,
+  ApplyPressureOptions,
+  ApplyPressureResult,
+  VerifiedLabel,
+} from "./pressure.js";
