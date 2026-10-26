@@ -4,7 +4,7 @@ import { createPrivacyGate, type PrivacyGate } from "@second-seat/bot/dist/src/p
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
 import { createSessionStore } from "./session.js";
 import { loadDemo } from "./loadFixtures.js";
-import { renderBriefPage } from "./render.js";
+import { renderBriefPage, renderSessionPage } from "./render.js";
 
 const PORT = Number(process.env.PORT ?? 4173);
 const LIVE_DEV = process.env.LIVE_DEV === "1";
@@ -203,6 +203,13 @@ export function createWebServer(deps?: WebServerDeps) {
           heroChain: demo.heroChain,
         },
       );
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(html);
+      return;
+    }
+    if (req.method === "GET" && (url.pathname === "/session" || url.pathname === "/session/")) {
+      const sessionId = sessions.createSession();
+      const html = renderSessionPage(sessions.getState(sessionId));
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(html);
       return;
