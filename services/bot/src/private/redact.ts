@@ -299,6 +299,10 @@ export function extractGlimmerJson(body: unknown): unknown {
   }
 }
 
+export class GateConfigError extends Error {
+  override name = "GateConfigError";
+}
+
 export class GlimmerClient implements Redactor {
   readonly label = `Glimmer: ${GLIMMER_MODEL}`;
   private baseUrl: string;
@@ -307,6 +311,9 @@ export class GlimmerClient implements Redactor {
   constructor(baseUrl?: string, opts?: { timeoutMs?: number }) {
     const resolved = baseUrl ?? process.env["GLIMMER_BASE_URL"] ?? "";
     if (resolved === "") throw new Error("glimmer: GLIMMER_BASE_URL is unset");
+    if (!/^https?:\/\/[^/]/.test(resolved)) {
+      throw new Error(`glimmer: GLIMMER_BASE_URL is not an http(s) URL: ${resolved.slice(0, 80)}`);
+    }
     this.baseUrl = resolved.replace(/\/$/, "");
     this.timeoutMs = opts?.timeoutMs;
   }
@@ -420,13 +427,24 @@ export class GlimmerClient implements Redactor {
 
 export function defaultRedactor(): Redactor {
   if ((process.env["GLIMMER_BASE_URL"] ?? "") !== "") {
-    try {
-      return new GlimmerClient();
-    } catch {
-      return new MockRedactor();
-    }
+    // Construction failure propagates: never silently fall back to MockRedactor.
+    return new GlimmerClient();
   }
   return new MockRedactor();
+}
+
+/**
+ * Live-only redactor: always the private Glimmer client, never MockRedactor.
+ * Throws GateConfigError when GLIMMER_BASE_URL is unset (fail closed, zero
+ * fetches); construction failures propagate.
+ */
+export function liveRedactor(): Redactor {
+  if ((process.env["GLIMMER_BASE_URL"] ?? "") === "") {
+    throw new GateConfigError(
+      "live mode requires a private Glimmer redactor (GLIMMER_BASE_URL is unset); refusing to fall back to MockRedactor",
+    );
+  }
+  return new GlimmerClient();
 }
 
 // --- PNG box masking with node:zlib only (8-bit RGB/RGBA, non-interlaced) ---

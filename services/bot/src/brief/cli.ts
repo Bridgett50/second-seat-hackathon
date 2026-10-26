@@ -22,6 +22,7 @@ import {
   type BriefResult,
   type RecordedFixture,
 } from "./muse.js";
+import { createPrivacyGate } from "../private/gate.js";
 
 export interface RunBriefOptions {
   inputDir: string;
@@ -110,21 +111,30 @@ export async function runBrief(options: RunBriefOptions): Promise<{ brief: Evide
   const mode = briefMode();
   let result: BriefResult;
   if (mode === "live") {
+    // Live analysis goes through the privacy gate: raw text reaches
+    // only the Glimmer redactor, the owner reviews the redacted
+    // preview, and Spark receives only the approved redacted text.
+    const gate = createPrivacyGate({ mode: "live" });
+    const client = new MuseClient();
+    const meetingId = basename(inputPrefix);
+    const preparedTranscript = await gate.prepare(transcriptText);
+    const preparedFrames = await gate.prepare(framesSidecarText);
+    const transcriptToken = gate.approve(preparedTranscript.runId, preparedTranscript.redactedText);
+    const framesToken = gate.approve(preparedFrames.runId, preparedFrames.redactedText);
+    const gatedFrames = await gate.send(preparedFrames.runId, framesToken, async (gated) => gated);
+    const completeGated = (): Promise<BriefResult> =>
+      gate.send(preparedTranscript.runId, transcriptToken, async (gatedTranscript) =>
+        client.completeBrief({
+          meetingId,
+          transcriptText: gatedTranscript,
+          framesSidecarText: gatedFrames,
+          fixtureMode: false,
+        }),
+      );
     if (options.recordFixturePath === undefined) {
-      result = await new MuseClient().completeBrief({
-        meetingId: basename(inputPrefix),
-        transcriptText,
-        framesSidecarText,
-        fixtureMode: false,
-      });
+      result = await completeGated();
     } else {
-      const client = new MuseClient();
-      result = await client.completeBrief({
-        meetingId: basename(inputPrefix),
-        transcriptText,
-        framesSidecarText,
-        fixtureMode: false,
-      });
+      result = await completeGated();
       const recorded: RecordedFixture = {
         recordedFromLiveCall: true,
         model: result.model,

@@ -13,6 +13,7 @@
  */
 import { EVIDENCE_BRIEF_JSON_SCHEMA } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "./costGuard.js";
+import { requireGatedText, type GatedText } from "../private/gate.js";
 
 export const BRIEF_MODEL = "muse-spark-1.3";
 export const BRIEF_PROMPT_VERSION = "brief-v2";
@@ -24,6 +25,18 @@ export interface BriefSourceInput {
   meetingId: string;
   transcriptText: string;
   framesSidecarText: string;
+  fixtureMode: boolean;
+}
+
+/**
+ * Gated brief input: the transcript and frames sidecar must be
+ * gate-minted `GatedText` (reviewed redacted text from `gate.send`).
+ * Plain strings are rejected at compile time and at runtime.
+ */
+export interface BriefGatedInput {
+  meetingId: string;
+  transcriptText: GatedText;
+  framesSidecarText: GatedText;
   fixtureMode: boolean;
 }
 
@@ -100,13 +113,23 @@ export async function buildUserMessage(input: BriefSourceInput): Promise<string>
 }
 
 export async function buildRedactedUserMessage(input: BriefSourceInput): Promise<string> {
-  const { defaultRedactor } = await import("../private/redact.js");
+  const { createPrivacyGate } = await import("../private/gate.js");
   const { logText, setRedactorLabel } = await import("../private/payloadLog.js");
-  const redactor = defaultRedactor();
-  setRedactorLabel(redactor.label);
-  const redacted = await redactor.redactText(input.transcriptText);
-  logText(redacted.maskedText);
-  return buildUserMessage({ ...input, transcriptText: redacted.maskedText });
+  const { GLIMMER_MODEL, MOCK_LABEL } = await import("../private/redact.js");
+  // Live for explicit live input or EVIDENCE_BRIEF_MODE=live: the gate then
+  // uses its Glimmer redactor and throws before any fetch when
+  // GLIMMER_BASE_URL is unset. No direct redactor path: the text below comes
+  // only from gate.send's GatedText. (An ambient API key alone does not imply
+  // live: explicit fixture input stays fixture.)
+  const live = !input.fixtureMode || briefMode() === "live";
+  const gate = createPrivacyGate({ mode: live ? "live" : "fixture" });
+  setRedactorLabel(live ? `Glimmer: ${GLIMMER_MODEL}` : MOCK_LABEL);
+  const prepared = await gate.prepare(input.transcriptText);
+  logText(prepared.redactedText);
+  const token = gate.approve(prepared.runId, prepared.redactedText);
+  return gate.send(prepared.runId, token, async (gated) =>
+    buildUserMessage({ ...input, transcriptText: gated.text }),
+  );
 }
 
 interface ChatResponse {
@@ -209,23 +232,27 @@ async function readStreamedChat(response: Response): Promise<{ content: string; 
   return { content: chunks.join(""), usage };
 }
 
-export class MuseClient implements BriefClient {
+export class MuseClient {
   readonly mode = "live" as const;
 
-  async completeBrief(input: BriefSourceInput): Promise<BriefResult> {
+  /**
+   * Live Spark call. The transcript and frames sidecar must arrive as
+   * gate-minted `GatedText` (via `gate.send` after owner review):
+   * plain strings are rejected at runtime. All outbound analysis
+   * goes through the privacy gate; this method never redacts or
+   * approves raw text itself.
+   */
+  async completeBrief(input: BriefGatedInput): Promise<BriefResult> {
     const key = apiKey();
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
+    const transcriptText = requireGatedText(input.transcriptText).text;
+    const framesSidecarText = requireGatedText(input.framesSidecarText).text;
     await checkCapsPreCall();
-    // Phase 04a: transcript text passes redactText before Spark; log masked payload.
-    const { defaultRedactor } = await import("../private/redact.js");
-    const { logText, setRedactorLabel } = await import("../private/payloadLog.js");
-    const redactor = defaultRedactor();
-    setRedactorLabel(redactor.label);
-    const redacted = await redactor.redactText(input.transcriptText);
-    logText(redacted.maskedText);
-    const redactedInput: BriefSourceInput = { ...input, transcriptText: redacted.maskedText };
+    const { logText } = await import("../private/payloadLog.js");
+    logText(`${transcriptText}\n${framesSidecarText}`);
+    const redactedInput: BriefSourceInput = { ...input, transcriptText, framesSidecarText };
     const [developerPrompt, userMessage] = await Promise.all([loadDeveloperPrompt(), buildUserMessage(redactedInput)]);
     // Rough pre-call guard: ~4 chars per token.
     checkPerCallTokenCap(Math.ceil((developerPrompt.length + userMessage.length) / 4), BRIEF_MAX_COMPLETION_TOKENS);
@@ -326,7 +353,7 @@ export class FixtureClient implements BriefClient {
 }
 
 /** Default client: fixture unless EVIDENCE_BRIEF_MODE=live with a key. */
-export function defaultBriefClient(fixturePath: string): BriefClient {
+export function defaultBriefClient(fixturePath: string): BriefClient | MuseClient {
   if (briefMode() === "live") {
     return new MuseClient();
   }

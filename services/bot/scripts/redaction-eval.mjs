@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { summarize } from "./redaction-eval-lib.mjs";
 
-const { defaultRedactor } = await import("../dist/src/private/redact.js");
+const { liveRedactor } = await import("../dist/src/private/redact.js");
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "pii");
 const cases = JSON.parse(readFileSync(join(dir, "cases.json"), "utf8"));
@@ -26,12 +26,12 @@ const startedAt = Date.now();
 const deadline = Number.isInteger(budgetMs) && budgetMs > 0 ? startedAt + budgetMs : Infinity;
 const remainingMs = () => deadline - Date.now();
 
-const first = defaultRedactor();
+const first = liveRedactor();
 console.log(`redactor: ${first.label}`);
 
 async function runCase(c) {
   const perRequest = Math.max(1, Math.min(90_000, remainingMs() === Infinity ? 90_000 : remainingMs()));
-  const redactor = defaultRedactor();
+  const redactor = liveRedactor();
   if ("timeoutMs" in redactor) redactor.timeoutMs = perRequest;
   else process.env["GLIMMER_TIMEOUT_MS"] = String(perRequest);
   const text = readFileSync(join(dir, c.file), "utf8");

@@ -23,6 +23,7 @@
 
 import { BRIEF_API_URL, BRIEF_MAX_COMPLETION_TOKENS, BRIEF_SEED } from "../brief/muse.js";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
+import { requireGatedText, type GatedText } from "../private/gate.js";
 
 export const SUPPORT_MODEL = "muse-spark-1.3";
 export const SUPPORT_PROMPT_VERSION = "support-v1";
@@ -60,6 +61,17 @@ export interface SupportVerdict {
 export interface SupportJudge {
   readonly mode: "fixture" | "live";
   gradeSupport(input: SupportInput): Promise<SupportVerdict>;
+}
+
+/**
+ * Gated support input: the entry text and cited spans must be
+ * gate-minted `GatedText` (reviewed redacted text from `gate.send`).
+ * Plain strings are rejected at compile time and at runtime.
+ */
+export interface SupportGatedInput {
+  entryId: string;
+  entryText: GatedText;
+  citedSpans: GatedText[];
 }
 
 export const SUPPORT_JSON_SCHEMA = {
@@ -270,16 +282,24 @@ function parseGrade(content: string): { grade: SupportGrade; missingQualifier: s
 }
 
 /** Live Spark judge. Never called without an API key and the cost-guard caps. */
-export class SparkSupportJudge implements SupportJudge {
+export class SparkSupportJudge {
   readonly mode = "live" as const;
 
-  async gradeSupport(input: SupportInput): Promise<SupportVerdict> {
+  /**
+   * Live Spark call. Entry text and cited spans must arrive as
+   * gate-minted `GatedText` (via `gate.send` after owner review):
+   * plain strings are rejected at runtime. All outbound analysis
+   * goes through the privacy gate.
+   */
+  async gradeSupport(input: SupportGatedInput): Promise<SupportVerdict> {
     const key = apiKey();
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
+    const entryText = requireGatedText(input.entryText).text;
+    const citedSpans = input.citedSpans.map((span) => requireGatedText(span).text);
     await checkCapsPreCall();
-    const userMessage = buildSupportUserMessage(input);
+    const userMessage = buildSupportUserMessage({ entryId: input.entryId, entryText, citedSpans });
     checkPerCallTokenCap(
       Math.ceil((SUPPORT_DEVELOPER_PROMPT.length + userMessage.length) / 4),
       SUPPORT_MAX_COMPLETION_TOKENS,
@@ -314,7 +334,7 @@ export class SparkSupportJudge implements SupportJudge {
       entryId: input.entryId,
       grade,
       missingQualifier,
-      overlap: lexicalOverlap(input.entryText, input.citedSpans),
+      overlap: lexicalOverlap(entryText, citedSpans),
       model: SUPPORT_MODEL,
       promptVersion: SUPPORT_PROMPT_VERSION,
       fixture: false,
@@ -384,7 +404,7 @@ export class FixtureSupportJudge implements SupportJudge {
 }
 
 /** Default judge: live only with an API key and explicit opt-in; else fixture. */
-export function defaultSupportJudge(fixturePath: string): SupportJudge {
+export function defaultSupportJudge(fixturePath: string): SupportJudge | SparkSupportJudge {
   if (supportMode() === "live") {
     return new SparkSupportJudge();
   }

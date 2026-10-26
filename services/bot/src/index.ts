@@ -38,3 +38,5 @@ export class FixtureModelClient implements ModelClient {
 export function defaultClient(): ModelClient {
   return new FixtureModelClient();
 }
+
+export * from "./private/gate.js";

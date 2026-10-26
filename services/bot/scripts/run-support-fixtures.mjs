@@ -34,6 +34,11 @@ const { defaultSupportJudge, baselineGrade } = await import(
 );
 
 const cases = JSON.parse(readFileSync(casesPath, "utf8")).cases;
+if (!baseline && (process.env["SUPPORT_JUDGE_MODE"] ?? "fixture") === "live") {
+  throw new Error(
+    "run-support-fixtures refuses live mode: model calls must go through the server-side privacy gate (services/bot/src/private/gate.ts)",
+  );
+}
 const judge = baseline ? null : defaultSupportJudge(fixturePath);
 
 const lines = [];

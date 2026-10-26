@@ -14,6 +14,7 @@
  */
 import type { PressureLabel, PressureTactic } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
+import { requireGatedText, type GatedText } from "../private/gate.js";
 
 export const PRESSURE_MODEL = "muse-spark-1.3";
 export const PRESSURE_PROMPT_VERSION = "pressure-v1";
@@ -24,6 +25,16 @@ export const PRESSURE_SEED = 42;
 export interface ShieldLine {
   segmentId: string;
   text: string;
+}
+
+/**
+ * Gated shield line: the text must be gate-minted `GatedText`
+ * (reviewed redacted text from `gate.send`). Plain strings are
+ * rejected at compile time and at runtime.
+ */
+export interface ShieldGatedLine {
+  segmentId: string;
+  text: GatedText;
 }
 
 export interface PressureClassifier {
@@ -240,30 +251,30 @@ export interface SparkRawResult {
 }
 
 /** Live classifier: exactly ONE batched call over all redacted lines. */
-export class SparkPressureClassifier implements PressureClassifier {
+export class SparkPressureClassifier {
   readonly mode = "live" as const;
 
-  async classify(lines: ShieldLine[]): Promise<PressureLabel[]> {
+  /**
+   * Live Spark call. Lines must arrive as gate-minted `GatedText`
+   * (via `gate.send` after owner review): plain strings are rejected
+   * at runtime. All outbound analysis goes through the privacy gate.
+   */
+  async classify(lines: ShieldGatedLine[]): Promise<PressureLabel[]> {
     return (await this.classifyRaw(lines)).labels;
   }
 
   /** Live call returning the raw response text so callers can record it. */
-  async classifyRaw(lines: ShieldLine[]): Promise<SparkRawResult> {
+  async classifyRaw(lines: ShieldGatedLine[]): Promise<SparkRawResult> {
     const key = apiKey();
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
+    const redacted = lines.map((line) => ({
+      segmentId: line.segmentId,
+      text: requireGatedText(line.text).text,
+    }));
     await checkCapsPreCall();
-    const { defaultRedactor } = await import("../private/redact.js");
-    const { logText, setRedactorLabel } = await import("../private/payloadLog.js");
-    const redactor = defaultRedactor();
-    setRedactorLabel(redactor.label);
-    const redacted = await Promise.all(
-      lines.map(async (line) => ({
-        segmentId: line.segmentId,
-        text: (await redactor.redactText(line.text)).maskedText,
-      })),
-    );
+    const { logText } = await import("../private/payloadLog.js");
     logText(redacted.map((line) => `[${line.segmentId}] ${line.text}`).join("\n"));
     const [developerPrompt, userMessage] = await Promise.all([
       loadPressurePrompt(),
@@ -332,7 +343,7 @@ export class FixturePressureClassifier implements PressureClassifier {
   }
 }
 
-export function defaultPressureClassifier(recordedPath: string): PressureClassifier {
+export function defaultPressureClassifier(recordedPath: string): PressureClassifier | SparkPressureClassifier {
   if (shieldMode() === "live") {
     return new SparkPressureClassifier();
   }
