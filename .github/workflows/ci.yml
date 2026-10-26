@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  EVIDENCE_BRIEF_MODE: fixture
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+      - name: Secret scan (no keys in tracked files)
+        run: |
+          # The scan patterns live in this file, so exclude it from its own scan.
+          ! git grep -nE 's[k]-|Bearer [A-Za-z0-9]|(MODEL|META)_API_KEY=.+' -- . ':!.github/workflows/ci.yml'
+          test ! -f .env
