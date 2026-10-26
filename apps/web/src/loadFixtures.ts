@@ -9,6 +9,7 @@ import type {
   TranscriptSegment,
 } from "./render.js";
 import type { RunLogLine } from "./modelStrip.js";
+import { parseGlimmerRecall } from "./modelStrip.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -59,6 +60,40 @@ export function parseFrames(text: string): Frame[] {
   return out;
 }
 
+export interface GlimmerLive {
+  recall: string;
+}
+
+export function loadGlimmerLive(webRoot: string = WEB_ROOT): GlimmerLive | null {
+  try {
+    const raw = JSON.parse(
+      readFileSync(
+        join(
+          webRoot,
+          "..",
+          "..",
+          "services",
+          "bot",
+          "fixtures",
+          "glimmer-live-eval.json",
+        ),
+        "utf8",
+      ),
+    ) as {
+      health_status?: unknown;
+      eval_returncode?: unknown;
+      eval_stdout?: unknown;
+    };
+    if (raw.health_status !== 200 || raw.eval_returncode !== 0) return null;
+    if (typeof raw.eval_stdout !== "string") return null;
+    const recall = parseGlimmerRecall(raw.eval_stdout);
+    if (recall === null) return null;
+    return { recall };
+  } catch {
+    return null;
+  }
+}
+
 export interface DemoData {
   brief: Brief;
   segments: TranscriptSegment[];
@@ -66,6 +101,7 @@ export interface DemoData {
   runLog: RunLogLine[];
   pressureFallback: PressureItem[];
   payloadDemo: PayloadDemo | null;
+  glimmerLive: GlimmerLive | null;
 }
 
 export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
@@ -126,5 +162,6 @@ export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
   } catch {
     payloadDemo = null;
   }
-  return { brief, segments, frames, runLog, pressureFallback, payloadDemo };
+  const glimmerLive = loadGlimmerLive(webRoot);
+  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive };
 }
