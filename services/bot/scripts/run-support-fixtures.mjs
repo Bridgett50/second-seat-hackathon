@@ -29,12 +29,12 @@ const outPath =
   flag("--judge-output") ?? join(repoRoot, "eval", "results", "support-judgments.jsonl");
 const casesPath = flag("--cases") ?? join(repoRoot, "eval", "fixtures", "support-cases.json");
 
-const { FixtureSupportJudge, baselineGrade } = await import(
+const { defaultSupportJudge, baselineGrade } = await import(
   join(botDir, "dist", "src", "judge", "support.js")
 );
 
 const cases = JSON.parse(readFileSync(casesPath, "utf8")).cases;
-const judge = baseline ? null : new FixtureSupportJudge(fixturePath);
+const judge = baseline ? null : defaultSupportJudge(fixturePath);
 
 const lines = [];
 for (const c of cases) {
@@ -55,4 +55,4 @@ for (const c of cases) {
 }
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, lines.join("\n") + "\n", "utf8");
-console.log(`wrote ${lines.length} judge outputs (${baseline ? "baseline" : "fixture"}) to ${outPath}`);
+console.log(`wrote ${lines.length} judge outputs (${baseline ? "baseline" : (process.env.SUPPORT_JUDGE_MODE === "live" ? "live" : "fixture")}) to ${outPath}`);
