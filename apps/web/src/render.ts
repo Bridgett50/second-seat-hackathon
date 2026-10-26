@@ -33,6 +33,7 @@ export interface Frame {
   id: string;
   file: string;
   time: string;
+  pngBase64?: string;
 }
 
 export interface PressureItem {
@@ -79,6 +80,10 @@ export function pressureItemsFor(
         .map((c) => c.segmentId as string),
     }));
   return derived.length > 0 ? derived : fallback;
+}
+
+export function heldText(badgeCount: number): string {
+  return `Held: review the ${badgeCount} pressure item${badgeCount === 1 ? "" : "s"} first`;
 }
 
 function citationLink(c: Citation): string {
@@ -167,6 +172,8 @@ export function renderBriefPage(
     )
     .join("\n");
 
+  const badgeCount = pressure.reduce((n, p) => n + p.segmentIds.length, 0);
+
   const frameById = new Map(frames.map((f) => [f.id, f]));
   const frameIds = new Set<string>();
   for (const e of brief.entries) {
@@ -180,9 +187,14 @@ export function renderBriefPage(
       const region = brief.entries
         .flatMap((e) => e.citations)
         .find((c) => c.frameId === fid && c.region)?.region;
+      const img =
+        f?.pngBase64 && f.pngBase64.length > 0
+          ? `<img src="data:image/png;base64,${f.pngBase64}" alt="${esc(f.file)}">`
+          : `<span class="frame-missing">frame image missing</span>`;
       return (
         `<figure id="frame-${esc(fid)}"><figcaption>${esc(fid)}${f ? ` — ${esc(f.file)}` : ""}</figcaption>` +
         `<div class="frame-box">` +
+        img +
         (region
           ? `<div class="region-overlay" style="left:${region.x}%;top:${region.y}%;width:${region.w}%;height:${region.h}%"></div>`
           : "") +
@@ -250,7 +262,7 @@ ${categoryHtml}
 ${flaggedHtml}
 <section id="draft">
 <h2>Draft reply</h2>
-<p id="draft-status">Held: review the ${pressure.length} pressure items first</p>
+<p id="draft-status">${esc(heldText(badgeCount))}</p>
 ${pressureChecks}
 <p class="citations">${pressure.map((p) => p.segmentIds.map((s) => `<a href="#seg-${esc(s)}">[${esc(s)}]</a>`).join(" ")).join(" ")}</p>
 <button type="button" id="btn-approve">Approve</button>
@@ -275,7 +287,7 @@ function refresh(){
   var boxes=Array.prototype.slice.call(document.querySelectorAll(".pressure-review"));
   var allReviewed=boxes.length>0 && boxes.every(function(b){return b.checked;});
   copyBtn.disabled=!(approved&&allReviewed);
-  if(!approved){status.textContent="Held: review the "+boxes.length+" pressure items first";}
+  if(!approved){var n=document.querySelectorAll(".pressure-badge").length;status.textContent="Held: review the "+n+" pressure item"+(n===1?"":"s")+" first";}
 }
 document.getElementById("btn-approve").addEventListener("click",function(){
   approved=true;note.textContent="Approved locally. Nothing was sent.";refresh();

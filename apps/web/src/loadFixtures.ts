@@ -82,12 +82,27 @@ export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
       "utf8",
     ),
   );
-  const frames = parseFrames(
-    readFileSync(
-      join(webRoot, "..", "..", "services", "bot", "fixtures", "hero-input", "frames.txt"),
-      "utf8",
-    ),
+  const heroInputDir = join(
+    webRoot,
+    "..",
+    "..",
+    "services",
+    "bot",
+    "fixtures",
+    "hero-input",
   );
+  const frames = parseFrames(
+    readFileSync(join(heroInputDir, "frames.txt"), "utf8"),
+  ).map((f) => {
+    try {
+      const pngBase64 = readFileSync(join(heroInputDir, f.file)).toString(
+        "base64",
+      );
+      return { ...f, pngBase64 };
+    } catch {
+      return f;
+    }
+  });
   const runLog = readFileSync(join(webRoot, "fixtures", "run-log.jsonl"), "utf8")
     .split("\n")
     .filter((l) => l.trim().length > 0)
