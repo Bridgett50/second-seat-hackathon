@@ -10,6 +10,7 @@ Live eval with `python3 -m modal run --detach infra/modal/glimmer_app.py`
 import datetime
 import json
 import os
+import signal
 import subprocess
 import time
 import urllib.parse
@@ -82,15 +83,20 @@ def serve() -> None:
     subprocess.Popen(cmd)
 
 
+# NOTE: single_use_containers=True is intentionally omitted: it is unclear
+# whether this Modal version accepts that kwarg, and an unknown kwarg would
+# fail app definition at import time.
 @app.function(
     image=eval_in_container_image,
     gpu="A100-80GB",
     volumes={"/root/.cache/huggingface": volume, "/results": results},
-    timeout=1500,
+    timeout=840,
     max_containers=1,
     retries=0,
 )
 def eval_in_container() -> dict:
+    func_start = time.monotonic()
+    global_deadline = func_start + 780
     cmd = [
         "vllm",
         "serve",
@@ -114,55 +120,77 @@ def eval_in_container() -> dict:
         "--port",
         "8000",
     ]
-    vllm = subprocess.Popen(cmd)
+    # Own process group so the whole vLLM tree can be signalled on teardown.
+    vllm = subprocess.Popen(cmd, start_new_session=True)
     health_url = "http://127.0.0.1:8000/health"
     base_url = "http://127.0.0.1:8000"
-    start = time.monotonic()
-    deadline = start + 20 * 60
     health_status = None
     seconds_to_healthy = None
-    vllm_returncode = None
+    eval_returncode = None
+    eval_stdout = ""
+    eval_stderr = ""
     try:
-        while True:
+        ready_deadline = min(func_start + 300, global_deadline)
+        while time.monotonic() < ready_deadline:
             if vllm.poll() is not None:
-                vllm_returncode = vllm.returncode
                 break
             try:
-                with urllib.request.urlopen(health_url, timeout=60) as resp:
+                with urllib.request.urlopen(health_url, timeout=10) as resp:
                     health_status = resp.status
                     if resp.status == 200:
-                        seconds_to_healthy = time.monotonic() - start
+                        seconds_to_healthy = time.monotonic() - func_start
                         break
             except Exception:
                 pass
-            if time.monotonic() >= deadline:
-                break
             time.sleep(5)
-        if vllm.poll() is not None:
-            vllm_returncode = vllm.returncode
-        env = {**os.environ, "GLIMMER_BASE_URL": base_url}
-        proc = subprocess.run(
-            ["node", "scripts/redaction-eval.mjs"],
-            cwd="/app/services/bot",
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=1100,
-        )
-        result = {
-            "health_status": health_status,
-            "seconds_to_healthy": seconds_to_healthy,
-            "vllm_returncode": vllm_returncode,
-            "eval_stdout": proc.stdout,
-            "eval_stderr": proc.stderr[-2000:],
-            "eval_returncode": proc.returncode,
-        }
+        if health_status != 200:
+            eval_stderr = "vllm not healthy within 300s; skipping eval"
+        else:
+            remaining_ms = int((global_deadline - time.monotonic()) * 1000) - 30_000
+            remaining_s = (global_deadline - time.monotonic()) - 5
+            if remaining_ms <= 0 or remaining_s <= 0:
+                eval_stderr = "no time remaining for eval"
+            else:
+                env = {
+                    **os.environ,
+                    "GLIMMER_BASE_URL": base_url,
+                    "GLIMMER_DEADLINE_MS": str(remaining_ms),
+                    "GLIMMER_RAW_DIR": "/results/raw",
+                    "GLIMMER_RESULT_JSON": "/results/eval-summary.json",
+                }
+                try:
+                    proc = subprocess.run(
+                        ["node", "scripts/redaction-eval.mjs"],
+                        cwd="/app/services/bot",
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=remaining_s,
+                    )
+                    eval_returncode = proc.returncode
+                    eval_stdout = proc.stdout
+                    eval_stderr = proc.stderr[-2000:]
+                except subprocess.TimeoutExpired as exc:
+                    eval_stderr = f"eval timed out: {exc}"
     finally:
-        if vllm.poll() is None:
-            vllm.terminate()
-    result["ran_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    Path("/results/glimmer-live-eval.json").write_text(json.dumps(result, indent=2))
-    results.commit()
+        result = {
+            "health": health_status,
+            "seconds_to_healthy": seconds_to_healthy,
+            "eval_returncode": eval_returncode,
+            "eval_stdout": eval_stdout,
+            "eval_stderr": eval_stderr,
+            "ran_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+        Path("/results/glimmer-live-eval.json").write_text(json.dumps(result, indent=2))
+        try:
+            if vllm.poll() is None:
+                os.killpg(vllm.pid, signal.SIGTERM)
+                try:
+                    vllm.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(vllm.pid, signal.SIGKILL)
+        finally:
+            results.commit()
     print("GLIMMER_RESULT_JSON " + json.dumps(result))
     return result
 
@@ -176,9 +204,19 @@ def main() -> None:
 
 @app.local_entrypoint()
 def fetch() -> None:
-    data = b"".join(results.read_file("glimmer-live-eval.json"))
-    out_path = (
-        Path(__file__).resolve().parents[2]
-        / "services/bot/fixtures/glimmer-live-eval.json"
+    out_dir = (
+        Path(__file__).resolve().parents[2] / "services/bot/fixtures/glimmer-run"
     )
-    out_path.write_bytes(data)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # NOTE: the live result goes to fixtures/glimmer-run/glimmer-live-eval.json;
+    # services/bot/fixtures/glimmer-live-eval.json must not be overwritten.
+    for remote, local in [
+        ("glimmer-live-eval.json", "glimmer-live-eval.json"),
+        ("eval-summary.json", "eval-summary.json"),
+        ("raw/glimmer-raw.jsonl", "glimmer-raw.jsonl"),
+    ]:
+        try:
+            data = b"".join(results.read_file(remote))
+        except Exception:
+            continue
+        (out_dir / local).write_bytes(data)

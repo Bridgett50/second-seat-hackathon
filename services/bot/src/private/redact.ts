@@ -172,13 +172,49 @@ export class MockRedactor implements Redactor {
   }
 }
 
-export function extractGlimmerJson(body: unknown): unknown {
-  const choice = (body as { choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown }; finish_reason?: unknown }> })?.choices?.[0];
+export function glimmerTimeoutMs(): number {
+  const raw = process.env["GLIMMER_TIMEOUT_MS"] ?? "";
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return 90_000;
+}
+
+export interface GlimmerReplyDescription {
+  contentLen: number;
+  reasoningLen: number;
+  reasoningContentLen: number;
+  finishReason: string;
+  usage: unknown;
+  durationMs: number;
+}
+
+export function describeGlimmerReply(body: unknown, durationMs: number): GlimmerReplyDescription {
+  const choice = (body as { choices?: Array<{ message?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown }; finish_reason?: unknown }> })?.choices?.[0];
   const message = choice?.message;
   const content = typeof message?.content === "string" ? message.content : "";
-  const reasoning = typeof message?.reasoning_content === "string" ? message.reasoning_content : "";
-  const text = content !== "" ? content : reasoning;
+  const reasoning = typeof message?.reasoning === "string" ? message.reasoning : "";
+  const reasoningContent = typeof message?.reasoning_content === "string" ? message.reasoning_content : "";
+  const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "unknown";
+  const usage = (body as { usage?: unknown })?.usage ?? null;
+  return {
+    contentLen: content.length,
+    reasoningLen: reasoning.length,
+    reasoningContentLen: reasoningContent.length,
+    finishReason,
+    usage,
+    durationMs,
+  };
+}
+
+export function extractGlimmerJson(body: unknown): unknown {
+  const choice = (body as { choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }> })?.choices?.[0];
+  const message = choice?.message;
+  // Answer = message.content ONLY. Never parse or score reasoning fields.
+  const text = typeof message?.content === "string" ? message.content : "";
   const fr = typeof choice?.finish_reason === "string" ? choice.finish_reason : "unknown";
+  if (fr === "length") {
+    throw new Error(`glimmer: finish_reason=length (len=${text.length})`);
+  }
   const unfenced = text.replace(/```/g, "");
   const start = unfenced.indexOf("{");
   const end = unfenced.lastIndexOf("}");
@@ -191,11 +227,13 @@ export function extractGlimmerJson(body: unknown): unknown {
 export class GlimmerClient implements Redactor {
   readonly label = `Glimmer: ${GLIMMER_MODEL}`;
   private baseUrl: string;
+  private timeoutMs: number | undefined;
 
-  constructor(baseUrl?: string) {
+  constructor(baseUrl?: string, opts?: { timeoutMs?: number }) {
     const resolved = baseUrl ?? process.env["GLIMMER_BASE_URL"] ?? "";
     if (resolved === "") throw new Error("glimmer: GLIMMER_BASE_URL is unset");
     this.baseUrl = resolved.replace(/\/$/, "");
+    this.timeoutMs = opts?.timeoutMs;
   }
 
   async redactText(text: string): Promise<RedactTextResult> {
@@ -223,34 +261,83 @@ export class GlimmerClient implements Redactor {
 
   private async chat(text: string, kind: string): Promise<unknown> {
     // OpenAI-compatible fetch. Never greedy: temp 1.0 / top_p 0.95 / top_k 64.
+    const timeoutMs = this.timeoutMs ?? glimmerTimeoutMs();
+    const requestBody: Record<string, unknown> = {
+      model: GLIMMER_MODEL,
+      max_tokens: glimmerMaxTokens(),
+      temperature: 1.0,
+      top_p: 0.95,
+      top_k: 64,
+      chat_template_kwargs: { reasoning_strength: "low" },
+      messages: [
+        { role: "system", content: `Return JSON only: {"spans":[{"start":n,"end":n,"label":s}],"boxes":[]}. Spans must be exact substrings for ${kind}.` },
+        { role: "user", content: text },
+      ],
+    };
+    if ((process.env["GLIMMER_JSON_SCHEMA"] ?? "") === "1") {
+      requestBody["response_format"] = {
+        type: "json_schema",
+        json_schema: {
+          name: "glimmer_redaction",
+          schema: {
+            type: "object",
+            properties: {
+              spans: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    start: { type: "integer" },
+                    end: { type: "integer" },
+                    label: { type: "string" },
+                  },
+                  required: ["start", "end", "label"],
+                },
+              },
+              boxes: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    x: { type: "integer" },
+                    y: { type: "integer" },
+                    w: { type: "integer" },
+                    h: { type: "integer" },
+                    label: { type: "string" },
+                  },
+                  required: ["x", "y", "w", "h", "label"],
+                },
+              },
+            },
+          },
+        },
+      };
+    }
+    const started = Date.now();
     const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      signal: AbortSignal.timeout(180_000),
-      body: JSON.stringify({
-        model: GLIMMER_MODEL,
-        max_tokens: glimmerMaxTokens(),
-        temperature: 1.0,
-        top_p: 0.95,
-        top_k: 64,
-        messages: [
-          { role: "system", content: `Return JSON only: {"spans":[{"start":n,"end":n,"label":s}],"boxes":[]}. Spans must be exact substrings for ${kind}.` },
-          { role: "user", content: text },
-        ],
-      }),
+      signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify(requestBody),
     });
     if (!res.ok) throw new Error(`glimmer: chat failed ${res.status}`);
     const raw = await res.text();
-    const rawDir = process.env["GLIMMER_RAW_DIR"] ?? "";
-    if (rawDir !== "") {
-      mkdirSync(rawDir, { recursive: true });
-      appendFileSync(join(rawDir, "glimmer-raw.jsonl"), `${JSON.stringify({ kind, status: res.status, raw })}\n`);
-    }
     let body: unknown;
     try {
       body = JSON.parse(raw) as unknown;
     } catch {
       throw new Error(`glimmer: no JSON in reply (finish_reason=unknown, len=${raw.length})`);
+    }
+    const durationMs = Date.now() - started;
+    const rawDir = process.env["GLIMMER_RAW_DIR"] ?? "";
+    if (rawDir !== "") {
+      const choice = (body as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0];
+      const content = typeof choice?.message?.content === "string" ? choice.message.content : "";
+      mkdirSync(rawDir, { recursive: true });
+      appendFileSync(
+        join(rawDir, "glimmer-raw.jsonl"),
+        `${JSON.stringify({ kind, status: res.status, content, ...describeGlimmerReply(body, durationMs) })}\n`,
+      );
     }
     return extractGlimmerJson(body);
   }
