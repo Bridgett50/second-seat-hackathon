@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { pathToFileURL } from "node:url";
 import { createPrivacyGate, type PrivacyGate } from "@second-seat/bot/dist/src/private/gate.js";
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
+import { createSessionStore } from "./session.js";
 import { loadDemo } from "./loadFixtures.js";
 import { renderBriefPage } from "./render.js";
 
@@ -35,6 +36,12 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/correct": new Set(["runId", "editedText"]),
   "/api/approve": new Set(["runId", "text"]),
   "/api/send": new Set(["runId", "approvalToken"]),
+  "/api/session": new Set([]),
+  "/api/session/transcript": new Set(["sessionId", "text"]),
+  "/api/session/redact": new Set(["sessionId"]),
+  "/api/session/correct": new Set(["sessionId", "text"]),
+  "/api/session/approve": new Set(["sessionId"]),
+  "/api/session/analyze": new Set(["sessionId"]),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -169,6 +176,7 @@ refresh();
 }
 
 export function createWebServer(deps?: WebServerDeps) {
+  const sessions = createSessionStore();
   const gate = deps?.gate ?? createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
   const sent: { text: string } = deps?.lastSent ?? { text: "" };
   const sender =
@@ -202,6 +210,19 @@ export function createWebServer(deps?: WebServerDeps) {
     if (req.method === "GET" && url.pathname === "/gate") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(renderGatePage());
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/session/state") {
+      const sessionId = url.searchParams.get("sessionId");
+      if (!sessionId) {
+        json(res, 400, { error: 'query "sessionId" is required' });
+        return;
+      }
+      try {
+        json(res, 200, sessions.getState(sessionId));
+      } catch (err: unknown) {
+        json(res, 404, { error: err instanceof Error ? err.message : "unknown session" });
+      }
       return;
     }
     if (req.method === "POST") {
@@ -292,6 +313,80 @@ export function createWebServer(deps?: WebServerDeps) {
                 json(res, 200, { runId, sentText });
               })
               .catch((err: unknown) => json(res, 400, { error: err instanceof Error ? err.message : "send failed" }));
+            return;
+          }
+          if (url.pathname === "/api/session") {
+            const sessionId = sessions.createSession();
+            json(res, 200, { sessionId });
+            return;
+          }
+          if (url.pathname === "/api/session/transcript") {
+            const sessionId = body?.["sessionId"];
+            const text = body?.["text"];
+            if (typeof sessionId !== "string" || typeof text !== "string") {
+              json(res, 400, { error: 'fields "sessionId" and "text" must be strings' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.setTranscript(sessionId, text));
+            } catch (err: unknown) {
+              json(res, 404, { error: err instanceof Error ? err.message : "unknown session" });
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/redact") {
+            const sessionId = body?.["sessionId"];
+            if (typeof sessionId !== "string") {
+              json(res, 400, { error: 'field "sessionId" must be a string' });
+              return;
+            }
+            sessions
+              .redact(sessionId)
+              .then((state) => json(res, 200, state))
+              .catch((err: unknown) =>
+                json(res, 404, { error: err instanceof Error ? err.message : "redact failed" }),
+              );
+            return;
+          }
+          if (url.pathname === "/api/session/correct") {
+            const sessionId = body?.["sessionId"];
+            const text = body?.["text"];
+            if (typeof sessionId !== "string" || typeof text !== "string") {
+              json(res, 400, { error: 'fields "sessionId" and "text" must be strings' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.correct(sessionId, text));
+            } catch (err: unknown) {
+              json(res, 400, { error: err instanceof Error ? err.message : "correct failed" });
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/approve") {
+            const sessionId = body?.["sessionId"];
+            if (typeof sessionId !== "string") {
+              json(res, 400, { error: 'field "sessionId" must be a string' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.approve(sessionId));
+            } catch (err: unknown) {
+              json(res, 400, { error: err instanceof Error ? err.message : "approve failed" });
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/analyze") {
+            const sessionId = body?.["sessionId"];
+            if (typeof sessionId !== "string") {
+              json(res, 400, { error: 'field "sessionId" must be a string' });
+              return;
+            }
+            sessions
+              .analyze(sessionId)
+              .then((state) => json(res, 200, state))
+              .catch((err: unknown) =>
+                json(res, 404, { error: err instanceof Error ? err.message : "analyze failed" }),
+              );
             return;
           }
           json(res, 404, { error: "not found" });
