@@ -48,9 +48,68 @@ export interface PayloadDemo {
   note?: string;
 }
 
-export interface GlimmerLiveInfo {
+export interface GlimmerAttemptInfo {
+  label?: string;
+  mode?: "live" | "mock";
+  runId?: string;
+  sourceRevision?: string;
+  ranAt?: string;
+  status?: "complete" | "incomplete" | "invalid";
+  completedK?: number;
+  completedN?: number;
+  recallK?: number;
+  recallN?: number;
+  fullK?: number;
+  fullN?: number;
+}
+
+export interface GlimmerLiveInfo extends GlimmerAttemptInfo {
   recall: string;
   n?: number;
+  attempts?: GlimmerAttemptInfo[];
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function formatAttemptDate(ranAt: string): string {
+  const d = new Date(ranAt);
+  const month = MONTHS[d.getUTCMonth()] ?? "";
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const hour = String(d.getUTCHours()).padStart(2, "0");
+  const min = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${month} ${day} ${d.getUTCFullYear()} ${hour}:${min} UTC`;
+}
+
+export function attemptMetaLine(a: GlimmerAttemptInfo): string {
+  return (
+    `mode ${a.mode ?? "live"} · run ${a.runId ?? "unknown"} · ` +
+    `revision ${a.sourceRevision ?? "unknown"} · status ${a.status ?? "unknown"}`
+  );
+}
+
+export function glimmerHeadline(a: GlimmerLiveInfo): string | null {
+  if (
+    a.status === undefined || a.completedK === undefined || a.completedN === undefined ||
+    a.recallK === undefined || a.recallN === undefined ||
+    a.fullK === undefined || a.fullN === undefined || a.ranAt === undefined
+  ) {
+    return null;
+  }
+  return (
+    `Latest attempt ${formatAttemptDate(a.ranAt)} — ${a.status}: ` +
+    `${a.completedK}/${a.completedN} cases completed · ` +
+    `${a.recallK}/${a.recallN} recall on completed cases · ` +
+    `${a.fullK}/${a.fullN} full batch`
+  );
+}
+
+export function isMockOrFailedRun(line: RunLogLine | undefined): boolean {
+  if (line === undefined) return false;
+  return (
+    /mock/i.test(line.model ?? "") ||
+    /mock/i.test(line.note ?? "") ||
+    /\b(fail|failed|error)\b/i.test(line.note ?? "")
+  );
 }
 
 export interface SeededScore {
@@ -196,11 +255,23 @@ export function renderBriefPage(
   const flagged = brief.entries.filter((e) => e.flags.length > 0);
 
   const glimmerLive = opts.glimmerLive ?? null;
+  const lastByStage = new Map<string, RunLogLine>();
+  for (const line of runLog) lastByStage.set(line.stage, line);
   const chipHtml = chips
     .map((c) => {
       if (c.stage === "glimmer-redact" && glimmerLive !== null) {
-        const suffix = glimmerLive.n !== undefined ? ` (n=${glimmerLive.n})` : "";
-        return `<span class="model-chip" data-stage="glimmer-redact" data-status="live">glimmer-redact: live · recall ${esc(glimmerLive.recall)}${suffix}</span>`;
+        const live =
+          glimmerLive.status === "complete" &&
+          glimmerLive.mode !== "mock" &&
+          !isMockOrFailedRun(lastByStage.get(c.stage));
+        if (live) {
+          const suffix = glimmerLive.n !== undefined ? ` (n=${glimmerLive.n})` : "";
+          return `<span class="model-chip" data-stage="glimmer-redact" data-status="live">glimmer-redact: live · recall ${esc(glimmerLive.recall)}${suffix}</span>`;
+        }
+        return `<span class="model-chip" data-stage="glimmer-redact" data-status="incomplete">glimmer-redact: incomplete</span>`;
+      }
+      if (c.status === "run" && isMockOrFailedRun(lastByStage.get(c.stage))) {
+        return `<span class="model-chip" data-stage="${esc(c.stage)}" data-status="not run">${esc(c.stage)}: not run</span>`;
       }
       return c.status === "run"
         ? `<span class="model-chip" data-stage="${esc(c.stage)}" data-status="run">${esc(c.stage)}: ${esc(c.model as string)}</span>`
@@ -302,11 +373,40 @@ export function renderBriefPage(
       `<p id="scores-brief">${esc(briefScoreLine(briefScore))}</p>`,
     );
   }
+  let glimmerRunsHtml = "";
   if (glimmerLive !== null) {
-    const suffix = glimmerLive.n !== undefined ? ` (n=${glimmerLive.n})` : "";
-    scoreLines.push(
-      `<p id="scores-glimmer">Glimmer recall ${esc(glimmerLive.recall)}${suffix}</p>`,
-    );
+    const headline = glimmerHeadline(glimmerLive);
+    if (headline !== null) {
+      scoreLines.push(
+        `<p id="scores-glimmer">Glimmer recall ${glimmerLive.recallK}/${glimmerLive.recallN} on completed cases · latest attempt ${esc(glimmerLive.status ?? "unknown")} (${glimmerLive.completedK}/${glimmerLive.completedN} cases, ${glimmerLive.fullK}/${glimmerLive.fullN} full batch)</p>`,
+      );
+      const previous = (glimmerLive.attempts ?? []).filter((a) => a.ranAt !== glimmerLive.ranAt);
+      const previousHtml =
+        previous.length > 0
+          ? `<div id="scores-glimmer-previous"><h3>Previous runs</h3><ul>` +
+            previous
+              .map(
+                (a) =>
+                  `<li>${esc(a.label ?? a.ranAt ?? "run")} — ${esc(a.status ?? "unknown")}: ` +
+                  `${a.completedK ?? "?"}/${a.completedN ?? "?"} cases completed · ` +
+                  `${a.recallK ?? "?"}/${a.recallN ?? "?"} recall · ` +
+                  `${esc(attemptMetaLine(a))}</li>`,
+              )
+              .join("") +
+            `</ul></div>`
+          : "";
+      glimmerRunsHtml =
+        `<section id="glimmer-runs" aria-label="Glimmer runs"><h2>Glimmer runs</h2>` +
+        `<p>${esc(headline)}</p>` +
+        `<p id="scores-glimmer-meta">${esc(attemptMetaLine(glimmerLive))}</p>` +
+        previousHtml +
+        `</section>`;
+    } else {
+      const suffix = glimmerLive.n !== undefined ? ` (n=${glimmerLive.n})` : "";
+      scoreLines.push(
+        `<p id="scores-glimmer">Glimmer recall ${esc(glimmerLive.recall)}${suffix}</p>`,
+      );
+    }
   }
   const seededScore = opts.seededScore ?? null;
   if (seededScore !== null) {
@@ -333,11 +433,11 @@ export function renderBriefPage(
 
   const payload = opts.payloadDemo;
   const payloadHtml = payload
-    ? `<section id="what-left-this-server"><h2>What left this server</h2><pre>${esc(payload.maskedText)}</pre>` +
+    ? `<section id="what-left-this-server"><h2>Example payload</h2><p>Example payload (recorded fixture), not from this session.</p><pre>${esc(payload.maskedText)}</pre>` +
       (payload.note ? `<p>${esc(payload.note)}</p>` : "") +
       `<label>Upload transcript (.vtt): <input type="file" id="upload-vtt" accept=".vtt"></label>\n` +
       `<label>Upload frame (.png): <input type="file" id="upload-png" accept=".png,image/png"></label></section>`
-    : `<section id="what-left-this-server"><h2>What left this server</h2>` +
+    : `<section id="what-left-this-server"><h2>Example payload</h2><p>Example payload (recorded fixture), not from this session.</p>` +
       `<label>Upload transcript (.vtt): <input type="file" id="upload-vtt" accept=".vtt"></label>\n` +
       `<label>Upload frame (.png): <input type="file" id="upload-png" accept=".png,image/png"></label></section>`;
 
@@ -396,6 +496,7 @@ ${pressureChecks}
 </section>
 ${scoresHtml}
 </section>
+${glimmerRunsHtml}
 ${categoryHtml}
 ${flaggedHtml}
 <section id="transcript"><h2>Transcript</h2><ol id="transcript-lines">${segmentHtml}</ol></section>

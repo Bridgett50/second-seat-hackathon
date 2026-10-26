@@ -127,8 +127,8 @@ for (const vp of HERO_VIEWPORTS) {
     );
     expect(fitsWidth).toBe(true);
     const chip = page.locator('[data-stage="glimmer-redact"]');
-    await expect(chip).toHaveAttribute("data-status", "live");
-    await expect(chip).toContainText(/recall \d+\/\d+/);
+    await expect(chip).toHaveAttribute("data-status", "incomplete");
+    await expect(chip).toContainText("glimmer-redact: incomplete");
   });
 }
 
@@ -167,7 +167,7 @@ test("scores and badges are consistent", async ({ page }) => {
   await page.goto(`${DEMO}?static=1`);
   await expect(page.locator("#scores-seeded")).toContainText("9/9");
   const chip = page.locator('[data-stage="glimmer-redact"]');
-  await expect(chip).toContainText("(n=10)");
+  await expect(chip).toContainText("incomplete");
   await expect(chip).not.toContainText("0/39");
   const badgeTexts = await page.locator("a.pressure-badge").allTextContents();
   expect(badgeTexts.length).toBeGreaterThan(0);
