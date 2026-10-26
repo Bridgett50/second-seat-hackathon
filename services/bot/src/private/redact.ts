@@ -194,6 +194,7 @@ export class GlimmerClient implements Redactor {
     const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(600_000),
       body: JSON.stringify({
         model: GLIMMER_MODEL,
         temperature: 1.0,
@@ -208,7 +209,11 @@ export class GlimmerClient implements Redactor {
     if (!res.ok) throw new Error(`glimmer: chat failed ${res.status}`);
     const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = body.choices?.[0]?.message?.content ?? "";
-    return JSON.parse(content) as unknown;
+    const unfenced = content.replace(/```/g, "");
+    const start = unfenced.indexOf("{");
+    const end = unfenced.lastIndexOf("}");
+    const jsonText = start !== -1 && end !== -1 && end >= start ? unfenced.slice(start, end + 1) : unfenced;
+    return JSON.parse(jsonText) as unknown;
   }
 }
 
