@@ -52,11 +52,28 @@ export interface GlimmerLiveInfo {
   recall: string;
 }
 
+export interface BriefScore {
+  briefEntries: number;
+  truthEntries: number;
+  validatorClean: number;
+  matched: number;
+  categoryAgree: number;
+}
+
+export function briefScoreLine(score: BriefScore): string {
+  return (
+    `categories ${score.categoryAgree}/${score.matched} · ` +
+    `recall ${score.matched}/${score.truthEntries} · ` +
+    `validator-clean ${score.validatorClean}/${score.briefEntries}`
+  );
+}
+
 export interface RenderOpts {
   liveDev?: boolean;
   pressureFallback?: PressureItem[];
   payloadDemo?: PayloadDemo | null;
   glimmerLive?: GlimmerLiveInfo | null;
+  briefScore?: BriefScore | null;
 }
 
 function esc(s: string): string {
@@ -65,6 +82,21 @@ function esc(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+export function dedupePressureItems(items: PressureItem[]): PressureItem[] {
+  const seen = new Set<string>();
+  const out: PressureItem[] = [];
+  for (const item of items) {
+    if (item.id === undefined || item.id === null || item.id === "") {
+      out.push(item);
+      continue;
+    }
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
 }
 
 export function pressureItemsFor(
@@ -84,7 +116,7 @@ export function pressureItemsFor(
         .filter((c) => c.segmentId)
         .map((c) => c.segmentId as string),
     }));
-  return derived.length > 0 ? derived : fallback;
+  return dedupePressureItems(derived.length > 0 ? derived : fallback);
 }
 
 export function heldText(badgeCount: number): string {
@@ -171,17 +203,14 @@ export function renderBriefPage(
     .join("\n")}</section>`;
 
   const badgeHtml = pressure
-    .map((p) =>
-      p.segmentIds
-        .map(
-          (s) =>
-            `<a class="pressure-badge" href="#seg-${esc(s)}">pressure: ${esc(p.id)}</a>`,
-        )
-        .join("\n"),
+    .filter((p) => p.segmentIds.length > 0)
+    .map(
+      (p) =>
+        `<a class="pressure-badge" href="#seg-${esc(p.segmentIds[0] as string)}">pressure: ${esc(p.id)}</a>`,
     )
     .join("\n");
 
-  const badgeCount = pressure.reduce((n, p) => n + p.segmentIds.length, 0);
+  const badgeCount = pressure.length;
 
   const frameById = new Map(frames.map((f) => [f.id, f]));
   const frameIds = new Set<string>();
@@ -234,6 +263,23 @@ export function renderBriefPage(
     )
     .join("\n");
 
+  const briefScore = opts.briefScore ?? null;
+  const scoreLines: string[] = [];
+  if (briefScore !== null) {
+    scoreLines.push(
+      `<p id="scores-brief">${esc(briefScoreLine(briefScore))}</p>`,
+    );
+  }
+  if (glimmerLive !== null) {
+    scoreLines.push(
+      `<p id="scores-glimmer">Glimmer recall ${esc(glimmerLive.recall)}</p>`,
+    );
+  }
+  const scoresHtml =
+    scoreLines.length > 0
+      ? `<section id="scores" aria-label="Scores"><h2>Scores</h2>${scoreLines.join("\n")}</section>`
+      : "";
+
   const payload = opts.payloadDemo;
   const payloadHtml = payload
     ? `<section id="what-left-this-server"><h2>What left this server</h2><pre>${esc(payload.maskedText)}</pre>` +
@@ -262,7 +308,9 @@ h2{font-size:1.1rem;margin:0 0 .5rem}
 #hero{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:.75rem 0}
 #pressure-badges{grid-column:1/-1}
 .pressure-badge{display:inline-block;background:#8f1d1d;color:#fff;border-radius:.3rem;padding:.15rem .6rem;margin:.15rem;text-decoration:none}
-#conflict,#draft,.category,#flagged,#transcript,#frames,#what-left-this-server{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem;min-width:0}
+#conflict,#draft,.category,#flagged,#transcript,#frames,#what-left-this-server,#scores{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem;min-width:0}
+#hero #scores{grid-column:1/-1;margin:0}
+#scores p{margin:.25rem 0;font-size:.9rem}
 #hero #conflict,#hero #draft{margin:0;min-width:0}
 #conflict blockquote{margin:.5rem 0 0;padding:.5rem .75rem;border-left:3px solid #8f1d1d;background:#fafafa;border-radius:0 .4rem .4rem 0}
 #draft-status{font-weight:600}
@@ -295,6 +343,7 @@ ${pressureChecks}
 <button type="button" id="btn-copy" disabled>Copy</button>
 <p id="draft-note"></p>
 </section>
+${scoresHtml}
 </section>
 ${categoryHtml}
 ${flaggedHtml}

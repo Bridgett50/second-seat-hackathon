@@ -56,15 +56,30 @@ describe("renderBriefPage", () => {
     );
   });
 
-  it("held count equals the number of pressure badges", () => {
+  it("renders one badge per distinct pressure item id", () => {
     const page = renderBriefPage(baseBrief, [], [], [], {
       pressureFallback: [
-        { id: "p1", text: "one", segmentIds: ["t-00:01", "t-00:02"] },
-        { id: "p2", text: "two", segmentIds: ["t-00:03"] },
+        { id: "e8", text: "eight", segmentIds: ["t-00:01", "t-00:02"] },
+        { id: "e8", text: "eight again", segmentIds: ["t-00:03"] },
+        { id: "e9", text: "nine", segmentIds: ["t-00:04"] },
       ],
     });
-    expect(countBadges(page)).toBe(3);
-    expect(heldStatus(page)).toBe("Held: review the 3 pressure items first");
+    expect(countBadges(page)).toBe(2);
+    expect(page.match(/pressure: e8/g) ?? []).toHaveLength(1);
+  });
+
+  it("held count equals the number of checkboxes from the same deduped list", () => {
+    const page = renderBriefPage(baseBrief, [], [], [], {
+      pressureFallback: [
+        { id: "e8", text: "eight", segmentIds: ["t-00:01", "t-00:02"] },
+        { id: "e8", text: "eight again", segmentIds: ["t-00:03"] },
+        { id: "e9", text: "nine", segmentIds: ["t-00:04"] },
+      ],
+    });
+    const boxes = page.match(/class="pressure-review"/g) ?? [];
+    expect(countBadges(page)).toBe(2);
+    expect(boxes).toHaveLength(2);
+    expect(heldStatus(page)).toBe("Held: review the 2 pressure items first");
   });
 
   it("pluralizes the held message", () => {
@@ -73,9 +88,37 @@ describe("renderBriefPage", () => {
     });
     expect(heldStatus(one)).toBe("Held: review the 1 pressure item first");
     const many = renderBriefPage(baseBrief, [], [], [], {
-      pressureFallback: [{ id: "p1", text: "one", segmentIds: ["t-00:01", "t-00:02"] }],
+      pressureFallback: [
+        { id: "p1", text: "one", segmentIds: ["t-00:01"] },
+        { id: "p2", text: "two", segmentIds: ["t-00:02"] },
+      ],
     });
     expect(heldStatus(many)).toBe("Held: review the 2 pressure items first");
+  });
+
+  it("shows a Scores card built from briefScore and glimmerLive numbers", () => {
+    const page = renderBriefPage(baseBrief, [], [], [], {
+      briefScore: { briefEntries: 9, truthEntries: 12, validatorClean: 8, matched: 11, categoryAgree: 8 },
+      glimmerLive: { recall: "10/10" },
+    });
+    expect(page).toContain('id="scores"');
+    expect(page).toContain("categories 8/11 · recall 11/12 · validator-clean 8/9");
+    expect(page).toContain("Glimmer recall 10/10");
+  });
+
+  it("omits a Scores line when its file is missing", () => {
+    const glimmerOnly = renderBriefPage(baseBrief, [], [], [], {
+      glimmerLive: { recall: "10/10" },
+    });
+    expect(glimmerOnly).toContain('id="scores"');
+    expect(glimmerOnly).not.toContain('id="scores-brief"');
+    const briefOnly = renderBriefPage(baseBrief, [], [], [], {
+      briefScore: { briefEntries: 9, truthEntries: 12, validatorClean: 8, matched: 11, categoryAgree: 8 },
+    });
+    expect(briefOnly).toContain('id="scores-brief"');
+    expect(briefOnly).not.toContain('id="scores-glimmer"');
+    const neither = renderBriefPage(baseBrief, [], [], [], {});
+    expect(neither).not.toContain('id="scores"');
   });
 
   it("frame renders an inline data-uri img when pngBase64 given", () => {
