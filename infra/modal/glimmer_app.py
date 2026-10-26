@@ -27,6 +27,7 @@ image = (
 )
 
 volume = modal.Volume.from_name("glimmer-weights", create_if_missing=True)
+results = modal.Volume.from_name("glimmer-results", create_if_missing=True)
 
 _here = Path(__file__).resolve()
 _repo = _here.parents[2] if len(_here.parents) > 2 else Path("/")  # driver: container path is shallow
@@ -84,9 +85,10 @@ def serve() -> None:
 @app.function(
     image=eval_in_container_image,
     gpu="A100-80GB",
-    volumes={"/root/.cache/huggingface": volume},
+    volumes={"/root/.cache/huggingface": volume, "/results": results},
     timeout=1500,
     max_containers=1,
+    retries=0,
 )
 def eval_in_container() -> dict:
     cmd = [
@@ -145,7 +147,7 @@ def eval_in_container() -> dict:
             env=env,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=1100,
         )
         result = {
             "health_status": health_status,
@@ -158,17 +160,25 @@ def eval_in_container() -> dict:
     finally:
         if vllm.poll() is None:
             vllm.terminate()
+    result["ran_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    Path("/results/glimmer-live-eval.json").write_text(json.dumps(result, indent=2))
+    results.commit()
     print("GLIMMER_RESULT_JSON " + json.dumps(result))
     return result
 
 
 @app.local_entrypoint()
 def main() -> None:
-    result = eval_in_container.remote()
-    result["ran_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    call = eval_in_container.spawn()
+    print("CALL_ID " + call.object_id)
+    return None
+
+
+@app.local_entrypoint()
+def fetch() -> None:
+    data = b"".join(results.read_file("glimmer-live-eval.json"))
     out_path = (
         Path(__file__).resolve().parents[2]
         / "services/bot/fixtures/glimmer-live-eval.json"
     )
-    out_path.write_text(json.dumps(result, indent=2))
-    print(json.dumps(result, indent=2))
+    out_path.write_bytes(data)
