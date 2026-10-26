@@ -224,17 +224,26 @@ function citationLink(c: Citation): string {
   return "";
 }
 
-function conflictCard(brief: Brief): string {
-  const entry = brief.entries.find(
+export function conflictEntries(brief: Brief): BriefEntry[] {
+  return brief.entries.filter(
     (e) =>
       e.category === "source_conflict" ||
       e.flags.includes("conflicting_sources"),
   );
-  let body = "conflict not in fixture";
-  if (entry && entry.text.includes("30th") && entry.text.includes("15th")) {
-    body = esc(entry.text);
-  }
-  return `<section id="conflict"><h2>Conflict: delivery date</h2><p>Slide says the 30th; vendor later claimed the 15th.</p><blockquote>${body}</blockquote></section>`;
+}
+
+function conflictsSection(brief: Brief): string {
+  const conflicts = conflictEntries(brief);
+  const items = conflicts
+    .map(
+      (e) =>
+        `<article class="entry" id="entry-${esc(e.id)}"><p>${esc(e.text)}</p>` +
+        `<p class="citations">${e.citations.map(citationLink).join(" ")}</p></article>`,
+    )
+    .join("\n");
+  const body =
+    conflicts.length > 0 ? items : `<p id="empty-state">No conflicting sources found.</p>`;
+  return `<section id="conflicts"><h2>Conflicting sources</h2>${body}</section>`;
 }
 
 export function renderBriefPage(
@@ -458,11 +467,11 @@ h2{font-size:1.1rem;margin:0 0 .5rem}
 #hero{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:.75rem 0}
 #pressure-badges{grid-column:1/-1}
 .pressure-badge{display:inline-block;background:#8f1d1d;color:#fff;border-radius:.3rem;padding:.15rem .6rem;margin:.15rem;text-decoration:none}
-#conflict,#draft,.category,#flagged,#transcript,#frames,#hero-chain,#what-left-this-server,#scores{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem;min-width:0}
+#conflicts,#draft,.category,#flagged,#transcript,#frames,#hero-chain,#what-left-this-server,#scores{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem;min-width:0}
 #hero #scores{grid-column:1/-1;margin:0}
 #scores p{margin:.25rem 0;font-size:.9rem}
-#hero #conflict,#hero #draft{margin:0;min-width:0}
-#conflict blockquote{margin:.5rem 0 0;padding:.5rem .75rem;border-left:3px solid #8f1d1d;background:#fafafa;border-radius:0 .4rem .4rem 0}
+#hero #conflicts,#hero #draft{margin:0;min-width:0}
+#conflicts blockquote{margin:.5rem 0 0;padding:.5rem .75rem;border-left:3px solid #8f1d1d;background:#fafafa;border-radius:0 .4rem .4rem 0}
 #draft-status{font-weight:600}
 .pressure-check{display:block;margin:.35rem 0}
 .region-overlay{position:absolute;border:2px solid red}
@@ -481,7 +490,7 @@ footer{margin-top:2rem;border-top:1px solid #999;padding-top:.5rem}
 <div id="model-strip">${chipHtml}</div>
 <section id="hero" aria-label="Demo hero">
 <div id="pressure-badges">${badgeHtml}</div>
-${conflictCard(brief)}
+${conflictsSection(brief)}
 <section id="draft">
 <h2>Draft reply</h2>
 <p id="draft-status">${esc(heldText(badgeCount))}</p>
@@ -547,6 +556,144 @@ if(!reduceMotion&&!staticMode){
   },250);
 }
 refresh();
+})();
+</script>
+</body>
+</html>`;
+}
+
+export type SessionPageSnapshot = {
+  state: string;
+  reason?: string;
+  segments: { id: string; text: string }[];
+  redactedText: string;
+  approved: boolean;
+  result: { offline: boolean; entries: { kind: string; text: string; segmentIds: string[] }[] } | null;
+  payload: { approvedText: string; status: string } | null;
+  offline: boolean;
+};
+
+export function sessionStateLabel(snap: SessionPageSnapshot): string {
+  switch (snap.state) {
+    case "input": return "Input — paste a transcript to begin.";
+    case "redaction_pending": return "Redaction pending…";
+    case "review_required": return "Review required — check the redacted preview, then approve.";
+    case "approved": return "Approved — ready to analyze.";
+    case "analysis_pending": return "Analysis pending…";
+    case "completed": return "Completed — findings below.";
+    case "blocked": return `Blocked — ${snap.reason ?? "a policy or approval check refused the request"}`;
+    case "error": return snap.reason ? `Error — ${snap.reason}` : "Error — something went wrong.";
+    default: return snap.state;
+  }
+}
+
+function sessionFindingsHtml(snap: SessionPageSnapshot): string {
+  if (snap.result === null) {
+    return `<p id="empty-state">No findings yet — paste a transcript and run analysis.</p>`;
+  }
+  if (snap.result.entries.length === 0) {
+    return `<p id="empty-state">No findings in the approved transcript.</p>`;
+  }
+  return snap.result.entries
+    .map(
+      (e, i) =>
+        `<article class="result" id="result-${i}"><p>${esc(e.text)}</p>` +
+        `<p class="citations">${e.segmentIds.map((id) => `<a href="#${esc(id)}">[${esc(id)}]</a>`).join(" ")}</p></article>`,
+    )
+    .join("\n");
+}
+
+function sessionPayloadHtml(snap: SessionPageSnapshot): string {
+  if (snap.payload === null) {
+    return `<pre id="payload-text"></pre><p id="payload-status">Not prepared yet</p>`;
+  }
+  const status = snap.payload.status === "sent" ? "Sent to analyzer" : "Prepared — not sent";
+  return `<pre id="payload-text">${esc(snap.payload.approvedText)}</pre><p id="payload-status">${status}</p>`;
+}
+
+export function renderSessionPage(snap: SessionPageSnapshot): string {
+  const canRedact = snap.state !== "redaction_pending" && snap.state !== "analysis_pending";
+  const dis = (off: boolean): string => (off ? " disabled" : "");
+  const segmentHtml = snap.segments
+    .map((s) => `<li id="${esc(s.id)}">${esc(s.text)}</li>`)
+    .join("\n");
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session — Second Seat</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;max-width:60rem;margin:0 auto;padding:1rem;line-height:1.5;color:#1a1a1a;background:#f7f7f5}
+h1{font-size:1.5rem;margin:.5rem 0}
+h2{font-size:1.1rem;margin:0 0 .5rem}
+section{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem}
+textarea{width:100%;font:inherit}
+pre{white-space:pre-wrap;word-break:break-word}
+button{margin:.25rem;padding:.4rem .9rem;font:inherit}
+</style>
+</head>
+<body>
+<h1>Vendor brief — session</h1>
+${snap.offline ? `<p id="offline-label">Offline demo</p>` : ""}
+<p id="session-state" role="status">${esc(sessionStateLabel(snap))}</p>
+<section id="input-section" aria-label="Transcript input">
+<h2>Transcript</h2>
+<label>Paste transcript:<textarea id="transcript-input" rows="4" cols="60"></textarea></label>
+<div><button type="button" id="btn-redact"${dis(!canRedact)}>Redact</button></div>
+<label>Redacted preview (editable):<textarea id="redacted-text" rows="4" cols="60">${esc(snap.redactedText)}</textarea></label>
+<div><button type="button" id="btn-approve"${dis(snap.state !== "review_required")}>Approve</button>
+<button type="button" id="btn-analyze"${dis(snap.state !== "approved" && snap.state !== "completed")}>Analyze</button></div>
+</section>
+<section id="findings" aria-label="Findings"><h2>Findings</h2><div id="results">${sessionFindingsHtml(snap)}</div></section>
+<section id="transcript" aria-label="Approved transcript"><h2>Approved transcript segments</h2><ol id="segments">${segmentHtml}</ol></section>
+<section id="payload-panel" aria-label="Payload"><h2>Payload</h2>${sessionPayloadHtml(snap)}</section>
+<footer>Second Seat never sends a reply to the vendor.</footer>
+<script>
+(function(){
+var sessionId=null,pending=false,lastRedacted="";
+var input=document.getElementById("transcript-input"),redacted=document.getElementById("redacted-text");
+var btnRedact=document.getElementById("btn-redact"),btnApprove=document.getElementById("btn-approve"),btnAnalyze=document.getElementById("btn-analyze");
+var stateEl=document.getElementById("session-state"),resultsEl=document.getElementById("results");
+var segmentsEl=document.getElementById("segments"),payloadText=document.getElementById("payload-text"),payloadStatus=document.getElementById("payload-status");
+var offlineLabel=document.getElementById("offline-label");
+var LABELS={"input":"Input — paste a transcript to begin.","redaction_pending":"Redaction pending…","review_required":"Review required — check the redacted preview, then approve.","approved":"Approved — ready to analyze.","analysis_pending":"Analysis pending…","completed":"Completed — findings below."};
+function labelFor(s){if(s.state==="blocked")return "Blocked — "+(s.reason||"a policy or approval check refused the request");if(s.state==="error")return s.reason?("Error — "+s.reason):"Error — something went wrong.";return LABELS[s.state]||s.state;}
+function el(tag,attrs,text){var n=document.createElement(tag);for(var k in attrs){n.setAttribute(k,attrs[k]);}if(text!==undefined)n.textContent=text;return n;}
+function render(s){
+  stateEl.textContent=labelFor(s);
+  if(offlineLabel)offlineLabel.hidden=!s.offline;
+  lastRedacted=s.redactedText||"";if(document.activeElement!==redacted)redacted.value=lastRedacted;
+  var canRedact=s.state!=="redaction_pending"&&s.state!=="analysis_pending";
+  btnRedact.disabled=pending||!canRedact||!input.value.trim();
+  btnApprove.disabled=pending||s.state!=="review_required";
+  btnAnalyze.disabled=pending||(s.state!=="approved"&&s.state!=="completed");
+  while(segmentsEl.firstChild)segmentsEl.removeChild(segmentsEl.firstChild);
+  (s.segments||[]).forEach(function(g){segmentsEl.appendChild(el("li",{id:g.id},g.text));});
+  while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);
+  if(!s.result){resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));}
+  else if(s.result.entries.length===0){resultsEl.appendChild(el("p",{id:"empty-state"},"No findings in the approved transcript."));}
+  else{s.result.entries.forEach(function(e,i){
+    var a=el("article",{"class":"result",id:"result-"+i});
+    a.appendChild(el("p",{},e.text));
+    var c=el("p",{"class":"citations"});
+    (e.segmentIds||[]).forEach(function(id){var link=el("a",{href:"#"+id},"["+id+"]");c.appendChild(link);c.appendChild(document.createTextNode(" "));});
+    a.appendChild(c);resultsEl.appendChild(a);});}
+  if(!s.payload){payloadText.textContent="";payloadStatus.textContent="Not prepared yet";}
+  else{payloadText.textContent=s.payload.approvedText;payloadStatus.textContent=s.payload.status==="sent"?"Sent to analyzer":"Prepared — not sent";}
+}
+function call(path,body){return fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(b){return {ok:r.ok,body:b};});});}
+function refresh(){if(!sessionId)return;pending=true;updateButtons();fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){pending=false;render(s);}).catch(function(){pending=false;updateButtons();});}
+function updateButtons(){btnRedact.disabled=true;btnApprove.disabled=true;btnAnalyze.disabled=true;}
+function run(promise){pending=true;updateButtons();return promise.then(function(r){pending=false;if(r.ok)render(r.body);else if(r.body&&r.body.state)render(r.body);else refresh();}).catch(function(){pending=false;refresh();});}
+var deb=null;
+input.addEventListener("input",function(){btnRedact.disabled=pending||!input.value.trim();if(deb)clearTimeout(deb);deb=setTimeout(function(){if(!sessionId||!input.value.trim())return;run(call("/api/session/transcript",{sessionId:sessionId,text:input.value}));},300);});
+btnRedact.addEventListener("click",function(){if(btnRedact.disabled||!sessionId)return;if(deb){clearTimeout(deb);deb=null;}pending=true;updateButtons();run(call("/api/session/transcript",{sessionId:sessionId,text:input.value}).then(function(t){if(!t.ok)return t;return call("/api/session/redact",{sessionId:sessionId});}));});
+/* corrections are sent with Approve (avoids blur/click race) */
+btnApprove.addEventListener("click",function(){if(btnApprove.disabled)return;var txt=redacted.value,needs=txt!==lastRedacted;pending=true;updateButtons();run((needs?call("/api/session/correct",{sessionId:sessionId,text:txt}):Promise.resolve({ok:true})).then(function(c){if(!c.ok)return c;return call("/api/session/approve",{sessionId:sessionId});}));});
+btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;run(call("/api/session/analyze",{sessionId:sessionId}));});
+fetch("/api/session",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}).then(function(r){return r.json();}).then(function(b){sessionId=b.sessionId;refresh();});
 })();
 </script>
 </body>

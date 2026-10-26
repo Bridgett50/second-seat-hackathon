@@ -123,7 +123,7 @@ for (const vp of HERO_VIEWPORTS) {
     await expect(page.locator(".replay-label")).toContainText(
       "Replay of recorded brief",
     );
-    for (const sel of ["#conflict", "a.pressure-badge", "#draft-status"]) {
+    for (const sel of ["#conflicts", "a.pressure-badge", "#draft-status"]) {
       const box = await page.locator(sel).first().boundingBox();
       expect(box).not.toBeNull();
       expect((box as { y: number; height: number }).y + (box as { y: number; height: number }).height).toBeLessThanOrEqual(
