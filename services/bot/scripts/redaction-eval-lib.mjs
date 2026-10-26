@@ -8,21 +8,166 @@ export function wilson(k, n, z = 1.96) {
   return [(center - margin) / denom, (center + margin) / denom];
 }
 
-// cases: [{ file, hits, total, status: "ok" | "error" | "not_run", error? }]
-// Recall is computed ONLY over completed ("ok") cases.
-export function summarize(cases) {
+function clampSpan(textLen, s) {
+  const start = Math.max(0, Math.min(textLen, Math.floor(s.start)));
+  const end = Math.max(0, Math.min(textLen, Math.ceil(s.end)));
+  return end > start ? { start, end } : null;
+}
+
+function markRanges(textLen, spans) {
+  const mask = new Array(textLen).fill(false);
+  for (const s of spans) {
+    const c = clampSpan(textLen, s);
+    if (c === null) continue;
+    for (let i = c.start; i < c.end; i++) mask[i] = true;
+  }
+  return mask;
+}
+
+// Score annotated spans against predicted spans (both in original coordinates).
+// A span counts as covered ONLY if 100% of its characters are predicted masked.
+// Returns per-case span aggregates.
+export function scoreSpans(text, expectedSpans, predictedSpans) {
+  const n = text.length;
+  const expected = (expectedSpans ?? []).map((s) => clampSpan(n, s)).filter((s) => s !== null);
+  const predictedMask = markRanges(n, predictedSpans ?? []);
+  const expectedMask = markRanges(n, expected);
+
+  let covered = 0;
+  for (const s of expected) {
+    let all = true;
+    for (let i = s.start; i < s.end; i++) {
+      if (!predictedMask[i]) {
+        all = false;
+        break;
+      }
+    }
+    if (all) covered += 1;
+  }
+
+  let piiChars = 0;
+  let piiCharsMasked = 0;
+  let nonPii = 0;
+  let nonPiiMasked = 0;
+  for (let i = 0; i < n; i++) {
+    if (/\s/.test(text[i])) continue; // whitespace excluded everywhere
+    if (expectedMask[i]) {
+      piiChars += 1;
+      if (predictedMask[i]) piiCharsMasked += 1;
+    } else {
+      nonPii += 1;
+      if (predictedMask[i]) nonPiiMasked += 1;
+    }
+  }
+
+  return {
+    covered,
+    expected: expected.length,
+    piiChars,
+    piiCharsMasked,
+    charCoverage: piiChars > 0 ? piiCharsMasked / piiChars : 1,
+    nonPii,
+    nonPiiMasked,
+    overRedaction: nonPii > 0 ? nonPiiMasked / nonPii : 0,
+  };
+}
+
+// Find every occurrence of each entity string in text; each occurrence is its
+// own annotated span (so a repeated email/name yields one span per occurrence).
+export function annotateOccurrences(text, entities) {
+  const spans = [];
+  for (const e of entities ?? []) {
+    if (typeof e !== "string" || e.length === 0) continue;
+    let from = 0;
+    for (;;) {
+      const i = text.indexOf(e, from);
+      if (i < 0) break;
+      spans.push({ start: i, end: i + e.length });
+      from = i + (e.length > 0 ? 1 : 0);
+      if (from > text.length) break;
+    }
+  }
+  spans.sort((a, b) => a.start - b.start || a.end - b.end);
+  return spans;
+}
+
+// cases: [{ file, hits, total, status: "ok" | "error" | "not_run", error?,
+//            span?: { covered, expected, piiChars, piiCharsMasked, nonPii, nonPiiMasked } }]
+// plannedCases: full planned batch [{ file, total, expected? }]; failed and
+// not_run cases keep their planned expected counts with 0 covered, so the
+// end-to-end denominators cover ALL planned cases. Clean negative cases
+// (0 entities/expected) contribute only to over_redaction.
+export function summarize(cases, plannedCases) {
+  const planned = Array.isArray(plannedCases) && plannedCases.length > 0 ? plannedCases : cases;
+  const plannedByFile = new Map(planned.map((c) => [c.file, c]));
   const completed = cases.filter((c) => c.status === "ok");
   const failures = cases
     .filter((c) => c.status === "error")
     .map((c) => `${c.file}: ${c.error ?? "unknown error"}`);
   const notRun = cases.filter((c) => c.status === "not_run").map((c) => c.file);
-  const k = completed.reduce((s, c) => s + c.hits, 0);
-  const n = completed.reduce((s, c) => s + c.total, 0);
-  const [lo, hi] = wilson(k, n);
+
+  const plannedTotal = (c) => {
+    const p = plannedByFile.get(c.file);
+    if (typeof c.total === "number") return c.total;
+    return typeof p?.total === "number" ? p.total : 0;
+  };
+  const plannedExpected = (c) => {
+    const p = plannedByFile.get(c.file);
+    if (typeof c.span?.expected === "number") return c.span.expected;
+    return typeof p?.expected === "number" ? p.expected : 0;
+  };
+
+  // Legacy per-entity metric: entity text absent from output.
+  const legacyK = completed.reduce((s, c) => s + c.hits, 0);
+  const legacyN = completed.reduce((s, c) => s + c.total, 0);
+  const legacyEndN = planned.reduce((s, c) => s + (typeof c.total === "number" ? c.total : 0), 0);
+  const [legacyLo, legacyHi] = wilson(legacyK, legacyN);
+  const [legacyEndLo, legacyEndHi] = wilson(legacyK, legacyEndN);
+
+  const spanOf = (c) => c.span ?? { covered: 0, expected: 0, piiChars: 0, piiCharsMasked: 0, nonPii: 0, nonPiiMasked: 0 };
+  const spanK = completed.reduce((s, c) => s + spanOf(c).covered, 0);
+  const spanN = completed.reduce((s, c) => s + spanOf(c).expected, 0);
+  const spanEndN = planned.reduce((s, c) => {
+    const rec = cases.find((r) => r.file === c.file);
+    if (rec !== undefined && rec.status === "ok") return s + spanOf(rec).expected;
+    if (typeof c.expected === "number") return s + c.expected;
+    if (rec !== undefined) return s + plannedExpected(rec);
+    return s;
+  }, 0);
+  const [spanLo, spanHi] = wilson(spanK, spanN);
+  const [spanEndLo, spanEndHi] = wilson(spanK, spanEndN);
+
+  const charMasked = completed.reduce((s, c) => s + spanOf(c).piiCharsMasked, 0);
+  const charTotal = completed.reduce((s, c) => s + spanOf(c).piiChars, 0);
+  const overMasked = completed.reduce((s, c) => s + spanOf(c).nonPiiMasked, 0);
+  const overTotal = completed.reduce((s, c) => s + spanOf(c).nonPii, 0);
+
   return {
     complete: cases.length > 0 && failures.length === 0 && notRun.length === 0,
-    recall: { k, n },
-    wilson95: [lo, hi],
+    request_completion: {
+      completed: completed.length,
+      planned: planned.length,
+    },
+    legacy_entity_disappearance: {
+      completed: { k: legacyK, n: legacyN },
+      end_to_end: { k: legacyK, n: legacyEndN },
+      wilson95_completed: [legacyLo, legacyHi],
+      wilson95_end_to_end: [legacyEndLo, legacyEndHi],
+    },
+    recall_completed: { k: spanK, n: spanN },
+    recall_end_to_end: { k: spanK, n: spanEndN },
+    wilson95_recall_completed: [spanLo, spanHi],
+    wilson95_recall_end_to_end: [spanEndLo, spanEndHi],
+    char_coverage: {
+      completed: charTotal > 0 ? charMasked / charTotal : 1,
+      masked: charMasked,
+      total: charTotal,
+    },
+    over_redaction_rate: overTotal > 0 ? overMasked / overTotal : 0,
+    over_redaction: { masked: overMasked, total: overTotal },
+    // Deprecated aliases: prefer legacy_entity_disappearance / recall_* above.
+    recall: { k: legacyK, n: legacyN },
+    wilson95: [legacyLo, legacyHi],
     cases,
     failures,
     not_run: notRun,

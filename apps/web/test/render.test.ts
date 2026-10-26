@@ -156,8 +156,8 @@ describe("renderBriefPage", () => {
       glimmerLive: { recall: "10/10" },
     });
     expect(page).toContain('id="scores"');
-    expect(page).toContain("categories 8/11 · recall 11/12 · validator-clean 8/9");
-    expect(page).toContain("Glimmer recall 10/10");
+    expect(page).toContain("categories 8/11 · truth entry match 11/12 · citations resolved 8/9");
+    expect(page).toContain("Glimmer legacy entity disappearance 10/10");
   });
 
   it("omits a Scores line when its file is missing", () => {

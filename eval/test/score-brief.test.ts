@@ -50,9 +50,9 @@ describe("score-brief.mjs", () => {
     expect(result.output).toContain("brief entries: 4");
     expect(result.output).toContain("truth entries: 3");
     expect(result.output).toContain(
-      "validator-clean entries (no citation_not_found and no missing_source): 2/4",
+      "citations_resolved (no citation_not_found and no missing_source): 2/4",
     );
-    expect(result.output).toContain("truth recall (matched/total): 2/3");
+    expect(result.output).toContain("truth_entry_match (matched/total): 2/3");
     expect(result.output).toContain("category agreement among matched: 1/2");
     expect(result.output).toContain("unmatched truth ids: T3");
     expect(result.output).toContain("brief entries matching no truth entry: B3, B4");
@@ -73,12 +73,15 @@ describe("score-brief.mjs", () => {
     const payload = JSON.parse(readFileSync(outPath, "utf8")) as Record<string, unknown>;
     expect(payload["briefEntries"]).toBe(4);
     expect(payload["truthEntries"]).toBe(3);
-    expect(payload["validatorClean"]).toBe(2);
-    expect(payload["matched"]).toBe(2);
+    expect(payload["citationsResolved"]).toBe(2);
+    expect(payload["truthEntryMatch"]).toBe(2);
     expect(payload["categoryAgree"]).toBe(1);
     expect(payload["unmatchedTruthIds"]).toEqual(["T3"]);
     expect(typeof payload["scoredAt"]).toBe("string");
+    // Deprecated aliases stay readable.
+    expect(payload["validatorClean"]).toBe(2);
+    expect(payload["matched"]).toBe(2);
     expect(result.output).toContain("brief entries: 4");
-    expect(result.output).toContain("truth recall (matched/total): 2/3");
+    expect(result.output).toContain("truth_entry_match (matched/total): 2/3");
   });
 });

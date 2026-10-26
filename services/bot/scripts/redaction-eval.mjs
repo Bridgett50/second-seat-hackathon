@@ -13,11 +13,15 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { summarize } from "./redaction-eval-lib.mjs";
+import { annotateOccurrences, scoreSpans, summarize } from "./redaction-eval-lib.mjs";
 
 const { liveRedactor } = await import("../dist/src/private/redact.js");
 
-const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "pii");
+const cliArgs = process.argv.slice(2);
+let casesDir = "pii";
+const casesDirFlag = cliArgs.indexOf("--cases-dir");
+if (casesDirFlag !== -1 && cliArgs[casesDirFlag + 1] !== undefined) casesDir = cliArgs[casesDirFlag + 1];
+const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", casesDir);
 const cases = JSON.parse(readFileSync(join(dir, "cases.json"), "utf8"));
 
 const budgetRaw = process.env["GLIMMER_DEADLINE_MS"] ?? "";
@@ -42,21 +46,38 @@ async function runCase(c) {
     if (!result.maskedText.includes(e)) hits += 1;
     else misses.push(`${c.file}: ${e}`);
   }
-  return { file: c.file, hits, total: c.entities.length, status: "ok", misses };
+  const expected = annotateOccurrences(text, c.entities);
+  const scored = scoreSpans(text, expected, result.spans ?? []);
+  const span = {
+    covered: scored.covered,
+    expected: scored.expected,
+    piiChars: scored.piiChars,
+    piiCharsMasked: scored.piiCharsMasked,
+    nonPii: scored.nonPii,
+    nonPiiMasked: scored.nonPiiMasked,
+  };
+  return { file: c.file, hits, total: c.entities.length, status: "ok", misses, span };
 }
 
 function toRecord(r) {
-  if (r.status === "ok") return { file: r.file, hits: r.hits, total: r.total, status: "ok" };
-  if (r.status === "not_run") return { file: r.file, hits: 0, total: 0, status: "not_run" };
+  if (r.status === "ok") return { file: r.file, hits: r.hits, total: r.total, status: "ok", span: r.span };
+  if (r.status === "not_run") return { file: r.file, hits: 0, total: r.total, status: "not_run" };
   return { file: r.file, hits: 0, total: r.total, status: "error", error: r.error };
 }
 
 function report(records) {
-  const summary = summarize(records);
+  const planned = cases.map((c) => ({ file: c.file, total: c.entities.length }));
+  const summary = summarize(records, planned);
   const { k, n } = summary.recall;
   const [lo, hi] = summary.wilson95;
   console.log(`recall: ${k}/${n} = ${n ? (k / n).toFixed(3) : "n/a"}`);
   console.log(`wilson95: [${lo.toFixed(3)}, ${hi.toFixed(3)}]`);
+  const rc = summary.recall_completed;
+  const re = summary.recall_end_to_end;
+  console.log(`span_coverage: ${rc.k}/${rc.n} = ${rc.n ? (rc.k / rc.n).toFixed(3) : "n/a"}`);
+  console.log(`span_coverage_end_to_end: ${re.k}/${re.n} = ${re.n ? (re.k / re.n).toFixed(3) : "n/a"}`);
+  console.log(`char_coverage: ${summary.char_coverage.masked}/${summary.char_coverage.total} = ${summary.char_coverage.completed.toFixed(3)}`);
+  console.log(`over_redaction_rate: ${summary.over_redaction_rate.toFixed(3)}`);
   for (const r of records) {
     if (r.status === "ok") console.log(`case ${r.file}: ${r.hits}/${r.total}`);
     else if (r.status === "error") console.log(`case ${r.file}: error ${r.error}`);
@@ -112,7 +133,7 @@ async function worker() {
     if (i >= rest.length) return;
     const c = rest[i];
     if (Date.now() >= deadline) {
-      results[i] = { file: c.file, hits: 0, total: 0, status: "not_run" };
+      results[i] = { file: c.file, hits: 0, total: c.entities.length, status: "not_run" };
       continue;
     }
     try {

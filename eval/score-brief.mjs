@@ -108,9 +108,9 @@ const unmatchedBriefIds = briefEntries
 console.log(`brief entries: ${briefEntries.length}`);
 console.log(`truth entries: ${truthEntries.length}`);
 console.log(
-  `validator-clean entries (no citation_not_found and no missing_source): ${cleanCount}/${briefEntries.length}`,
+  `citations_resolved (no citation_not_found and no missing_source): ${cleanCount}/${briefEntries.length}`,
 );
-console.log(`truth recall (matched/total): ${matchedCount}/${truthEntries.length}`);
+console.log(`truth_entry_match (matched/total): ${matchedCount}/${truthEntries.length}`);
 console.log(`category agreement among matched: ${agreeCount}/${matchedCount}`);
 console.log(`unmatched truth ids: ${unmatchedTruthIds.length > 0 ? unmatchedTruthIds.join(", ") : "(none)"}`);
 console.log(
@@ -121,11 +121,14 @@ if (jsonOutPath !== null && jsonOutPath !== undefined) {
   const payload = {
     briefEntries: briefEntries.length,
     truthEntries: truthEntries.length,
-    validatorClean: cleanCount,
-    matched: matchedCount,
+    citationsResolved: cleanCount,
+    truthEntryMatch: matchedCount,
     categoryAgree: agreeCount,
     unmatchedTruthIds,
     scoredAt: new Date().toISOString(),
+    // Deprecated aliases.
+    validatorClean: cleanCount,
+    matched: matchedCount,
   };
   try {
     writeFileSync(jsonOutPath, JSON.stringify(payload, null, 2) + "\n");
