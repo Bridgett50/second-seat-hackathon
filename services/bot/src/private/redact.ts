@@ -11,6 +11,14 @@
 
 export const MOCK_LABEL = "Glimmer: MOCK (TODO(glimmer-hosting))";
 export const GLIMMER_MODEL = "meta-models/Muse-Glimmer-30B";
+export const GLIMMER_MAX_TOKENS_DEFAULT = 2048;
+
+export function glimmerMaxTokens(): number {
+  const raw = process.env["GLIMMER_MAX_TOKENS"] ?? "";
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return GLIMMER_MAX_TOKENS_DEFAULT;
+}
 
 export interface TextSpan {
   start: number;
@@ -202,9 +210,10 @@ export class GlimmerClient implements Redactor {
     const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      signal: AbortSignal.timeout(600_000),
+      signal: AbortSignal.timeout(180_000),
       body: JSON.stringify({
         model: GLIMMER_MODEL,
+        max_tokens: glimmerMaxTokens(),
         temperature: 1.0,
         top_p: 0.95,
         top_k: 64,
