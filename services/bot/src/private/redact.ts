@@ -172,6 +172,22 @@ export class MockRedactor implements Redactor {
   }
 }
 
+export function extractGlimmerJson(body: unknown): unknown {
+  const choice = (body as { choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown }; finish_reason?: unknown }> })?.choices?.[0];
+  const message = choice?.message;
+  const content = typeof message?.content === "string" ? message.content : "";
+  const reasoning = typeof message?.reasoning_content === "string" ? message.reasoning_content : "";
+  const text = content !== "" ? content : reasoning;
+  const fr = typeof choice?.finish_reason === "string" ? choice.finish_reason : "unknown";
+  const unfenced = text.replace(/```/g, "");
+  const start = unfenced.indexOf("{");
+  const end = unfenced.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error(`glimmer: no JSON in reply (finish_reason=${fr}, len=${text.length})`);
+  }
+  return JSON.parse(unfenced.slice(start, end + 1)) as unknown;
+}
+
 export class GlimmerClient implements Redactor {
   readonly label = `Glimmer: ${GLIMMER_MODEL}`;
   private baseUrl: string;
@@ -224,13 +240,19 @@ export class GlimmerClient implements Redactor {
       }),
     });
     if (!res.ok) throw new Error(`glimmer: chat failed ${res.status}`);
-    const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = body.choices?.[0]?.message?.content ?? "";
-    const unfenced = content.replace(/```/g, "");
-    const start = unfenced.indexOf("{");
-    const end = unfenced.lastIndexOf("}");
-    const jsonText = start !== -1 && end !== -1 && end >= start ? unfenced.slice(start, end + 1) : unfenced;
-    return JSON.parse(jsonText) as unknown;
+    const raw = await res.text();
+    const rawDir = process.env["GLIMMER_RAW_DIR"] ?? "";
+    if (rawDir !== "") {
+      mkdirSync(rawDir, { recursive: true });
+      appendFileSync(join(rawDir, "glimmer-raw.jsonl"), `${JSON.stringify({ kind, status: res.status, raw })}\n`);
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(raw) as unknown;
+    } catch {
+      throw new Error(`glimmer: no JSON in reply (finish_reason=unknown, len=${raw.length})`);
+    }
+    return extractGlimmerJson(body);
   }
 }
 
@@ -248,7 +270,7 @@ export function defaultRedactor(): Redactor {
 // --- PNG box masking with node:zlib only (8-bit RGB/RGBA, non-interlaced) ---
 
 import { inflateSync, deflateSync } from "node:zlib";
-import { readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 

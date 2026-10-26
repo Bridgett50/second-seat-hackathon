@@ -63,33 +63,70 @@ export function parseFrames(text: string): Frame[] {
 
 export interface GlimmerLive {
   recall: string;
+  n: number;
 }
 
-export function loadGlimmerLive(webRoot: string = WEB_ROOT): GlimmerLive | null {
+function tryGlimmerFile(path: string): GlimmerLive | null {
   try {
-    const raw = JSON.parse(
-      readFileSync(
-        join(
-          webRoot,
-          "..",
-          "..",
-          "services",
-          "bot",
-          "fixtures",
-          "glimmer-live-eval.json",
-        ),
-        "utf8",
-      ),
-    ) as {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as {
       health_status?: unknown;
       eval_returncode?: unknown;
       eval_stdout?: unknown;
     };
     if (raw.health_status !== 200 || raw.eval_returncode !== 0) return null;
     if (typeof raw.eval_stdout !== "string") return null;
+    if (raw.eval_stdout.includes("error Unexpected") || raw.eval_stdout.includes(" (error)")) {
+      return null;
+    }
     const recall = parseGlimmerRecall(raw.eval_stdout);
     if (recall === null) return null;
-    return { recall };
+    const denom = recall.split("/")[1]?.trim();
+    const n = denom === undefined ? NaN : Number.parseInt(denom, 10);
+    if (!Number.isInteger(n) || n <= 0) return null;
+    return { recall, n };
+  } catch {
+    return null;
+  }
+}
+
+export function loadGlimmerLive(webRoot: string = WEB_ROOT): GlimmerLive | null {
+  const primary = join(webRoot, "..", "..", "services", "bot", "fixtures", "glimmer-live-eval.json");
+  const first = tryGlimmerFile(primary);
+  if (first !== null) return first;
+  return tryGlimmerFile(join(webRoot, "..", "..", "services", "bot", "fixtures", "glimmer-live-eval-n10.json"));
+}
+
+export interface SeededScore {
+  catchK: number;
+  catchN: number;
+  catchLo: number;
+  catchHi: number;
+  falseK: number;
+  falseN: number;
+}
+
+export function loadSeededScore(webRoot: string = WEB_ROOT): SeededScore | null {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(webRoot, "..", "..", "eval", "results", "support-score-frozen-live.json"), "utf8"),
+    ) as {
+      catch?: { k?: unknown; n?: unknown; ci?: { lo?: unknown; hi?: unknown } };
+      falseAlarm?: { k?: unknown; n?: unknown };
+    };
+    const ck = raw.catch?.k;
+    const cn = raw.catch?.n;
+    const lo = raw.catch?.ci?.lo;
+    const hi = raw.catch?.ci?.hi;
+    const fk = raw.falseAlarm?.k;
+    const fn = raw.falseAlarm?.n;
+    if (
+      typeof ck !== "number" || typeof cn !== "number" ||
+      typeof lo !== "number" || typeof hi !== "number" ||
+      typeof fk !== "number" || typeof fn !== "number"
+    ) {
+      return null;
+    }
+    return { catchK: ck, catchN: cn, catchLo: lo, catchHi: hi, falseK: fk, falseN: fn };
   } catch {
     return null;
   }
@@ -170,6 +207,7 @@ export interface DemoData {
   payloadDemo: PayloadDemo | null;
   glimmerLive: GlimmerLive | null;
   briefScore: BriefScore | null;
+  seededScore: SeededScore | null;
   heroChain: HeroChainData | null;
 }
 
@@ -233,6 +271,7 @@ export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
   }
   const glimmerLive = loadGlimmerLive(webRoot);
   const briefScore = loadBriefScore(webRoot);
+  const seededScore = loadSeededScore(webRoot);
   const heroChain = loadHeroChain(webRoot);
-  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive, briefScore, heroChain };
+  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive, briefScore, seededScore, heroChain };
 }

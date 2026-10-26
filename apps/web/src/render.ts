@@ -50,6 +50,24 @@ export interface PayloadDemo {
 
 export interface GlimmerLiveInfo {
   recall: string;
+  n?: number;
+}
+
+export interface SeededScore {
+  catchK: number;
+  catchN: number;
+  catchLo: number;
+  catchHi: number;
+  falseK: number;
+  falseN: number;
+}
+
+export function seededScoreLine(score: SeededScore): string {
+  return (
+    `Seeded errors caught ${score.catchK}/${score.catchN} ` +
+    `(95% CI ${score.catchLo.toFixed(2)}–${score.catchHi.toFixed(2)}), ` +
+    `false alarms ${score.falseK}/${score.falseN}`
+  );
 }
 
 export interface BriefScore {
@@ -85,6 +103,7 @@ export interface RenderOpts {
   payloadDemo?: PayloadDemo | null;
   glimmerLive?: GlimmerLiveInfo | null;
   briefScore?: BriefScore | null;
+  seededScore?: SeededScore | null;
   heroChain?: HeroChainProof | null;
 }
 
@@ -180,7 +199,8 @@ export function renderBriefPage(
   const chipHtml = chips
     .map((c) => {
       if (c.stage === "glimmer-redact" && glimmerLive !== null) {
-        return `<span class="model-chip" data-stage="glimmer-redact" data-status="live">glimmer-redact: live · recall ${esc(glimmerLive.recall)}</span>`;
+        const suffix = glimmerLive.n !== undefined ? ` (n=${glimmerLive.n})` : "";
+        return `<span class="model-chip" data-stage="glimmer-redact" data-status="live">glimmer-redact: live · recall ${esc(glimmerLive.recall)}${suffix}</span>`;
       }
       return c.status === "run"
         ? `<span class="model-chip" data-stage="${esc(c.stage)}" data-status="run">${esc(c.stage)}: ${esc(c.model as string)}</span>`
@@ -214,15 +234,15 @@ export function renderBriefPage(
     )
     .join("\n")}</section>`;
 
-  const badgeHtml = pressure
-    .filter((p) => p.segmentIds.length > 0)
+  const renderedBadges = pressure.filter((p) => p.segmentIds.length > 0);
+  const badgeHtml = renderedBadges
     .map(
       (p) =>
         `<a class="pressure-badge" href="#seg-${esc(p.segmentIds[0] as string)}">pressure: ${esc(p.id)}</a>`,
     )
     .join("\n");
 
-  const badgeCount = pressure.length;
+  const badgeCount = renderedBadges.length;
 
   const frameById = new Map(frames.map((f) => [f.id, f]));
   const frameIds = new Set<string>();
@@ -264,7 +284,7 @@ export function renderBriefPage(
     )
     .join("\n");
 
-  const pressureChecks = pressure
+  const pressureChecks = renderedBadges
     .map(
       (p) =>
         `<label class="pressure-check"><input type="checkbox" class="pressure-review" data-pressure="${esc(p.id)}"> Reviewed: ${esc(p.text)} ` +
@@ -283,8 +303,15 @@ export function renderBriefPage(
     );
   }
   if (glimmerLive !== null) {
+    const suffix = glimmerLive.n !== undefined ? ` (n=${glimmerLive.n})` : "";
     scoreLines.push(
-      `<p id="scores-glimmer">Glimmer recall ${esc(glimmerLive.recall)}</p>`,
+      `<p id="scores-glimmer">Glimmer recall ${esc(glimmerLive.recall)}${suffix}</p>`,
+    );
+  }
+  const seededScore = opts.seededScore ?? null;
+  if (seededScore !== null) {
+    scoreLines.push(
+      `<p id="scores-seeded">${esc(seededScoreLine(seededScore))}</p>`,
     );
   }
   const scoresHtml =

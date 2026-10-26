@@ -163,6 +163,21 @@ test("one badge per pressure id, held count matches checkboxes", async ({
   expect(status).toBe(expected);
 });
 
+test("scores and badges are consistent", async ({ page }) => {
+  await page.goto(`${DEMO}?static=1`);
+  await expect(page.locator("#scores-seeded")).toContainText("9/9");
+  const chip = page.locator('[data-stage="glimmer-redact"]');
+  await expect(chip).toContainText("(n=10)");
+  await expect(chip).not.toContainText("0/39");
+  const badgeTexts = await page.locator("a.pressure-badge").allTextContents();
+  expect(badgeTexts.length).toBeGreaterThan(0);
+  expect(new Set(badgeTexts).size).toBe(badgeTexts.length);
+  const status = await page.locator("#draft-status").textContent();
+  const m = status?.match(/review the (\d+) pressure/);
+  expect(m).not.toBeNull();
+  expect(Number((m as RegExpMatchArray)[1])).toBe(badgeTexts.length);
+});
+
 test("Scores card visible above the fold at 1280x800", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${DEMO}?static=1`);
