@@ -20,6 +20,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
+      - name: Truth hash seal (scorer refuses on mismatch)
+        run: node eval/check-hashes.mjs
       - name: Secret scan (no keys in tracked files)
         run: |
           # The scan patterns live in this file, so exclude it from its own scan.

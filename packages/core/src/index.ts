@@ -1,4 +1,5 @@
 export type { TranscriptSegment, Frame } from "./types.js";
+export * from "./evidence/index.js";
 export type {
   ScreenResult,
   IncomingKind,
