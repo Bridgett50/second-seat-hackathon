@@ -223,7 +223,7 @@ export function loadGlimmerAttempts(webRoot: string = WEB_ROOT): GlimmerAttempt[
       const reason = rescore["span_coverage_reason"];
       (attempt as GlimmerAttempt & { spanNote?: string }).spanNote =
         rescore["span_coverage"] === null
-          ? `span coverage / over-redaction: ${typeof reason === "string" ? reason : "not re-scorable"}`
+          ? "span coverage / over-redaction not re-scorable (predictions not keyed to cases)"
           : "span coverage / over-redaction: see rescore.json";
     }
     if (attempt !== null) attempts.push(attempt);

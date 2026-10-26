@@ -403,7 +403,7 @@ export function renderBriefPage(
         `<p id="scores-glimmer">Glimmer legacy entity disappearance ${glimmerLive.recallK}/${glimmerLive.recallN} on completed cases · latest attempt ${esc(glimmerLive.status ?? "unknown")} (${glimmerLive.completedK}/${glimmerLive.completedN} cases, ${glimmerLive.fullK}/${glimmerLive.fullN} full batch)</p>`,
       );
       const spanNote = (glimmerLive as { spanNote?: string }).spanNote;
-      if (spanNote) scoreLines.push(`<p id="scores-glimmer-span">requests ${glimmerLive.completedK}/${glimmerLive.completedN} · legacy ${glimmerLive.recallK}/${glimmerLive.recallN} completed · ${glimmerLive.fullK}/${glimmerLive.fullN} end-to-end · ${esc(spanNote)}</p>`);
+      if (spanNote) scoreLines[scoreLines.length - 1] = scoreLines[scoreLines.length - 1]!.replace("</p>", ` · requests ${glimmerLive.completedK}/${glimmerLive.completedN} · ${esc(spanNote)}</p>`);
       const previous = (glimmerLive.attempts ?? []).filter((a) => a.ranAt !== glimmerLive.ranAt);
       const previousHtml =
         previous.length > 0
