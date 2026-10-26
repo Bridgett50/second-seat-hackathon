@@ -99,16 +99,49 @@ test("loads with only localhost allowed on the network", async ({
   await context.close();
 });
 
+const HERO_VIEWPORTS = [
+  { width: 1280, height: 800 },
+  { width: 720, height: 1280 },
+];
+
+for (const vp of HERO_VIEWPORTS) {
+  test(`hero above the fold at ${vp.width}x${vp.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(vp);
+    await page.goto(`${DEMO}?static=1`);
+    await expect(page.locator(".replay-label")).toContainText(
+      "Replay of recorded brief",
+    );
+    for (const sel of ["#conflict", "a.pressure-badge", "#draft-status"]) {
+      const box = await page.locator(sel).first().boundingBox();
+      expect(box).not.toBeNull();
+      expect((box as { y: number; height: number }).y + (box as { y: number; height: number }).height).toBeLessThanOrEqual(
+        vp.height,
+      );
+    }
+    const fitsWidth = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth <=
+        document.documentElement.clientWidth + 1,
+    );
+    expect(fitsWidth).toBe(true);
+    const chip = page.locator('[data-stage="glimmer-redact"]');
+    await expect(chip).toHaveAttribute("data-status", "live");
+    await expect(chip).toContainText(/recall \d+\/\d+/);
+  });
+}
+
 test("desktop screenshot", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto(DEMO);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`${DEMO}?static=1`);
   await expect(page.locator("h1")).toBeVisible();
-  await page.screenshot({ path: "proof/desktop.png", fullPage: true });
+  await page.screenshot({ path: "proof/desktop.png", fullPage: false });
 });
 
 test("mobile screenshot", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 1280 });
-  await page.goto(DEMO);
+  await page.goto(`${DEMO}?static=1`);
   await expect(page.locator("h1")).toBeVisible();
-  await page.screenshot({ path: "proof/mobile-9x16.png", fullPage: true });
+  await page.screenshot({ path: "proof/mobile-9x16.png", fullPage: false });
 });

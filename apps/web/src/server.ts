@@ -18,6 +18,7 @@ const server = createServer((req, res) => {
         liveDev: LIVE_DEV,
         pressureFallback: demo.pressureFallback,
         payloadDemo: demo.payloadDemo,
+        glimmerLive: demo.glimmerLive,
       },
     );
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

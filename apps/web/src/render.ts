@@ -48,10 +48,15 @@ export interface PayloadDemo {
   note?: string;
 }
 
+export interface GlimmerLiveInfo {
+  recall: string;
+}
+
 export interface RenderOpts {
   liveDev?: boolean;
   pressureFallback?: PressureItem[];
   payloadDemo?: PayloadDemo | null;
+  glimmerLive?: GlimmerLiveInfo | null;
 }
 
 function esc(s: string): string {
@@ -127,12 +132,16 @@ export function renderBriefPage(
   }
   const flagged = brief.entries.filter((e) => e.flags.length > 0);
 
+  const glimmerLive = opts.glimmerLive ?? null;
   const chipHtml = chips
-    .map((c) =>
-      c.status === "run"
+    .map((c) => {
+      if (c.stage === "glimmer-redact" && glimmerLive !== null) {
+        return `<span class="model-chip" data-stage="glimmer-redact" data-status="live">glimmer-redact: live · recall ${esc(glimmerLive.recall)}</span>`;
+      }
+      return c.status === "run"
         ? `<span class="model-chip" data-stage="${esc(c.stage)}" data-status="run">${esc(c.stage)}: ${esc(c.model as string)}</span>`
-        : `<span class="model-chip" data-stage="${esc(c.stage)}" data-status="not run">${esc(c.stage)}: not run</span>`,
-    )
+        : `<span class="model-chip" data-stage="${esc(c.stage)}" data-status="not run">${esc(c.stage)}: not run</span>`;
+    })
     .join("\n");
 
   const categoryHtml = [...byCategory.entries()]
@@ -141,7 +150,7 @@ export function renderBriefPage(
         `<section class="category" data-category="${esc(cat)}"><h2>${esc(cat)}</h2>\n${entries
           .map(
             (e) =>
-              `<article class="entry" id="entry-${esc(e.id)}"><p>${esc(e.text)}</p>` +
+              `<article class="entry replay-item" id="entry-${esc(e.id)}"><p>${esc(e.text)}</p>` +
               (e.speaker ? `<p class="speaker">${esc(e.speaker)}</p>` : "") +
               (e.flags.length > 0
                 ? `<p class="flags">flags: ${e.flags.map(esc).join(", ")}</p>`
@@ -210,7 +219,7 @@ export function renderBriefPage(
   const segmentHtml = transcriptSegments
     .map(
       (s) =>
-        `<li id="seg-${esc(s.id)}" data-time="${esc(s.time)}"><strong>[${esc(s.time)}] ${esc(s.speaker)}:</strong> ${esc(s.text)}</li>`,
+        `<li class="replay-item" id="seg-${esc(s.id)}" data-time="${esc(s.time)}"><strong>[${esc(s.time)}] ${esc(s.speaker)}:</strong> ${esc(s.text)}</li>`,
     )
     .join("\n");
 
@@ -242,24 +251,39 @@ export function renderBriefPage(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brief demo — Second Seat</title>
 <style>
-body{font-family:Georgia,serif;max-width:56rem;margin:0 auto;padding:1rem;line-height:1.5;color:#1a1a1a}
-.model-chip{display:inline-block;border:1px solid #555;border-radius:999px;padding:.1rem .6rem;margin:.15rem;font-size:.85rem}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;max-width:60rem;margin:0 auto;padding:1rem;line-height:1.5;color:#1a1a1a;background:#f7f7f5}
+h1{font-size:1.5rem;margin:.5rem 0}
+h2{font-size:1.1rem;margin:0 0 .5rem}
+.replay-label{margin:.25rem 0 .75rem;color:#333}
+#model-strip{margin:.25rem 0}
+.model-chip{display:inline-block;border:1px solid #555;border-radius:999px;padding:.1rem .6rem;margin:.15rem;font-size:.85rem;background:#fff}
+.model-chip[data-status="live"]{border-color:#1c6b2a;background:#e9f5ec;color:#14501f}
+#hero{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:.75rem 0}
+#pressure-badges{grid-column:1/-1}
 .pressure-badge{display:inline-block;background:#8f1d1d;color:#fff;border-radius:.3rem;padding:.15rem .6rem;margin:.15rem;text-decoration:none}
+#conflict,#draft,.category,#flagged,#transcript,#frames,#what-left-this-server{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem;min-width:0}
+#hero #conflict,#hero #draft{margin:0;min-width:0}
+#conflict blockquote{margin:.5rem 0 0;padding:.5rem .75rem;border-left:3px solid #8f1d1d;background:#fafafa;border-radius:0 .4rem .4rem 0}
+#draft-status{font-weight:600}
+.pressure-check{display:block;margin:.35rem 0}
 .region-overlay{position:absolute;border:2px solid red}
 .frame-box{position:relative;min-height:4rem;background:#ddd}
-#draft{border:2px solid #333;padding:1rem;margin-top:1rem}
+img{max-width:100%;height:auto}
+pre{white-space:pre-wrap;word-break:break-word}
 button{margin:.25rem;padding:.4rem .9rem;font:inherit}
 footer{margin-top:2rem;border-top:1px solid #999;padding-top:.5rem}
+[hidden]{display:none!important}
+@media (max-width:45rem){#hero{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <h1>Vendor brief — demo</h1>
-<p class="replay-label">Replay of an owner-supplied recording. Analysis precomputed ${esc(brief.createdAt)}</p>
+<p class="replay-label">Replay of recorded brief — Analysis precomputed ${esc(brief.createdAt)}</p>
 <div id="model-strip">${chipHtml}</div>
+<section id="hero" aria-label="Demo hero">
 <div id="pressure-badges">${badgeHtml}</div>
 ${conflictCard(brief)}
-${categoryHtml}
-${flaggedHtml}
 <section id="draft">
 <h2>Draft reply</h2>
 <p id="draft-status">${esc(heldText(badgeCount))}</p>
@@ -271,6 +295,9 @@ ${pressureChecks}
 <button type="button" id="btn-copy" disabled>Copy</button>
 <p id="draft-note"></p>
 </section>
+</section>
+${categoryHtml}
+${flaggedHtml}
 <section id="transcript"><h2>Transcript</h2><ol id="transcript-lines">${segmentHtml}</ol></section>
 <section id="frames"><h2>Frames</h2>${frameHtml}</section>
 ${payloadHtml}
@@ -307,13 +334,18 @@ copyBtn.addEventListener("click",function(){
   else{var t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();document.execCommand("copy");document.body.removeChild(t);}
   note.textContent="Copied locally. Nothing was sent.";
 });
-var items=document.querySelectorAll("#transcript-lines li");
-var i=0;
-for(var k=0;k<items.length;k++){items[k].hidden=true;}
-var timer=setInterval(function(){
-  if(i>=items.length){clearInterval(timer);return;}
-  items[i].hidden=false;i++;
-},60);
+var replayItems=document.querySelectorAll(".replay-item");
+var reduceMotion=!!(window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+var staticMode=false;
+try{staticMode=new URLSearchParams(window.location.search).get("static")==="1";}catch(e){}
+if(!reduceMotion&&!staticMode){
+  var i=0;
+  for(var k=0;k<replayItems.length;k++){replayItems[k].hidden=true;}
+  var timer=setInterval(function(){
+    if(i>=replayItems.length){clearInterval(timer);return;}
+    replayItems[i].hidden=false;i++;
+  },250);
+}
 refresh();
 })();
 </script>

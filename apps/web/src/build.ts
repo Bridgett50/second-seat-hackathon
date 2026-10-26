@@ -13,6 +13,7 @@ const html = renderBriefPage(
     liveDev: false,
     pressureFallback: demo.pressureFallback,
     payloadDemo: demo.payloadDemo,
+    glimmerLive: demo.glimmerLive,
   },
 );
 const outDir = join(WEB_ROOT, "dist-site", "briefs", "demo");
