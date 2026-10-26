@@ -34,7 +34,7 @@ describe.skipIf(!recordedExists)("brief:run fixture mode (network disabled)", ()
     try {
       const fixturePath = RECORDED_PATH;
       const { brief, outDir } = await runBrief({
-        inputDir: "services/bot/fixtures/hero-input",
+        inputDir: join(RECORDED_PATH, "..", "hero-input"),
         outDir: join(tmp, "out"),
         fixturePath,
       });
