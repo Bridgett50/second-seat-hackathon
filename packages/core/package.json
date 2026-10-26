@@ -1,0 +1,24 @@
+{
+  "name": "@second-seat/core",
+  "version": "0.1.0",
+  "description": "Second Seat core: transcript types and outgoing safeguards. Zero runtime dependencies, no network.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "demo": "tsc -p tsconfig.json && node dist/src/demo.js"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3",
+    "vitest": "2.1.8"
+  }
+}
