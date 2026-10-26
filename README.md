@@ -30,5 +30,6 @@ a changed hash.
 - Base seal: commit `3690746` (2026-10-26T12:14:14-05:00, SHA256SUMS
   sha256 `1e68350f2b4a3b50cd1fc7dff67b52ee5eaf7ace3d66247dc0085faaf67b3614`).
 - Hero slide `eval/truth/frame-01-10.png` added 2026-10-26T12:16:05-05:00,
-  sha256 `739bba9433e1abadc20e6e1c3e003a2f4f94ee325246782d55baf42dffb07db1`
-  (only its line appended to `eval/truth/SHA256SUMS`).
+  regenerated 2026-10-26T12:21:14-05:00 (title separator set as hyphen-minus),
+  sha256 `ca1aebcc701b77e86e5d85c74ddd6edf814d68b5bdc52f4c2640f5709cee3d06`
+  (only its line changed in `eval/truth/SHA256SUMS`).
