@@ -11,7 +11,9 @@
     "test": "vitest run",
     "check-hashes": "node check-hashes.mjs",
     "preshield": "pnpm --filter @second-seat/core build",
-    "shield": "node shield.mjs"
+    "shield": "node shield.mjs",
+    "prescore-brief": "pnpm --filter @second-seat/core build",
+    "score-brief": "node score-brief.mjs"
   },
   "devDependencies": {
     "@second-seat/core": "workspace:*",

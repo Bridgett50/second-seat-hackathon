@@ -124,9 +124,6 @@ export function validateBrief(brief: EvidenceBrief, input: ValidateInput): Evide
           addFlag(next, "citation_not_found");
         } else {
           citedSegments.push(segment);
-          if (next.speaker !== null && segment.speaker !== next.speaker) {
-            addFlag(next, "citation_not_found");
-          }
         }
       } else {
         const frame = citation.frameId === null ? undefined : frames.get(citation.frameId);
@@ -155,6 +152,14 @@ export function validateBrief(brief: EvidenceBrief, input: ValidateInput): Evide
           }
         }
       }
+    }
+
+    if (
+      next.speaker !== null &&
+      citedSegments.length > 0 &&
+      citedSegments.every((segment) => segment.speaker !== next.speaker)
+    ) {
+      addFlag(next, "citation_not_found");
     }
 
     if (next.category === "action_item" && next.acceptance !== "established") {
