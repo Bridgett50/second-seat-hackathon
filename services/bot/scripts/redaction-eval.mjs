@@ -21,7 +21,8 @@ for (const c of cases) {
     const result = await redactor.redactText(text);
     maskedText = result.maskedText;
     spanTotal += result.spans.length;
-  } catch {
+  } catch (err) {
+    console.log(`case ${c.file}: error ${err?.message ?? err}`);
     for (const e of c.entities) {
       total += 1;
       misses.push(`${c.file}: ${e} (error)`);
