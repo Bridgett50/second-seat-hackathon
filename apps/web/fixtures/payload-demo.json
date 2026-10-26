@@ -1,0 +1,1 @@
+{"fields":[{"masked":"[REDACTED_EMAIL]","meaning":"vendor email address"},{"masked":"[REDACTED_NAME]","meaning":"owner name"},{"masked":"[REDACTED_PHONE]","meaning":"vendor phone number"}],"maskedText":"Vendor [REDACTED_NAME] ([REDACTED_EMAIL], [REDACTED_PHONE]) sent the proposal slide.","note":"Example only. Real uploads are masked the same way before anything is stored."}
