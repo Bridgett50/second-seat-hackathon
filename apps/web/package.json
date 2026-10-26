@@ -6,11 +6,14 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node dist/src/build.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "serve": "node dist/src/server.js",
+    "e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.0",
     "typescript": "5.6.3",
     "vitest": "2.1.8"
   }
