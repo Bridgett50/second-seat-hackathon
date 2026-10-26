@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { WEB_ROOT, loadDemo, loadGlimmerLive } from "../src/loadFixtures.js";
+import { WEB_ROOT, loadDemo, loadGlimmerAttempts, loadGlimmerLive } from "../src/loadFixtures.js";
 import { parseGlimmerRecall } from "../src/modelStrip.js";
 import { renderBriefPage, type Brief } from "../src/render.js";
 
@@ -37,7 +37,7 @@ describe("glimmer live chip", () => {
     expect(loadGlimmerLive("/nonexistent-root")).toBeNull();
   });
 
-  it("rejects the invalid 0/39 primary run and falls back to the n10 file", () => {
+  it("keeps the invalid 0/39 run as an invalid attempt instead of hiding it", () => {
     const primary = JSON.parse(
       readFileSync(
         join(WEB_ROOT, "..", "..", "services", "bot", "fixtures", "glimmer-live-eval.json"),
@@ -46,21 +46,15 @@ describe("glimmer live chip", () => {
     ) as { eval_stdout: string };
     expect(primary.eval_stdout).toContain("error Unexpected");
     expect(parseGlimmerRecall(primary.eval_stdout)).toBe("0/39");
-    const fallback = JSON.parse(
-      readFileSync(
-        join(WEB_ROOT, "..", "..", "services", "bot", "fixtures", "glimmer-live-eval-n10.json"),
-        "utf8",
-      ),
-    ) as { eval_stdout: string };
-    expect(fallback.eval_stdout).not.toContain("error Unexpected");
-    expect(fallback.eval_stdout).not.toContain(" (error)");
-    expect(parseGlimmerRecall(fallback.eval_stdout)).toBe("10/10");
-    expect(loadGlimmerLive()).toEqual({ recall: "10/10", n: 10 });
+    const attempts = loadGlimmerAttempts();
+    const invalid = attempts.find((a) => a.recallK === 0 && a.recallN === 39);
+    expect(invalid?.status).toBe("invalid");
+    expect(invalid?.completedK).toBe(0);
   });
 
-  it("renders the chip with the denominator and never shows 0/39", () => {
+  it("renders the newest-attempt headline with completed and full-batch recall", () => {
     const demo = loadDemo();
-    expect(demo.glimmerLive).toEqual({ recall: "10/10", n: 10 });
+    expect(demo.glimmerLive?.status).toBe("incomplete");
     const page = renderBriefPage(
       demo.brief,
       demo.segments,
@@ -72,11 +66,13 @@ describe("glimmer live chip", () => {
         glimmerLive: demo.glimmerLive,
       },
     );
-    expect(page).toContain("recall 10/10 (n=10)");
-    expect(page).not.toContain("0/39");
+    expect(page).toContain(
+      "Latest attempt Oct 26 2026 21:27 UTC — incomplete: 6/8 cases completed · 18/29 recall on completed cases · 18/39 full batch",
+    );
+    expect(page).toContain("Previous runs");
   });
 
-  it("renders the glimmer-redact chip as live with parsed recall", () => {
+  it("renders the glimmer-redact chip as incomplete for the unfinished headline run", () => {
     const demo = loadDemo();
     const page = renderBriefPage(
       demo.brief,
@@ -90,8 +86,9 @@ describe("glimmer live chip", () => {
       },
     );
     expect(demo.glimmerLive).not.toBeNull();
-    expect(page).toContain('data-stage="glimmer-redact" data-status="live"');
-    expect(page).toContain(`recall ${demo.glimmerLive?.recall}`);
+    expect(page).toContain('data-stage="glimmer-redact" data-status="incomplete"');
+    expect(page).toContain("glimmer-redact: incomplete");
+    expect(page).not.toContain('data-stage="glimmer-redact" data-status="live"');
   });
 
   it("keeps existing behavior when the fixture is absent", () => {
