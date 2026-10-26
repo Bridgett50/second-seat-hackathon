@@ -217,6 +217,15 @@ export function loadGlimmerAttempts(webRoot: string = WEB_ROOT): GlimmerAttempt[
     const raw = (dirname(c.file) !== fixtures && meta !== null ? { ...meta, ...base } : base) as GlimmerRaw;
     const summary = c.summary === null ? null : (readJsonFile(c.summary) as EvalSummary | null);
     const attempt = parseGlimmerAttempt(relative(join(fixtures, "..", "..", ".."), c.file), c.basename, raw, summary);
+    // Driver fix: surface rescore.json span-metric status next to the legacy numbers.
+    const rescore = readJsonFile(join(dirname(c.file), "rescore.json")) as Record<string, unknown> | null;
+    if (attempt !== null && rescore !== null && dirname(c.file) !== fixtures) {
+      const reason = rescore["span_coverage_reason"];
+      (attempt as GlimmerAttempt & { spanNote?: string }).spanNote =
+        rescore["span_coverage"] === null
+          ? "span coverage / over-redaction not re-scorable (predictions not keyed to cases)"
+          : "span coverage / over-redaction: see rescore.json";
+    }
     if (attempt !== null) attempts.push(attempt);
   }
   attempts.sort((a, b) => (a.ranAt < b.ranAt ? 1 : a.ranAt > b.ranAt ? -1 : 0));
@@ -279,25 +288,25 @@ export function loadBriefScore(webRoot: string = WEB_ROOT): BriefScore | null {
         "utf8",
       ),
     ) as Record<string, unknown>;
-    const keys = [
-      "briefEntries",
-      "truthEntries",
-      "validatorClean",
-      "matched",
-      "categoryAgree",
-    ] as const;
-    const values = keys.map((k) => raw[k]);
+    const resolved = {
+      briefEntries: raw["briefEntries"],
+      truthEntries: raw["truthEntries"],
+      validatorClean: raw["citationsResolved"] ?? raw["validatorClean"],
+      matched: raw["truthEntryMatch"] ?? raw["matched"],
+      categoryAgree: raw["categoryAgree"],
+    };
+    const values = [resolved.briefEntries, resolved.truthEntries, resolved.validatorClean, resolved.matched, resolved.categoryAgree];
     if (
       !values.every((v) => typeof v === "number" && Number.isFinite(v as number))
     ) {
       return null;
     }
     return {
-      briefEntries: raw["briefEntries"] as number,
-      truthEntries: raw["truthEntries"] as number,
-      validatorClean: raw["validatorClean"] as number,
-      matched: raw["matched"] as number,
-      categoryAgree: raw["categoryAgree"] as number,
+      briefEntries: resolved.briefEntries as number,
+      truthEntries: resolved.truthEntries as number,
+      validatorClean: resolved.validatorClean as number,
+      matched: resolved.matched as number,
+      categoryAgree: resolved.categoryAgree as number,
     };
   } catch {
     return null;

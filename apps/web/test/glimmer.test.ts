@@ -67,7 +67,7 @@ describe("glimmer live chip", () => {
       },
     );
     expect(page).toContain(
-      "Latest attempt Oct 26 2026 21:27 UTC — incomplete: 6/8 cases completed · 18/29 recall on completed cases · 18/39 full batch",
+      "Latest attempt Oct 26 2026 21:27 UTC — incomplete: 6/8 cases completed · 18/29 legacy entity disappearance on completed cases · 18/39 full batch",
     );
     expect(page).toContain("Previous runs");
   });

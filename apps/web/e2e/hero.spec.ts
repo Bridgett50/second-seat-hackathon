@@ -279,6 +279,6 @@ test("Scores card visible above the fold at 1280x800", async ({ page }) => {
       (box as { y: number; height: number }).height,
   ).toBeLessThanOrEqual(800);
   await expect(page.locator("#scores-glimmer")).toContainText(
-    /Glimmer recall \d+\/\d+/,
+    /Glimmer legacy entity disappearance \d+\/\d+/,
   );
 });

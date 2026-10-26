@@ -98,7 +98,7 @@ export function glimmerHeadline(a: GlimmerLiveInfo): string | null {
   return (
     `Latest attempt ${formatAttemptDate(a.ranAt)} — ${a.status}: ` +
     `${a.completedK}/${a.completedN} cases completed · ` +
-    `${a.recallK}/${a.recallN} recall on completed cases · ` +
+    `${a.recallK}/${a.recallN} legacy entity disappearance on completed cases · ` +
     `${a.fullK}/${a.fullN} full batch`
   );
 }
@@ -140,8 +140,8 @@ export interface BriefScore {
 export function briefScoreLine(score: BriefScore): string {
   return (
     `categories ${score.categoryAgree}/${score.matched} · ` +
-    `recall ${score.matched}/${score.truthEntries} · ` +
-    `validator-clean ${score.validatorClean}/${score.briefEntries}`
+    `truth entry match ${score.matched}/${score.truthEntries} · ` +
+    `citations resolved ${score.validatorClean}/${score.briefEntries}`
   );
 }
 
@@ -276,7 +276,7 @@ export function renderBriefPage(
           !isMockOrFailedRun(lastByStage.get(c.stage));
         if (live) {
           const suffix = glimmerLive.n !== undefined ? ` (n=${glimmerLive.n})` : "";
-          return `<span class="model-chip" data-stage="glimmer-redact" data-status="live">glimmer-redact: live · recall ${esc(glimmerLive.recall)}${suffix}</span>`;
+          return `<span class="model-chip" data-stage="glimmer-redact" data-status="live">glimmer-redact: live · legacy entity disappearance ${esc(glimmerLive.recall)}${suffix}</span>`;
         }
         return `<span class="model-chip" data-stage="glimmer-redact" data-status="incomplete">glimmer-redact: incomplete</span>`;
       }
@@ -400,8 +400,10 @@ export function renderBriefPage(
     const headline = glimmerHeadline(glimmerLive);
     if (headline !== null) {
       scoreLines.push(
-        `<p id="scores-glimmer">Glimmer recall ${glimmerLive.recallK}/${glimmerLive.recallN} on completed cases · latest attempt ${esc(glimmerLive.status ?? "unknown")} (${glimmerLive.completedK}/${glimmerLive.completedN} cases, ${glimmerLive.fullK}/${glimmerLive.fullN} full batch)</p>`,
+        `<p id="scores-glimmer">Glimmer legacy entity disappearance ${glimmerLive.recallK}/${glimmerLive.recallN} on completed cases · latest attempt ${esc(glimmerLive.status ?? "unknown")} (${glimmerLive.completedK}/${glimmerLive.completedN} cases, ${glimmerLive.fullK}/${glimmerLive.fullN} full batch)</p>`,
       );
+      const spanNote = (glimmerLive as { spanNote?: string }).spanNote;
+      if (spanNote) scoreLines[scoreLines.length - 1] = scoreLines[scoreLines.length - 1]!.replace("</p>", ` · requests ${glimmerLive.completedK}/${glimmerLive.completedN} · ${esc(spanNote)}</p>`);
       const previous = (glimmerLive.attempts ?? []).filter((a) => a.ranAt !== glimmerLive.ranAt);
       const previousHtml =
         previous.length > 0
@@ -411,7 +413,7 @@ export function renderBriefPage(
                 (a) =>
                   `<li>${esc(a.label ?? a.ranAt ?? "run")} — ${esc(a.status ?? "unknown")}: ` +
                   `${a.completedK ?? "?"}/${a.completedN ?? "?"} cases completed · ` +
-                  `${a.recallK ?? "?"}/${a.recallN ?? "?"} recall · ` +
+                  `${a.recallK ?? "?"}/${a.recallN ?? "?"} legacy entity disappearance · ` +
                   `${esc(attemptMetaLine(a))}</li>`,
               )
               .join("") +
@@ -426,7 +428,7 @@ export function renderBriefPage(
     } else {
       const suffix = glimmerLive.n !== undefined ? ` (n=${glimmerLive.n})` : "";
       scoreLines.push(
-        `<p id="scores-glimmer">Glimmer recall ${esc(glimmerLive.recall)}${suffix}</p>`,
+        `<p id="scores-glimmer">Glimmer legacy entity disappearance ${esc(glimmerLive.recall)}${suffix}</p>`,
       );
     }
   }
