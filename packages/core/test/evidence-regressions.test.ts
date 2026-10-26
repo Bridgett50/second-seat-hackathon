@@ -175,6 +175,50 @@ describe("wrong speaker", () => {
   });
 });
 
+describe("relaxed speaker rule", () => {
+  it("accepts an entry citing its speaker's line plus another person's reply", () => {
+    const brief = makeBrief([
+      makeEntry({
+        speaker: "Alice",
+        citations: [
+          { kind: "segment", segmentId: "t-00:10", frameId: null, region: null },
+          { kind: "segment", segmentId: "t-00:20", frameId: null, region: null },
+        ],
+      }),
+    ]);
+    const result = validateBrief(brief, BASE_INPUT);
+    expect(result.entries[0]?.flags).not.toContain("citation_not_found");
+  });
+
+  it("flags an entry whose speaker said none of the cited lines", () => {
+    const brief = makeBrief([
+      makeEntry({
+        speaker: "Alice",
+        citations: [
+          { kind: "segment", segmentId: "t-00:20", frameId: null, region: null },
+          { kind: "segment", segmentId: "t-00:40", frameId: null, region: null },
+        ],
+      }),
+    ]);
+    const result = validateBrief(brief, BASE_INPUT);
+    expect(result.entries[0]?.flags).toContain("citation_not_found");
+  });
+
+  it("flags an entry citing its speaker's line alongside an unknown segment id", () => {
+    const brief = makeBrief([
+      makeEntry({
+        speaker: "Alice",
+        citations: [
+          { kind: "segment", segmentId: "t-00:10", frameId: null, region: null },
+          { kind: "segment", segmentId: "t-99:99", frameId: null, region: null },
+        ],
+      }),
+    ]);
+    const result = validateBrief(brief, BASE_INPUT);
+    expect(result.entries[0]?.flags).toContain("citation_not_found");
+  });
+});
+
 describe("fabricated id t-99:99", () => {
   it("flags a citation to a segment that does not exist", () => {
     const brief = makeBrief([
