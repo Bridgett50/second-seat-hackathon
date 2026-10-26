@@ -12,7 +12,8 @@
     "brief:run": "tsc -p tsconfig.json && node dist/src/brief/cli.js",
     "redaction:eval": "node scripts/redaction-eval.mjs",
     "pretypecheck": "pnpm --filter @second-seat/core build",
-    "pretest": "pnpm --filter @second-seat/core build"
+    "pretest": "pnpm --filter @second-seat/core build",
+    "preredaction:eval": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@second-seat/core": "workspace:*"
