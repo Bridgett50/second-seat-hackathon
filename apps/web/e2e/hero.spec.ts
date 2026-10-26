@@ -12,6 +12,16 @@ test("citation click jumps to the segment and shows it", async ({ page }) => {
   await expect(page.locator(`[id="${(href as string).slice(1)}"]`)).toBeVisible();
 });
 
+test("no image-upload or live-call controls (text-only core flow)", async ({
+  page,
+}) => {
+  await page.goto(DEMO);
+  await expect(page.locator("#upload-png")).toHaveCount(0);
+  await expect(page.locator('input[accept=".png,image/png"]')).toHaveCount(0);
+  await expect(page.locator("#live-call-btn")).toHaveCount(0);
+  await expect(page.getByText("Start live call")).toHaveCount(0);
+});
+
 test("pressure badge href targets an existing segment", async ({ page }) => {
   await page.goto(DEMO);
   const badges = page.locator("a.pressure-badge");

@@ -4,7 +4,9 @@
  * - `ImageClient` interface: live (`LiveImageClient`, via fetch) and
  *   recorded (`FixtureImageClient`) implementations share it.
  * - Model `muse-image-1.0` via POST https://api.meta.ai/v1/images/generations.
- * - Fixture mode is the default (no network). Without an API key, only
+ * - Fixture mode is the default (no network). Live mode is experimental,
+ *   outside the text-only core flow, and off by default (requires
+ *   SECOND_SEAT_EXPERIMENTAL_IMAGES=1). Without an API key, only
  *   fixture mode is available. Never prints the key.
  */
 
@@ -31,6 +33,14 @@ function apiKey(): string | null {
     process.env["MUSE_API_KEY"] ??
     "";
   return key === "" ? null : key;
+}
+
+/**
+ * Image generation is experimental, outside the text-only core flow, and off
+ * by default. Live calls require SECOND_SEAT_EXPERIMENTAL_IMAGES=1.
+ */
+export function imagesExperimentalEnabled(): boolean {
+  return process.env["SECOND_SEAT_EXPERIMENTAL_IMAGES"] === "1";
 }
 
 /** True when no API key is configured: fixture-only. */
@@ -116,6 +126,9 @@ export class LiveImageClient implements ImageClient {
   readonly mode = "live" as const;
 
   async generate(prompt: string): Promise<GeneratedImage> {
+    if (!imagesExperimentalEnabled()) {
+      throw new Error("image: experimental and off by default (set SECOND_SEAT_EXPERIMENTAL_IMAGES=1)");
+    }
     const key = apiKey();
     if (key === null) throw new Error("image: live mode but no API key (set MODEL_API_KEY)");
     let lastError: unknown = null;
@@ -152,9 +165,12 @@ export class LiveImageClient implements ImageClient {
   }
 }
 
-/** Fixture mode default; live only when IMAGE_MODE=live with an API key. */
+/** Fixture mode default; live only when IMAGE_MODE=live with an API key and SECOND_SEAT_EXPERIMENTAL_IMAGES=1. */
 export function defaultImageClient(): ImageClient {
   if ((process.env["IMAGE_MODE"] ?? "fixture") === "live") {
+    if (!imagesExperimentalEnabled()) {
+      throw new Error("image: experimental and off by default (set SECOND_SEAT_EXPERIMENTAL_IMAGES=1)");
+    }
     if (isImageFixtureOnly()) throw new Error("image: IMAGE_MODE=live but no API key (set MODEL_API_KEY)");
     return new LiveImageClient();
   }
