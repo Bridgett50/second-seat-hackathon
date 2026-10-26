@@ -4,7 +4,7 @@ Pre-existing: the Second Seat idea and an earlier prototype in a separate repo (
 
 ## What it is
 
-Second Seat is a text-input meeting decision assistant: I paste in meeting text, Glimmer redacts the PII, I review the redacted text, and Spark writes a short brief with citations: what was offered, what was asked, what needs a decision. Pressure items are held for review. I edit a reply and copy it out myself. Second Seat never sends a reply to the vendor. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. I decide. That is the whole deal.
+Second Seat is a text-input meeting decision assistant: I paste in meeting text, Glimmer redacts the PII, I review the redacted text, and Spark writes a short brief with citations: what was offered, what was asked, what needs a decision. Pressure items are held for review. I edit a reply and copy it out myself. Second Seat never sends a reply to the vendor. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
 
 ## Why it matters
 

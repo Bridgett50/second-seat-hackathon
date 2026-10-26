@@ -188,6 +188,84 @@ test("scores and badges are consistent", async ({ page }) => {
   expect(Number((m as RegExpMatchArray)[1])).toBe(badgeTexts.length);
 });
 
+test("draft approval: approve then copy copies the draft text exactly", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto(DEMO);
+  for (const box of await page.locator(".pressure-review").all()) {
+    await box.check();
+  }
+  await page.locator("#btn-approve").click();
+  await expect(page.locator("#btn-copy")).toBeEnabled();
+  await page.locator("#btn-copy").click();
+  const draftValue = await page.locator("#draft-text").inputValue();
+  const statusText = await page.locator("#draft-status").textContent();
+  const pasted = await page.evaluate(() => navigator.clipboard.readText());
+  expect(pasted).toBe(draftValue);
+  expect(pasted).not.toBe(statusText);
+});
+
+test("draft approval: editing after approve disables Copy", async ({
+  page,
+}) => {
+  await page.goto(DEMO);
+  for (const box of await page.locator(".pressure-review").all()) {
+    await box.check();
+  }
+  await page.locator("#btn-approve").click();
+  await expect(page.locator("#btn-copy")).toBeEnabled();
+  const draftValue = await page.locator("#draft-text").inputValue();
+  await page.locator("#draft-text").fill(`${draftValue} (edited)`);
+  await expect(page.locator("#btn-copy")).toBeDisabled();
+});
+
+test("draft approval: Reject disables Copy", async ({ page }) => {
+  await page.goto(DEMO);
+  for (const box of await page.locator(".pressure-review").all()) {
+    await box.check();
+  }
+  await page.locator("#btn-approve").click();
+  await expect(page.locator("#btn-copy")).toBeEnabled();
+  await page.locator("#btn-reject").click();
+  await expect(page.locator("#btn-copy")).toBeDisabled();
+});
+
+test("draft approval: changing meeting disables Copy", async ({ page }) => {
+  await page.goto(DEMO);
+  for (const box of await page.locator(".pressure-review").all()) {
+    await box.check();
+  }
+  await page.locator("#btn-approve").click();
+  await expect(page.locator("#btn-copy")).toBeEnabled();
+  await page.locator("#meeting-select").selectOption("");
+  await expect(page.locator("#btn-copy")).toBeDisabled();
+});
+
+test("draft approval: blank zero-flag meeting approves and copies typed text", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto(DEMO);
+  await page.locator("#meeting-select").selectOption("");
+  await page.locator("#draft-text").fill("Blank meeting reply, typed by hand.");
+  await expect(page.locator("#btn-approve")).toBeEnabled();
+  await page.locator("#btn-approve").click();
+  await expect(page.locator("#btn-copy")).toBeEnabled();
+  await page.locator("#btn-copy").click();
+  const pasted = await page.evaluate(() => navigator.clipboard.readText());
+  expect(pasted).toBe("Blank meeting reply, typed by hand.");
+});
+
+test("draft has no send action", async ({ page }) => {
+  await page.goto(DEMO);
+  await expect(
+    page.locator("#draft").getByRole("button", { name: /send/i }),
+  ).toHaveCount(0);
+});
+
 test("Scores card visible above the fold at 1280x800", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${DEMO}?static=1`);

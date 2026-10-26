@@ -47,6 +47,24 @@ describe("screenOutgoing stays negation-safe and allows neutral text", () => {
   }
 });
 
+describe("screenOutgoing scopes negation to its own clause", () => {
+  it("blocks when a later clause commits despite an earlier negation", () => {
+    expect(
+      screenOutgoing("I cannot attend tomorrow. I accept your offer.").allowed,
+    ).toBe(false);
+  });
+
+  it("blocks approve+proceed despite an earlier negated clause", () => {
+    expect(
+      screenOutgoing("We will not proceed. Approved, please proceed.").allowed,
+    ).toBe(false);
+  });
+
+  it("allows negation inside the same clause as the commitment", () => {
+    expect(screenOutgoing("I can't accept your offer.").allowed).toBe(true);
+  });
+});
+
 describe("classifyIncoming", () => {
   it("labels offers", () => {
     expect(classifyIncoming("Here is our offer on the house.").kind).toBe("offer");
