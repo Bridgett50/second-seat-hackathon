@@ -5,6 +5,9 @@
  * Rule: the bot drafts replies, but only a person may commit Bridgett to
  * an offer or a purchase. Anything that reads as acceptance or as an
  * instruction to proceed is blocked; negated or neutral text stays allowed.
+ *
+ * Commitment detection is advisory: a clause-scoped heuristic, not a
+ * guarantee. A person reviews every draft before it is copied or sent.
  */
 
 export interface ScreenResult {
@@ -34,26 +37,57 @@ const GO_AHEAD_PATTERN =
   /\bgo\s+ahead\s+with\s+the\s+(purchase|order|payment)\b|\bproceed\s+with\s+the\s+(purchase|order|payment)\b/i;
 
 /**
+ * A clause is blocked only when it matches a commitment pattern with no
+ * negation before the commitment verb within the same clause. A negation
+ * in one clause never clears a commitment in another clause.
+ */
+function clauseBlockReason(clause: string): string | null {
+  const checks: [RegExp, string][] = [
+    [GO_AHEAD_PATTERN, "blocked: instruction to proceed with a purchase/order/payment"],
+    [APPROVE_PROCEED_PATTERN, "blocked: approve combined with proceed"],
+    [ACCEPT_PATTERN, "blocked: acceptance language"],
+  ];
+  for (const [pattern, reason] of checks) {
+    const match = pattern.exec(clause);
+    if (match?.index !== undefined) {
+      const before = clause.slice(0, match.index);
+      if (!NEGATION_PATTERN.test(before)) {
+        return reason;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Screen a draft outgoing message. Returns `{ allowed: false }` with a
- * reason when the text commits to an offer or a purchase; otherwise
- * `{ allowed: true }`. Negated acceptance ("can't accept ...") is allowed.
+ * reason when a clause commits to an offer or a purchase; otherwise
+ * `{ allowed: true }`. Negation only clears the clause it appears in
+ * ("can't accept ..." is allowed, but "I cannot attend tomorrow.
+ * I accept your offer." is blocked). Advisory heuristic: a person reviews.
  */
 export function screenOutgoing(text: string): ScreenResult {
   const input = text.trim();
   if (input.length === 0) {
     return { allowed: true, reason: "empty text carries no commitment" };
   }
-  if (NEGATION_PATTERN.test(input)) {
-    return { allowed: true, reason: "negation-safe: no commitment detected" };
+  const clauses = input.split(/[.!?;]+|,\s*but\b/i);
+  for (const clause of clauses) {
+    const reason = clauseBlockReason(clause);
+    if (reason !== null) {
+      return { allowed: false, reason };
+    }
   }
-  if (GO_AHEAD_PATTERN.test(input)) {
-    return { allowed: false, reason: "blocked: instruction to proceed with a purchase/order/payment" };
-  }
-  if (APPROVE_PROCEED_PATTERN.test(input)) {
+  // Driver fix: "approved" and "proceed" may sit in different clauses
+  // ("The purchase is approved; kindly proceed."). Block when some
+  // un-negated clause approves and some un-negated clause says proceed.
+  const unNegated = (word: RegExp) =>
+    clauses.some((c) => {
+      const m = word.exec(c);
+      return m !== null && !NEGATION_PATTERN.test(c.slice(0, m.index));
+    });
+  if (unNegated(/approv\w*/i) && unNegated(/\bproceed\b/i)) {
     return { allowed: false, reason: "blocked: approve combined with proceed" };
-  }
-  if (ACCEPT_PATTERN.test(input)) {
-    return { allowed: false, reason: "blocked: acceptance language" };
   }
   return { allowed: true };
 }

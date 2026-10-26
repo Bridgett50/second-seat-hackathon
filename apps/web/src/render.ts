@@ -376,6 +376,18 @@ export function renderBriefPage(
     )
     .join("\n");
 
+  const draftMeetingId =
+    brief.createdAt.length > 0 ? brief.createdAt : "demo-meeting";
+  const draftRunId = `run-${draftMeetingId}`;
+  const draftInitial =
+    brief.entries[0]?.text ??
+    "Thanks for sharing the details. I will review and follow up.";
+  const draftInitialAttr = esc(draftInitial);
+  const draftInitialHtml = draftInitialAttr.replace(
+    /<\/textarea/gi,
+    "&lt;/textarea",
+  );
+
   const briefScore = opts.briefScore ?? null;
   const scoreLines: string[] = [];
   if (briefScore !== null) {
@@ -472,7 +484,7 @@ h2{font-size:1.1rem;margin:0 0 .5rem}
 #scores p{margin:.25rem 0;font-size:.9rem}
 #hero #conflicts,#hero #draft{margin:0;min-width:0}
 #conflicts blockquote{margin:.5rem 0 0;padding:.5rem .75rem;border-left:3px solid #8f1d1d;background:#fafafa;border-radius:0 .4rem .4rem 0}
-#draft-status{font-weight:600}
+#draft-status{font-weight:600}#draft-text{display:block;width:100%;box-sizing:border-box}#draft label{font-size:.85rem}#draft p{margin:.3rem 0}#draft-advisory{font-size:.8rem;color:#555}
 .pressure-check{display:block;margin:.35rem 0}
 .region-overlay{position:absolute;border:2px solid red}
 .frame-box{position:relative;min-height:4rem;background:#ddd}
@@ -491,13 +503,20 @@ footer{margin-top:2rem;border-top:1px solid #999;padding-top:.5rem}
 <section id="hero" aria-label="Demo hero">
 <div id="pressure-badges">${badgeHtml}</div>
 ${conflictsSection(brief)}
-<section id="draft">
+<section id="draft" data-run-id="${esc(draftRunId)}">
 <h2>Draft reply</h2>
 <p id="draft-status">${esc(heldText(badgeCount))}</p>
+<label for="draft-text">Draft reply text</label>
+<textarea id="draft-text" rows="2">${draftInitialHtml}</textarea>
+<label for="meeting-select">Meeting</label>
+<select id="meeting-select">
+<option value="${esc(draftMeetingId)}" data-flags="${badgeCount}" data-draft="${draftInitialAttr}" selected>${esc(draftMeetingId)}</option>
+<option value="" data-flags="0" data-draft="">blank meeting</option>
+</select>
 ${pressureChecks}
 <p class="citations">${pressure.map((p) => p.segmentIds.map((s) => `<a href="#seg-${esc(s)}">[${esc(s)}]</a>`).join(" ")).join(" ")}</p>
+<p id="draft-advisory">Commitment checks are advisory.</p>
 <button type="button" id="btn-approve">Approve</button>
-<button type="button" id="btn-edit">Edit</button>
 <button type="button" id="btn-reject">Reject</button>
 <button type="button" id="btn-copy" disabled>Copy</button>
 <p id="draft-note"></p>
@@ -515,30 +534,47 @@ ${payloadHtml}
 <script type="application/json" id="transcript-data">${transcriptJson}</script>
 <script>
 (function(){
-var approved=false;
+function hashDraft(text){var h=0x811c9dc5;for(var i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,0x01000193);}return (h>>>0).toString(16);}
+var section=document.getElementById("draft");
+var meetingSelect=document.getElementById("meeting-select");
+var draftText=document.getElementById("draft-text");
+var approveBtn=document.getElementById("btn-approve");
 var copyBtn=document.getElementById("btn-copy");
 var note=document.getElementById("draft-note");
 var status=document.getElementById("draft-status");
+var state={meetingId:meetingSelect.value,runId:section.getAttribute("data-run-id")||"demo-run",draft:draftText.value,approval:null};
+function selectedOption(){if(meetingSelect.selectedOptions&&meetingSelect.selectedOptions[0]){return meetingSelect.selectedOptions[0];}return meetingSelect.options[meetingSelect.selectedIndex];}
+function isApproved(){return state.approval!==null&&state.approval.draftHash===hashDraft(state.draft)&&state.approval.runId===state.runId&&state.approval.meetingId===state.meetingId;}
 function refresh(){
   var boxes=Array.prototype.slice.call(document.querySelectorAll(".pressure-review"));
-  var allReviewed=boxes.length>0 && boxes.every(function(b){return b.checked;});
-  copyBtn.disabled=!(approved&&allReviewed);
-  if(!approved){var n=document.querySelectorAll(".pressure-badge").length;status.textContent="Held: review the "+n+" pressure item"+(n===1?"":"s")+" first";}
+  var opt=selectedOption();
+  var zeroFlags=opt&&opt.getAttribute("data-flags")==="0";
+  var allReviewed=boxes.every(function(b){return b.checked;});
+  var approved=isApproved();
+  approveBtn.disabled=!(zeroFlags||allReviewed)||approved;
+  copyBtn.disabled=!approved;
+  if(approved){status.textContent="Approved \u2014 copy and send it yourself.";}
+  else{var n=document.querySelectorAll(".pressure-badge").length;status.textContent="Held: review the "+n+" pressure item"+(n===1?"":"s")+" first";}
 }
-document.getElementById("btn-approve").addEventListener("click",function(){
-  approved=true;note.textContent="Approved locally. Nothing was sent.";refresh();
-});
-document.getElementById("btn-edit").addEventListener("click",function(){
-  note.textContent="Edit mode: adjust the draft text above, then Approve.";refresh();
+approveBtn.addEventListener("click",function(){
+  state.draft=draftText.value;state.approval={draftHash:hashDraft(state.draft),runId:state.runId,meetingId:state.meetingId};note.textContent="Approved locally. Nothing was sent.";refresh();
 });
 document.getElementById("btn-reject").addEventListener("click",function(){
-  approved=false;note.textContent="Rejected locally. Nothing was sent.";refresh();
+  state.approval=null;note.textContent="Rejected locally. Nothing was sent.";refresh();
+});
+draftText.addEventListener("input",function(){
+  state.draft=draftText.value;state.approval=null;refresh();
+});
+meetingSelect.addEventListener("change",function(){
+  var opt=selectedOption();
+  state.meetingId=meetingSelect.value;state.draft=(opt&&opt.getAttribute("data-draft"))||"";draftText.value=state.draft;state.approval=null;note.textContent="Meeting changed locally. Approval cancelled.";refresh();
 });
 Array.prototype.forEach.call(document.querySelectorAll(".pressure-review"),function(b){
   b.addEventListener("change",refresh);
 });
 copyBtn.addEventListener("click",function(){
-  var text=status.textContent||"";
+  if(!isApproved()){return;}
+  var text=draftText.value;
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text);}
   else{var t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();document.execCommand("copy");document.body.removeChild(t);}
   note.textContent="Copied locally. Nothing was sent.";
