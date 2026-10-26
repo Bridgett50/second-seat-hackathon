@@ -15,7 +15,7 @@ import { EVIDENCE_BRIEF_JSON_SCHEMA } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "./costGuard.js";
 
 export const BRIEF_MODEL = "muse-spark-1.3";
-export const BRIEF_PROMPT_VERSION = "brief-v1";
+export const BRIEF_PROMPT_VERSION = "brief-v2";
 export const BRIEF_API_URL = "https://api.meta.ai/v1/chat/completions";
 export const BRIEF_MAX_COMPLETION_TOKENS = 16000;
 export const BRIEF_SEED = 42;
@@ -72,8 +72,8 @@ async function loadDeveloperPrompt(): Promise<string> {
   const { existsSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
   const candidates = [
-    new URL("../../prompts/brief-v1.txt", import.meta.url),
-    new URL("../../../prompts/brief-v1.txt", import.meta.url),
+    new URL("../../prompts/brief-v2.txt", import.meta.url),
+    new URL("../../../prompts/brief-v2.txt", import.meta.url),
   ];
   const url = candidates.find((u) => existsSync(fileURLToPath(u))) ?? candidates[0]!;
   return readFile(url, "utf8");
