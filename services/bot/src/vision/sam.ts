@@ -5,7 +5,10 @@
  *   "whiteboard" (default "slide"). Fixture mode is the default (no network).
  * - Live mode: POST https://api.meta.ai/v1/responses, model `sam-3.1`, one
  *   `input_text` noun phrase + `input_image`, Bearer MODEL_API_KEY.
- * - Only the 04a-masked image is ever sent.
+ * - Live mode is experimental, outside the text-only core flow, and off by
+ *   default (requires SECOND_SEAT_EXPERIMENTAL_IMAGES=1).
+ * - Only the 04a-masked image is ever sent. If masking fails, the frame is
+ *   dropped: an unmasked frame is never sent.
  * - Parse with `@meta-sam/parser` when installable, else a small local
  *   parser (x2/y2 inclusive, mask_encoding "one_bit").
  * - Every returned box is clamped/verified inside the frame; zero matches ->
@@ -68,6 +71,14 @@ function apiKey(): string | null {
 /** True when no API key is configured: fixture-only. */
 export function isSamFixtureOnly(): boolean {
   return apiKey() === null;
+}
+
+/**
+ * SAM segmentation is experimental, outside the text-only core flow, and off
+ * by default. Live calls require SECOND_SEAT_EXPERIMENTAL_IMAGES=1.
+ */
+export function imagesExperimentalEnabled(): boolean {
+  return process.env["SECOND_SEAT_EXPERIMENTAL_IMAGES"] === "1";
 }
 
 export function nounPhrase(concept: SamConcept): string {
@@ -322,6 +333,9 @@ export class LiveSamClient implements SamClient {
   readonly mode = "live" as const;
 
   async segmentShared(frame: SamFrame, concept: SamConcept = "slide"): Promise<SamResult> {
+    if (!imagesExperimentalEnabled()) {
+      throw new Error("sam: experimental and off by default (set SECOND_SEAT_EXPERIMENTAL_IMAGES=1)");
+    }
     const key = apiKey();
     if (key === null) throw new Error("sam: live mode but no API key (set MODEL_API_KEY)");
     const raw = await postResponses(buildRequestBody(frame, concept), key);
@@ -330,9 +344,12 @@ export class LiveSamClient implements SamClient {
   }
 }
 
-/** Fixture mode default; live only when SAM_MODE=live with an API key. */
+/** Fixture mode default; live only when SAM_MODE=live with an API key and SECOND_SEAT_EXPERIMENTAL_IMAGES=1. */
 export function defaultSamClient(fixtureRaw?: unknown): SamClient {
   if ((process.env["SAM_MODE"] ?? "fixture") === "live") {
+    if (!imagesExperimentalEnabled()) {
+      throw new Error("sam: experimental and off by default (set SECOND_SEAT_EXPERIMENTAL_IMAGES=1)");
+    }
     if (isSamFixtureOnly()) throw new Error("sam: SAM_MODE=live but no API key (set MODEL_API_KEY)");
     return new LiveSamClient();
   }

@@ -33,7 +33,7 @@ describe("renderBriefPage", () => {
     expect(html()).not.toContain("live-call-btn");
   });
 
-  it("shows a live-call button only with liveDev", () => {
+  it("never shows a live-call button, even with liveDev", () => {
     const demo = loadDemo();
     const page = renderBriefPage(
       demo.brief,
@@ -42,7 +42,13 @@ describe("renderBriefPage", () => {
       demo.runLog,
       { liveDev: true, payloadDemo: demo.payloadDemo },
     );
-    expect(page).toContain('id="live-call-btn"');
+    expect(page).not.toContain("live-call-btn");
+    expect(page).not.toContain("Start live call");
+  });
+
+  it("has no image-upload control", () => {
+    expect(html()).not.toContain("upload-png");
+    expect(html()).not.toContain('accept=".png');
   });
 
   it("renders Copy disabled in the initial HTML", () => {
