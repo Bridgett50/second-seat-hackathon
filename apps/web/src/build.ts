@@ -15,6 +15,7 @@ const html = renderBriefPage(
     payloadDemo: demo.payloadDemo,
     glimmerLive: demo.glimmerLive,
     briefScore: demo.briefScore,
+    seededScore: demo.seededScore,
     heroChain: demo.heroChain,
   },
 );

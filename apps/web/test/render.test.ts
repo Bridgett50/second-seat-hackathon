@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadDemo } from "../src/loadFixtures.js";
+import { loadDemo, loadSeededScore } from "../src/loadFixtures.js";
 import { renderBriefPage, type Brief } from "../src/render.js";
 
 const baseBrief: Brief = { createdAt: "2024-01-01", entries: [] };
@@ -80,6 +80,54 @@ describe("renderBriefPage", () => {
     expect(countBadges(page)).toBe(2);
     expect(boxes).toHaveLength(2);
     expect(heldStatus(page)).toBe("Held: review the 2 pressure items first");
+  });
+
+  it("renders no duplicate badge text", () => {
+    const page = renderBriefPage(baseBrief, [], [], [], {
+      pressureFallback: [
+        { id: "e8", text: "eight", segmentIds: ["t-00:01"] },
+        { id: "e9", text: "nine", segmentIds: ["t-00:02"] },
+        { id: "e10", text: "ten", segmentIds: ["t-00:03"] },
+      ],
+    });
+    const texts = page.match(/pressure: e\d+/g) ?? [];
+    expect(texts).toHaveLength(countBadges(page));
+    expect(new Set(texts).size).toBe(texts.length);
+  });
+
+  it("held count equals the rendered badge count, skipping items without segments", () => {
+    const page = renderBriefPage(baseBrief, [], [], [], {
+      pressureFallback: [
+        { id: "e8", text: "eight", segmentIds: ["t-00:01"] },
+        { id: "e9", text: "nine", segmentIds: [] },
+        { id: "e10", text: "ten", segmentIds: ["t-00:03"] },
+      ],
+    });
+    expect(countBadges(page)).toBe(2);
+    expect(heldStatus(page)).toBe("Held: review the 2 pressure items first");
+  });
+
+  it("loads the seeded score from the frozen live file", () => {
+    expect(loadSeededScore()).toEqual({
+      catchK: 9,
+      catchN: 9,
+      catchLo: 0.701,
+      catchHi: 1,
+      falseK: 0,
+      falseN: 4,
+    });
+    expect(loadSeededScore("/nonexistent-root")).toBeNull();
+  });
+
+  it("renders the seeded score line from file values and omits it when missing", () => {
+    const seeded = renderBriefPage(baseBrief, [], [], [], {
+      seededScore: { catchK: 9, catchN: 9, catchLo: 0.701, catchHi: 1, falseK: 0, falseN: 4 },
+    });
+    expect(seeded).toContain(
+      '<p id="scores-seeded">Seeded errors caught 9/9 (95% CI 0.70–1.00), false alarms 0/4</p>',
+    );
+    const missing = renderBriefPage(baseBrief, [], [], [], {});
+    expect(missing).not.toContain('id="scores-seeded"');
   });
 
   it("pluralizes the held message", () => {

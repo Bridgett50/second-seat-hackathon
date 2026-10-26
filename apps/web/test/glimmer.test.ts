@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadDemo, loadGlimmerLive } from "../src/loadFixtures.js";
+import { WEB_ROOT, loadDemo, loadGlimmerLive } from "../src/loadFixtures.js";
 import { parseGlimmerRecall } from "../src/modelStrip.js";
 import { renderBriefPage, type Brief } from "../src/render.js";
 
@@ -33,6 +35,45 @@ describe("glimmer live chip", () => {
 
   it("tolerates a missing fixture file", () => {
     expect(loadGlimmerLive("/nonexistent-root")).toBeNull();
+  });
+
+  it("rejects the invalid 0/39 primary run and falls back to the n10 file", () => {
+    const primary = JSON.parse(
+      readFileSync(
+        join(WEB_ROOT, "..", "..", "services", "bot", "fixtures", "glimmer-live-eval.json"),
+        "utf8",
+      ),
+    ) as { eval_stdout: string };
+    expect(primary.eval_stdout).toContain("error Unexpected");
+    expect(parseGlimmerRecall(primary.eval_stdout)).toBe("0/39");
+    const fallback = JSON.parse(
+      readFileSync(
+        join(WEB_ROOT, "..", "..", "services", "bot", "fixtures", "glimmer-live-eval-n10.json"),
+        "utf8",
+      ),
+    ) as { eval_stdout: string };
+    expect(fallback.eval_stdout).not.toContain("error Unexpected");
+    expect(fallback.eval_stdout).not.toContain(" (error)");
+    expect(parseGlimmerRecall(fallback.eval_stdout)).toBe("10/10");
+    expect(loadGlimmerLive()).toEqual({ recall: "10/10", n: 10 });
+  });
+
+  it("renders the chip with the denominator and never shows 0/39", () => {
+    const demo = loadDemo();
+    expect(demo.glimmerLive).toEqual({ recall: "10/10", n: 10 });
+    const page = renderBriefPage(
+      demo.brief,
+      demo.segments,
+      demo.frames,
+      demo.runLog,
+      {
+        pressureFallback: demo.pressureFallback,
+        payloadDemo: demo.payloadDemo,
+        glimmerLive: demo.glimmerLive,
+      },
+    );
+    expect(page).toContain("recall 10/10 (n=10)");
+    expect(page).not.toContain("0/39");
   });
 
   it("renders the glimmer-redact chip as live with parsed recall", () => {
