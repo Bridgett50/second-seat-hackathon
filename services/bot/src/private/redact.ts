@@ -105,8 +105,12 @@ export function detectPii(text: string): DetectedSpan[] {
   const email = /[A-Za-z0-9._%+-]+@(?:example\.com|example\.org|example\.net)/g;
   const phone = /(?:\+?1[-.\s]?)?\(?555\)?[-.\s]?\d{3}[-.\s]?\d{4}/g;
   const card = /\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g;
+  const amex = /\b3[47]\d{2} ?\d{6} ?\d{5}\b/g;
+  const iban = /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g;
+  const dobLong = /\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, \d{4}\b/g;
+  const dobSlash = /\b\d{1,2}\/\d{1,2}\/\d{4}\b/g;
   const account = /\baccount(?:\s+number)?[\s#:]*(\d{6,12})\b|\bacct[\s#:]*(\d{6,12})\b/gi;
-  const street = /\b\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Terrace|Ter)\b/g;
+  const street = /\b\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Court|Ct|Lane|Ln|Drive|Dr|Road|Rd|Boulevard|Blvd|Way|Place|Pl|Terrace|Ter)\b/g;
   let m: RegExpExecArray | null;
   while ((m = email.exec(text)) !== null) push(m.index, m.index + m[0].length, "email");
   while ((m = phone.exec(text)) !== null) push(m.index, m.index + m[0].length, "phone");
@@ -114,6 +118,10 @@ export function detectPii(text: string): DetectedSpan[] {
     const digits = m[0].replace(/\D/g, "");
     if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) push(m.index, m.index + m[0].length, "card");
   }
+  while ((m = amex.exec(text)) !== null) push(m.index, m.index + m[0].length, "card");
+  while ((m = iban.exec(text)) !== null) push(m.index, m.index + m[0].length, "iban");
+  while ((m = dobLong.exec(text)) !== null) push(m.index, m.index + m[0].length, "dob");
+  while ((m = dobSlash.exec(text)) !== null) push(m.index, m.index + m[0].length, "dob");
   while ((m = account.exec(text)) !== null) {
     const num = (m[1] ?? m[2] ?? "") as string;
     const idx = m[0].lastIndexOf(num);
