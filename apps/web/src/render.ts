@@ -504,7 +504,7 @@ ${flaggedHtml}
 ${heroChainHtml}
 ${payloadHtml}
 ${liveDev ? `<button type="button" id="live-call-btn">Start live call</button>` : ""}
-<footer>Nothing is ever sent.</footer>
+<footer>Second Seat never sends a reply to the vendor.</footer>
 <script type="application/json" id="transcript-data">${transcriptJson}</script>
 <script>
 (function(){
