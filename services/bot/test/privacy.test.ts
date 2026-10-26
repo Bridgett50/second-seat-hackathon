@@ -67,4 +67,33 @@ describe("phase 04a privacy", () => {
   it("validateGlimmerOutput rejects non-substring spans", () => {
     expect(() => validateGlimmerOutput("hello world", { spans: [{ start: 0, end: 50, label: "x" }], boxes: [] })).toThrow();
   });
+
+  it("pii-scoring fixtures: entities masked, clean text preserved", async () => {
+    const scoringDir = join(thisDir, "..", "fixtures", "pii-scoring");
+    const cases = JSON.parse(readFileSync(join(scoringDir, "cases.json"), "utf8")) as Array<{ file: string; entities: string[] }>;
+    for (const c of cases) {
+      const text = readFileSync(join(scoringDir, c.file), "utf8");
+      const payload = await buildRedactedUserMessage({
+        meetingId: "demo",
+        transcriptText: text,
+        framesSidecarText: "",
+        fixtureMode: true,
+      });
+      for (const e of c.entities) expect(payload).not.toContain(e);
+    }
+    const clean01 = await buildRedactedUserMessage({
+      meetingId: "demo",
+      transcriptText: readFileSync(join(scoringDir, "clean-01.txt"), "utf8"),
+      framesSidecarText: "",
+      fixtureMode: true,
+    });
+    expect(clean01).toContain("quarterly menu");
+    const clean02 = await buildRedactedUserMessage({
+      meetingId: "demo",
+      transcriptText: readFileSync(join(scoringDir, "clean-02.txt"), "utf8"),
+      framesSidecarText: "",
+      fixtureMode: true,
+    });
+    expect(clean02).toContain("harbor novel");
+  });
 });

@@ -2,7 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { pathToFileURL } from "node:url";
 import { createPrivacyGate, type PrivacyGate } from "@second-seat/bot/dist/src/private/gate.js";
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
-import { createSessionStore } from "./session.js";
+import { buildOfflineBrief, createSessionStore } from "./session.js";
+import { installNetGuard, outboundStats, recordAnalyzerCall } from "./netGuard.js";
 import { loadDemo } from "./loadFixtures.js";
 import { renderBriefPage, renderSessionPage } from "./render.js";
 
@@ -176,7 +177,19 @@ refresh();
 }
 
 export function createWebServer(deps?: WebServerDeps) {
-  const sessions = createSessionStore();
+  installNetGuard();
+  const testMode = process.env.SECOND_SEAT_TEST_MODE === "1";
+  const sessions = testMode
+    ? createSessionStore({
+        offline: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        redactor: new MockRedactor() as any,
+        analyzer: async (approvedText: string) => {
+          recordAnalyzerCall(approvedText);
+          return buildOfflineBrief(approvedText, []);
+        },
+      })
+    : createSessionStore();
   const gate = deps?.gate ?? createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
   const sent: { text: string } = deps?.lastSent ?? { text: "" };
   const sender =
@@ -217,6 +230,25 @@ export function createWebServer(deps?: WebServerDeps) {
     if (req.method === "GET" && url.pathname === "/gate") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(renderGatePage());
+      return;
+    }
+    if (url.pathname === "/api/test/outbound" || url.pathname === "/api/test/expire-approvals") {
+      if (!testMode) {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end("not found");
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/api/test/outbound") {
+        json(res, 200, outboundStats());
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/test/expire-approvals") {
+        sessions.expireApprovals();
+        json(res, 200, { expired: true });
+        return;
+      }
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("not found");
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/session/state") {
