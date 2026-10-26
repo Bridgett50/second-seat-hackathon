@@ -52,34 +52,102 @@ export interface Redactor {
   health(): Promise<{ ok: boolean; label: string }>;
 }
 
-export function validateGlimmerOutput(text: string, value: unknown): { spans: TextSpan[]; boxes: ImageBox[] } {
-  if (typeof value !== "object" || value === null) throw new Error("glimmer: output must be an object");
-  const v = value as { spans?: unknown; boxes?: unknown };
-  const rawSpans = v.spans ?? [];
-  const rawBoxes = v.boxes ?? [];
-  if (!Array.isArray(rawSpans)) throw new Error("glimmer: spans must be an array");
-  if (!Array.isArray(rawBoxes)) throw new Error("glimmer: boxes must be an array");
-  const spans: TextSpan[] = rawSpans.map((s) => {
+export const ALLOWED_LABELS = [
+  "person",
+  "phone",
+  "email",
+  "credit_card",
+  "account_number",
+  "iban",
+  "address",
+] as const;
+
+export type GlimmerLabel = (typeof ALLOWED_LABELS)[number];
+
+/**
+ * Fixed alias map: raw model labels (any case) -> canonical label.
+ * Lookup is case-insensitive: compare label.toUpperCase() against these keys.
+ */
+export const LABEL_ALIASES: Record<string, string> = {
+  PHONE: "phone",
+  PHONE_NUMBER: "phone",
+  EMAIL: "email",
+  EMAIL_ADDRESS: "email",
+  PERSON: "person",
+  PERSON_NAME: "person",
+  NAME: "person",
+  CREDIT_CARD: "credit_card",
+  CREDIT_CARD_NUMBER: "credit_card",
+  ACCOUNT_NUMBER: "account_number",
+  BANK_ACCOUNT_NUMBER: "account_number",
+  IBAN: "iban",
+  ADDRESS: "address",
+};
+
+export function normalizeGlimmerLabel(label: string): string {
+  const key = label.toUpperCase();
+  if (Object.hasOwn(LABEL_ALIASES, key)) return LABEL_ALIASES[key] as string;
+  return label.toLowerCase();
+}
+
+export interface ValidatedSpan extends TextSpan {
+  /** Raw label as the model returned it, before aliasing. */
+  originalLabel: string;
+}
+
+export interface ValidateGlimmerReplyResult {
+  spans: ValidatedSpan[];
+  boxes: ImageBox[];
+  /** True when the model found nothing (empty spans list is valid but needs a human look). */
+  needsReview: boolean;
+}
+
+/**
+ * Strict validator for a parsed Glimmer reply against the original input text.
+ * Requires spans and boxes arrays; rejects placeholder values (non-number
+ * start/end such as "n", non-string labels such as "s") and unknown labels
+ * after aliasing. Offsets are 0-based UTF-16 code unit offsets into input,
+ * start inclusive, end exclusive, and input.slice(start, end) is the entity.
+ */
+export function validateGlimmerReply(input: string, parsed: unknown): ValidateGlimmerReplyResult {
+  if (typeof parsed !== "object" || parsed === null) throw new Error("glimmer: output must be an object");
+  const v = parsed as { spans?: unknown; boxes?: unknown };
+  if (!Array.isArray(v.spans)) throw new Error("glimmer: spans must be an array");
+  if (!Array.isArray(v.boxes)) throw new Error("glimmer: boxes must be an array");
+  const spans: ValidatedSpan[] = v.spans.map((s) => {
     if (typeof s !== "object" || s === null) throw new Error("glimmer: span must be an object");
     const { start, end, label } = s as { start?: unknown; end?: unknown; label?: unknown };
+    // Rejects placeholder values: "n"/"s" and any other non-numbers/non-strings.
     if (!Number.isInteger(start) || !Number.isInteger(end)) throw new Error("glimmer: span start/end must be integers");
     if (typeof label !== "string" || label === "") throw new Error("glimmer: span label must be a string");
     const st = start as number;
     const en = end as number;
-    if (st < 0 || en > text.length || en <= st) throw new Error("glimmer: span out of range");
-    // Spans must be substrings: validate in code (no schema decoding).
-    const covered = text.slice(st, en);
-    if (!text.includes(covered)) throw new Error("glimmer: span is not a substring");
-    return { start: st, end: en, label };
+    if (st < 0 || en > input.length || en <= st) throw new Error("glimmer: span out of range");
+    // Slice must equal the covered text (offsets are UTF-16 code unit offsets).
+    const covered = input.slice(st, en);
+    if (covered.length === 0 || !input.includes(covered)) throw new Error("glimmer: span is not a substring");
+    const normalized = normalizeGlimmerLabel(label);
+    if (!(ALLOWED_LABELS as readonly string[]).includes(normalized)) {
+      throw new Error(`glimmer: unknown label "${label}"`);
+    }
+    return { start: st, end: en, label: normalized, originalLabel: label };
   });
-  const boxes: ImageBox[] = rawBoxes.map((b) => {
+  const boxes: ImageBox[] = v.boxes.map((b) => {
     if (typeof b !== "object" || b === null) throw new Error("glimmer: box must be an object");
     const { x, y, w, h, label } = b as { x?: unknown; y?: unknown; w?: unknown; h?: unknown; label?: unknown };
     for (const n of [x, y, w, h]) if (!Number.isInteger(n) || (n as number) < 0) throw new Error("glimmer: box coords must be non-negative integers");
     if (typeof label !== "string" || label === "") throw new Error("glimmer: box label must be a string");
     return { x: x as number, y: y as number, w: w as number, h: h as number, label: label as string };
   });
-  return { spans, boxes };
+  return { spans, boxes, needsReview: spans.length === 0 };
+}
+
+export function validateGlimmerOutput(text: string, value: unknown): { spans: TextSpan[]; boxes: ImageBox[] } {
+  const { spans, boxes } = validateGlimmerReply(text, value);
+  return {
+    spans: spans.map(({ start, end, label }) => ({ start, end, label })),
+    boxes,
+  };
 }
 
 function luhnOk(digits: string): boolean {
@@ -215,13 +283,20 @@ export function extractGlimmerJson(body: unknown): unknown {
   if (fr === "length") {
     throw new Error(`glimmer: finish_reason=length (len=${text.length})`);
   }
-  const unfenced = text.replace(/```/g, "");
-  const start = unfenced.indexOf("{");
-  const end = unfenced.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) {
+  if (text.trim() === "") {
     throw new Error(`glimmer: no JSON in reply (finish_reason=${fr}, len=${text.length})`);
   }
-  return JSON.parse(unfenced.slice(start, end + 1)) as unknown;
+  const unfenced = text.replace(/```/g, "").trim().replace(/^json\s+/i, "");
+  // The reply must be just the JSON object: surrounding prose is rejected.
+  // (Fenced code blocks are still accepted: the fences are stripped above.)
+  if (!unfenced.startsWith("{") || !unfenced.endsWith("}")) {
+    throw new Error(`glimmer: no JSON in reply (finish_reason=${fr}, len=${text.length})`);
+  }
+  try {
+    return JSON.parse(unfenced) as unknown;
+  } catch {
+    throw new Error(`glimmer: no JSON in reply (finish_reason=${fr}, len=${text.length})`);
+  }
 }
 
 export class GlimmerClient implements Redactor {
@@ -270,7 +345,7 @@ export class GlimmerClient implements Redactor {
       top_k: 64,
       chat_template_kwargs: { reasoning_strength: "low" },
       messages: [
-        { role: "system", content: `Return JSON only: {"spans":[{"start":n,"end":n,"label":s}],"boxes":[]}. Spans must be exact substrings for ${kind}.` },
+        { role: "system", content: `Return JSON only for ${kind}. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, and input.slice(start,end) must equal the entity text. Return {"spans":[],"boxes":[]} when nothing is found.` },
         { role: "user", content: text },
       ],
     };
