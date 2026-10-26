@@ -16,6 +16,10 @@
  * reasoning tokens and estimated USD.
  */
 
+import { dirname as dirnameFn, join as joinFn } from "node:path";
+import { readFileSync as readFileSyncFn } from "node:fs";
+import { fileURLToPath as fileURLToPathFn } from "node:url";
+
 export interface CallUsage {
   inputTokens: number;
   cachedTokens: number;
@@ -42,7 +46,26 @@ interface DailyState {
 }
 
 function botDir(): string {
-  return new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
+  // Resolve services/bot from both src/ and dist/src/ by walking up to the
+  // dir whose package.json name is "@second-seat/bot".
+  // Default cost log = services/bot/.cost-log.jsonl via costLogPath().
+  const fallback = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
+  try {
+    let dir = dirnameFn(fileURLToPathFn(import.meta.url));
+    for (;;) {
+      try {
+        const pkg = JSON.parse(readFileSyncFn(joinFn(dir, "package.json"), "utf8")) as { name?: string };
+        if (pkg?.name === "@second-seat/bot") return dir;
+      } catch {
+        /* keep walking */
+      }
+      const parent = dirnameFn(dir);
+      if (parent === dir) return fallback;
+      dir = parent;
+    }
+  } catch {
+    return fallback;
+  }
 }
 
 export function costLogPath(): string {

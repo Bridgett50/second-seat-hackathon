@@ -99,6 +99,16 @@ export async function buildUserMessage(input: BriefSourceInput): Promise<string>
   ].join("\n");
 }
 
+export async function buildRedactedUserMessage(input: BriefSourceInput): Promise<string> {
+  const { defaultRedactor } = await import("../private/redact.js");
+  const { logText, setRedactorLabel } = await import("../private/payloadLog.js");
+  const redactor = defaultRedactor();
+  setRedactorLabel(redactor.label);
+  const redacted = await redactor.redactText(input.transcriptText);
+  logText(redacted.maskedText);
+  return buildUserMessage({ ...input, transcriptText: redacted.maskedText });
+}
+
 interface ChatResponse {
   choices?: Array<{ message?: { content?: string | null } }>;
   usage?: {
@@ -208,7 +218,15 @@ export class MuseClient implements BriefClient {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
     await checkCapsPreCall();
-    const [developerPrompt, userMessage] = await Promise.all([loadDeveloperPrompt(), buildUserMessage(input)]);
+    // Phase 04a: transcript text passes redactText before Spark; log masked payload.
+    const { defaultRedactor } = await import("../private/redact.js");
+    const { logText, setRedactorLabel } = await import("../private/payloadLog.js");
+    const redactor = defaultRedactor();
+    setRedactorLabel(redactor.label);
+    const redacted = await redactor.redactText(input.transcriptText);
+    logText(redacted.maskedText);
+    const redactedInput: BriefSourceInput = { ...input, transcriptText: redacted.maskedText };
+    const [developerPrompt, userMessage] = await Promise.all([loadDeveloperPrompt(), buildUserMessage(redactedInput)]);
     // Rough pre-call guard: ~4 chars per token.
     checkPerCallTokenCap(Math.ceil((developerPrompt.length + userMessage.length) / 4), BRIEF_MAX_COMPLETION_TOKENS);
     const startedAt = Date.now();
