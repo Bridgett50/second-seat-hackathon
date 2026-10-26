@@ -5,7 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 import { runBrief } from "../src/brief/cli.js";
 
 const RECORDED = "services/bot/fixtures/hero-brief.recorded.json";
-const recordedExists = existsSync(RECORDED) || existsSync(join(process.cwd(), RECORDED));
+const RECORDED_FROM_CWD = join(process.cwd(), "fixtures/hero-brief.recorded.json");
+const RECORDED_PATH = existsSync(RECORDED)
+  ? RECORDED
+  : existsSync(join(process.cwd(), RECORDED))
+    ? join(process.cwd(), RECORDED)
+    : RECORDED_FROM_CWD;
+const recordedExists = existsSync(RECORDED_PATH);
 
 /**
  * End-to-end CLI run in fixture mode with the network disabled, against the
@@ -26,7 +32,7 @@ describe.skipIf(!recordedExists)("brief:run fixture mode (network disabled)", ()
       }),
     );
     try {
-      const fixturePath = existsSync(RECORDED) ? RECORDED : join(process.cwd(), RECORDED);
+      const fixturePath = RECORDED_PATH;
       const { brief, outDir } = await runBrief({
         inputDir: "services/bot/fixtures/hero-input",
         outDir: join(tmp, "out"),

@@ -69,7 +69,13 @@ export function briefMode(): "fixture" | "live" {
 
 async function loadDeveloperPrompt(): Promise<string> {
   const { readFile } = await import("node:fs/promises");
-  const url = new URL("../../prompts/brief-v1.txt", import.meta.url);
+  const { existsSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const candidates = [
+    new URL("../../prompts/brief-v1.txt", import.meta.url),
+    new URL("../../../prompts/brief-v1.txt", import.meta.url),
+  ];
+  const url = candidates.find((u) => existsSync(fileURLToPath(u))) ?? candidates[0]!;
   return readFile(url, "utf8");
 }
 
