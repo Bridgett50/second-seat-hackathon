@@ -9,3 +9,4 @@ eval/heldout/
 .DS_Store
 services/bot/.cost-log.jsonl
 services/bot/.muse-daily-state.json
+__pycache__/
