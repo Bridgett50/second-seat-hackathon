@@ -154,3 +154,26 @@ describe("renderBriefPage", () => {
     expect(missing).not.toContain("data:image/png;base64,");
   });
 });
+
+describe("heroChain", () => {
+  it("overlays the SAM box on the synthetic hero image", async () => {
+    const { renderBriefPage: render } = await import("../src/render.js");
+    const page = render(
+      { createdAt: "2024-01-01", entries: [] },
+      [],
+      [],
+      [],
+      {
+        heroChain: {
+          pngBase64: "iVBORw0=",
+          boxPercent: { x: 10, y: 70, w: 60, h: 10 },
+          date: "30th",
+          modelGenerated: true,
+        },
+      },
+    );
+    expect(page).toContain('id="hero-chain"');
+    expect(page).toContain("data-sam-box=");
+    expect(page).toContain("Model-generated synthetic image");
+  });
+});

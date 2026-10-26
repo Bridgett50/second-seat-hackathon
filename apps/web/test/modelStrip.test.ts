@@ -3,9 +3,8 @@ import { modelChips } from "../src/modelStrip.js";
 import { loadDemo } from "../src/loadFixtures.js";
 
 describe("modelChips", () => {
-  it("marks a missing sam-region stage as not run", () => {
+  it("maps the sam-region stage from the run log", () => {
     const { runLog } = loadDemo();
-    expect(runLog.some((l) => l.stage === "sam-region")).toBe(false);
     const chips = modelChips(runLog);
     expect(chips.map((c) => c.stage)).toEqual([
       "glimmer-redact",
@@ -14,11 +13,12 @@ describe("modelChips", () => {
       "sam-region",
       "image-slide",
     ]);
-    expect(chips.find((c) => c.stage === "sam-region")).toEqual({
-      stage: "sam-region",
-      model: null,
-      status: "not run",
-    });
+    const logged = runLog.find((l) => l.stage === "sam-region");
+    expect(chips.find((c) => c.stage === "sam-region")).toEqual(
+      logged === undefined
+        ? { stage: "sam-region", model: null, status: "not run" }
+        : { stage: "sam-region", model: logged.model, status: "run" },
+    );
   });
 
   it("reports the model for stages present in the run log", () => {

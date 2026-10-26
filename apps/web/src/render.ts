@@ -68,12 +68,24 @@ export function briefScoreLine(score: BriefScore): string {
   );
 }
 
+export interface HeroChainProof {
+  /** Base64 PNG of the synthetic hero slide. */
+  pngBase64: string;
+  /** SAM box as CSS percentages for the overlay. */
+  boxPercent: { x: number; y: number; w: number; h: number };
+  /** Date read by muse-spark-1.3 in the region, if any. */
+  date?: string | null;
+  /** True when the slide PNG came from a model (muse-image-1.0). */
+  modelGenerated: boolean;
+}
+
 export interface RenderOpts {
   liveDev?: boolean;
   pressureFallback?: PressureItem[];
   payloadDemo?: PayloadDemo | null;
   glimmerLive?: GlimmerLiveInfo | null;
   briefScore?: BriefScore | null;
+  heroChain?: HeroChainProof | null;
 }
 
 function esc(s: string): string {
@@ -280,6 +292,18 @@ export function renderBriefPage(
       ? `<section id="scores" aria-label="Scores"><h2>Scores</h2>${scoreLines.join("\n")}</section>`
       : "";
 
+  const heroChain = opts.heroChain ?? null;
+  const heroChainHtml =
+    heroChain === null
+      ? ""
+      : `<section id="hero-chain"><h2>Hero chain — synthetic slide</h2>` +
+        `<p>${heroChain.modelGenerated ? "Model-generated synthetic image (muse-image-1.0)." : "Hand-made synthetic fallback (image generation unavailable)."}` +
+        (heroChain.date ? ` Spark read the date: ${esc(heroChain.date)}.` : "") +
+        `</p><div class="frame-box">` +
+        `<img src="data:image/png;base64,${heroChain.pngBase64}" alt="synthetic vendor slide">` +
+        `<div class="region-overlay" data-sam-box="true" style="left:${heroChain.boxPercent.x}%;top:${heroChain.boxPercent.y}%;width:${heroChain.boxPercent.w}%;height:${heroChain.boxPercent.h}%"></div>` +
+        `</div></section>`;
+
   const payload = opts.payloadDemo;
   const payloadHtml = payload
     ? `<section id="what-left-this-server"><h2>What left this server</h2><pre>${esc(payload.maskedText)}</pre>` +
@@ -308,7 +332,7 @@ h2{font-size:1.1rem;margin:0 0 .5rem}
 #hero{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:.75rem 0}
 #pressure-badges{grid-column:1/-1}
 .pressure-badge{display:inline-block;background:#8f1d1d;color:#fff;border-radius:.3rem;padding:.15rem .6rem;margin:.15rem;text-decoration:none}
-#conflict,#draft,.category,#flagged,#transcript,#frames,#what-left-this-server,#scores{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem;min-width:0}
+#conflict,#draft,.category,#flagged,#transcript,#frames,#hero-chain,#what-left-this-server,#scores{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem;min-width:0}
 #hero #scores{grid-column:1/-1;margin:0}
 #scores p{margin:.25rem 0;font-size:.9rem}
 #hero #conflict,#hero #draft{margin:0;min-width:0}
@@ -349,6 +373,7 @@ ${categoryHtml}
 ${flaggedHtml}
 <section id="transcript"><h2>Transcript</h2><ol id="transcript-lines">${segmentHtml}</ol></section>
 <section id="frames"><h2>Frames</h2>${frameHtml}</section>
+${heroChainHtml}
 ${payloadHtml}
 ${liveDev ? `<button type="button" id="live-call-btn">Start live call</button>` : ""}
 <footer>Nothing is ever sent.</footer>
