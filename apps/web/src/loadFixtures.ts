@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   Brief,
+  BriefScore,
   Frame,
   PayloadDemo,
   PressureItem,
@@ -94,6 +95,39 @@ export function loadGlimmerLive(webRoot: string = WEB_ROOT): GlimmerLive | null 
   }
 }
 
+export function loadBriefScore(webRoot: string = WEB_ROOT): BriefScore | null {
+  try {
+    const raw = JSON.parse(
+      readFileSync(
+        join(webRoot, "..", "..", "eval", "results", "hero-brief-score.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    const keys = [
+      "briefEntries",
+      "truthEntries",
+      "validatorClean",
+      "matched",
+      "categoryAgree",
+    ] as const;
+    const values = keys.map((k) => raw[k]);
+    if (
+      !values.every((v) => typeof v === "number" && Number.isFinite(v as number))
+    ) {
+      return null;
+    }
+    return {
+      briefEntries: raw["briefEntries"] as number,
+      truthEntries: raw["truthEntries"] as number,
+      validatorClean: raw["validatorClean"] as number,
+      matched: raw["matched"] as number,
+      categoryAgree: raw["categoryAgree"] as number,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface DemoData {
   brief: Brief;
   segments: TranscriptSegment[];
@@ -102,6 +136,7 @@ export interface DemoData {
   pressureFallback: PressureItem[];
   payloadDemo: PayloadDemo | null;
   glimmerLive: GlimmerLive | null;
+  briefScore: BriefScore | null;
 }
 
 export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
@@ -163,5 +198,6 @@ export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
     payloadDemo = null;
   }
   const glimmerLive = loadGlimmerLive(webRoot);
-  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive };
+  const briefScore = loadBriefScore(webRoot);
+  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive, briefScore };
 }

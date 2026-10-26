@@ -145,3 +145,37 @@ test("mobile screenshot", async ({ page }) => {
   await expect(page.locator("h1")).toBeVisible();
   await page.screenshot({ path: "proof/mobile-9x16.png", fullPage: false });
 });
+
+test("one badge per pressure id, held count matches checkboxes", async ({
+  page,
+}) => {
+  await page.goto(`${DEMO}?static=1`);
+  const badgeTexts = await page.locator("a.pressure-badge").allTextContents();
+  expect(badgeTexts.length).toBeGreaterThan(0);
+  expect(new Set(badgeTexts).size).toBe(badgeTexts.length);
+  const boxCount = await page.locator(".pressure-review").count();
+  expect(boxCount).toBe(badgeTexts.length);
+  const status = await page.locator("#draft-status").textContent();
+  const expected =
+    boxCount === 1
+      ? `Held: review the 1 pressure item first`
+      : `Held: review the ${boxCount} pressure items first`;
+  expect(status).toBe(expected);
+});
+
+test("Scores card visible above the fold at 1280x800", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`${DEMO}?static=1`);
+  const scores = page.locator("#scores");
+  await expect(scores).toBeVisible();
+  const box = await scores.boundingBox();
+  expect(box).not.toBeNull();
+  expect((box as { y: number; height: number }).y).toBeGreaterThanOrEqual(0);
+  expect(
+    (box as { y: number; height: number }).y +
+      (box as { y: number; height: number }).height,
+  ).toBeLessThanOrEqual(800);
+  await expect(page.locator("#scores-glimmer")).toContainText(
+    /Glimmer recall \d+\/\d+/,
+  );
+});

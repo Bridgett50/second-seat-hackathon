@@ -14,6 +14,7 @@ const html = renderBriefPage(
     pressureFallback: demo.pressureFallback,
     payloadDemo: demo.payloadDemo,
     glimmerLive: demo.glimmerLive,
+    briefScore: demo.briefScore,
   },
 );
 const outDir = join(WEB_ROOT, "dist-site", "briefs", "demo");

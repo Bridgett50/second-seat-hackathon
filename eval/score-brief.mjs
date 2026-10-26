@@ -9,15 +9,31 @@
  * segmentId (category may differ; category agreement is reported
  * separately). All numbers printed are computed from the two files.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
-const [briefPath, labelsPath] = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+let jsonOutPath = null;
+const positional = [];
+for (let i = 0; i < rawArgs.length; i++) {
+  if (rawArgs[i] === "--json") {
+    const next = rawArgs[i + 1];
+    if (next === undefined) {
+      console.error("usage: node score-brief.mjs <brief.json> <labels.json> [--json <outPath>]");
+      process.exit(2);
+    }
+    jsonOutPath = next;
+    i++;
+  } else {
+    positional.push(rawArgs[i]);
+  }
+}
+const [briefPath, labelsPath] = positional;
 if (briefPath === undefined || labelsPath === undefined) {
-  console.error("usage: node score-brief.mjs <brief.json> <labels.json>");
+  console.error("usage: node score-brief.mjs <brief.json> <labels.json> [--json <outPath>]");
   process.exit(2);
 }
 
-for (const candidate of [briefPath, labelsPath]) {
+for (const candidate of [briefPath, labelsPath, ...(jsonOutPath ? [jsonOutPath] : [])]) {
   if (candidate.includes("heldout")) {
     console.error(`refusing path containing "heldout": ${candidate}`);
     process.exit(2);
@@ -100,3 +116,21 @@ console.log(`unmatched truth ids: ${unmatchedTruthIds.length > 0 ? unmatchedTrut
 console.log(
   `brief entries matching no truth entry: ${unmatchedBriefIds.length > 0 ? unmatchedBriefIds.join(", ") : "(none)"}`,
 );
+
+if (jsonOutPath !== null && jsonOutPath !== undefined) {
+  const payload = {
+    briefEntries: briefEntries.length,
+    truthEntries: truthEntries.length,
+    validatorClean: cleanCount,
+    matched: matchedCount,
+    categoryAgree: agreeCount,
+    unmatchedTruthIds,
+    scoredAt: new Date().toISOString(),
+  };
+  try {
+    writeFileSync(jsonOutPath, JSON.stringify(payload, null, 2) + "\n");
+  } catch (error) {
+    console.error(`cannot write ${jsonOutPath}: ${(error).message}`);
+    process.exit(2);
+  }
+}

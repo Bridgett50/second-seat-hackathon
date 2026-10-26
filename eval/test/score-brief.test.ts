@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,5 +63,22 @@ describe("score-brief.mjs", () => {
     const result = runScorer([briefPath, join(tmpdir(), "heldout-labels.json")]);
     expect(result.ok).toBe(false);
     expect(result.output).toContain("heldout");
+  });
+
+  it("writes the same numbers to --json <outPath>", () => {
+    const { briefPath, labelsPath } = writeSandbox();
+    const outPath = join(mkdtempSync(join(tmpdir(), "score-brief-")), "score.json");
+    const result = runScorer([briefPath, labelsPath, "--json", outPath]);
+    expect(result.ok).toBe(true);
+    const payload = JSON.parse(readFileSync(outPath, "utf8")) as Record<string, unknown>;
+    expect(payload["briefEntries"]).toBe(4);
+    expect(payload["truthEntries"]).toBe(3);
+    expect(payload["validatorClean"]).toBe(2);
+    expect(payload["matched"]).toBe(2);
+    expect(payload["categoryAgree"]).toBe(1);
+    expect(payload["unmatchedTruthIds"]).toEqual(["T3"]);
+    expect(typeof payload["scoredAt"]).toBe("string");
+    expect(result.output).toContain("brief entries: 4");
+    expect(result.output).toContain("truth recall (matched/total): 2/3");
   });
 });
