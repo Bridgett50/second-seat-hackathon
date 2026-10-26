@@ -9,7 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "brief:run": "tsc -p tsconfig.json && node dist/src/brief/cli.js"
+    "brief:run": "tsc -p tsconfig.json && node dist/src/brief/cli.js",
+    "pretypecheck": "pnpm --filter @second-seat/core build",
+    "pretest": "pnpm --filter @second-seat/core build"
   },
   "dependencies": {
     "@second-seat/core": "workspace:*"
