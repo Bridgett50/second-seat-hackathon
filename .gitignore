@@ -10,3 +10,4 @@ eval/heldout/
 services/bot/.cost-log.jsonl
 services/bot/.muse-daily-state.json
 __pycache__/
+services/bot/.hero-chain-state.json

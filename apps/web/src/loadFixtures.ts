@@ -128,6 +128,39 @@ export function loadBriefScore(webRoot: string = WEB_ROOT): BriefScore | null {
   }
 }
 
+export interface HeroChainData {
+  pngBase64: string;
+  boxPercent: { x: number; y: number; w: number; h: number };
+  date: string | null;
+  modelGenerated: boolean;
+}
+
+export function loadHeroChain(webRoot: string = WEB_ROOT): HeroChainData | null {
+  try {
+    const dir = join(webRoot, "..", "..", "services", "bot", "fixtures", "hero-chain");
+    const pngBase64 = readFileSync(join(dir, "slide.png")).toString("base64");
+    const region = JSON.parse(readFileSync(join(dir, "sam-region.json"), "utf8")) as {
+      boxPercent?: HeroChainData["boxPercent"];
+    };
+    if (!region.boxPercent) return null;
+    let date: string | null = null;
+    let modelGenerated = false;
+    try {
+      const spark = JSON.parse(readFileSync(join(dir, "spark.json"), "utf8")) as {
+        date?: unknown;
+        fixture?: unknown;
+      };
+      if (typeof spark.date === "string") date = spark.date;
+      modelGenerated = spark.fixture === false;
+    } catch {
+      /* date stays null */
+    }
+    return { pngBase64, boxPercent: region.boxPercent, date, modelGenerated };
+  } catch {
+    return null;
+  }
+}
+
 export interface DemoData {
   brief: Brief;
   segments: TranscriptSegment[];
@@ -137,6 +170,7 @@ export interface DemoData {
   payloadDemo: PayloadDemo | null;
   glimmerLive: GlimmerLive | null;
   briefScore: BriefScore | null;
+  heroChain: HeroChainData | null;
 }
 
 export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
@@ -199,5 +233,6 @@ export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
   }
   const glimmerLive = loadGlimmerLive(webRoot);
   const briefScore = loadBriefScore(webRoot);
-  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive, briefScore };
+  const heroChain = loadHeroChain(webRoot);
+  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive, briefScore, heroChain };
 }

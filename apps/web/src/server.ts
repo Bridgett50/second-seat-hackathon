@@ -20,6 +20,7 @@ const server = createServer((req, res) => {
         payloadDemo: demo.payloadDemo,
         glimmerLive: demo.glimmerLive,
         briefScore: demo.briefScore,
+        heroChain: demo.heroChain,
       },
     );
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

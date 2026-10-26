@@ -15,6 +15,7 @@ const html = renderBriefPage(
     payloadDemo: demo.payloadDemo,
     glimmerLive: demo.glimmerLive,
     briefScore: demo.briefScore,
+    heroChain: demo.heroChain,
   },
 );
 const outDir = join(WEB_ROOT, "dist-site", "briefs", "demo");

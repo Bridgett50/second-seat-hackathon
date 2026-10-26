@@ -33,3 +33,11 @@ a changed hash.
   regenerated 2026-10-26T12:21:14-05:00 (title separator set as hyphen-minus),
   sha256 `ca1aebcc701b77e86e5d85c74ddd6edf814d68b5bdc52f4c2640f5709cee3d06`
   (only its line changed in `eval/truth/SHA256SUMS`).
+
+## Phase 07 — hero slide chain (synthetic)
+
+The hero slide in `services/bot/fixtures/hero-chain/slide.png` is a
+model-generated synthetic image (`muse-image-1.0`) produced only as a test
+fixture for the image → SAM → Spark chain; if image generation is
+unavailable a hand-made synthetic fallback is used instead and the Creative
+Build claim is dropped. The slide is visibly labeled SYNTHETIC.
