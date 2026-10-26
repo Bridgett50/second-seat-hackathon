@@ -45,7 +45,7 @@ function makeBrief(entries: EvidenceEntry[]): EvidenceBrief {
 }
 
 describe("commitment language", () => {
-  it("recategorizes an accepting decision to owner review", () => {
+  it("flags an accepting decision without changing its category", () => {
     const brief = makeBrief([
       makeEntry({
         category: "decision",
@@ -55,7 +55,7 @@ describe("commitment language", () => {
       }),
     ]);
     const result = validateBrief(brief, BASE_INPUT);
-    expect(result.entries[0]?.category).toBe("owner_review");
+    expect(result.entries[0]?.category).toBe("decision");
     expect(result.entries[0]?.flags).toContain("commitment_language");
     expect(result.flagged).toContain("e-1");
   });
@@ -69,16 +69,39 @@ describe("commitment language", () => {
       }),
     ]);
     const result = validateBrief(brief, BASE_INPUT);
-    expect(result.entries[0]?.category).toBe("owner_review");
+    expect(result.entries[0]?.category).toBe("decision");
     expect(result.entries[0]?.flags).toContain("commitment_language");
   });
 
-  it("never leaves a commitment as a decision or action_item", () => {
+  it("keeps a commitment's category while flagging it for review", () => {
     const brief = makeBrief([
       makeEntry({ text: "We accept the offer", category: "action_item", acceptance: "established" }),
     ]);
     const result = validateBrief(brief, BASE_INPUT);
-    expect(["decision", "action_item"]).not.toContain(result.entries[0]?.category);
+    expect(result.entries[0]?.category).toBe("action_item");
+    expect(result.entries[0]?.flags).toContain("commitment_language");
+  });
+
+  it('keeps a decision citing "we will deliver by Nov 30" as a decision with the flag', () => {
+    const input: ValidateInput = {
+      ...BASE_INPUT,
+      segments: [
+        ...BASE_INPUT.segments,
+        { id: "t-00:60", speaker: "Alice", text: "We will deliver by Nov 30" },
+      ],
+    };
+    const brief = makeBrief([
+      makeEntry({
+        category: "decision",
+        text: "We will deliver by Nov 30",
+        citations: [{ kind: "segment", segmentId: "t-00:60", frameId: null, region: null }],
+        speaker: "Alice",
+      }),
+    ]);
+    const result = validateBrief(brief, input);
+    expect(result.entries[0]?.category).toBe("decision");
+    expect(result.entries[0]?.flags).toContain("commitment_language");
+    expect(result.flagged).toContain("e-1");
   });
 });
 

@@ -46,8 +46,14 @@ function hasNegation(text: string): boolean {
   return NEGATION_PATTERN.test(text);
 }
 
+/** First-person future promise ("we will deliver ..."). */
+const FUTURE_COMMITMENT_PATTERN = /\b(we|i)\s+will\b/i;
+
 /** True when the text reads as a binding offer/request or commitment. */
 function isBinding(text: string): boolean {
+  if (FUTURE_COMMITMENT_PATTERN.test(text)) {
+    return true;
+  }
   if (classifyIncoming(text).kind !== "neutral") {
     return true;
   }
@@ -170,7 +176,6 @@ export function validateBrief(brief: EvidenceBrief, input: ValidateInput): Evide
     const citedBinding = citedSegments.some((segment) => isBinding(segment.text));
     if (isBinding(next.text) || citedBinding) {
       addFlag(next, "commitment_language");
-      next.category = "owner_review";
     }
 
     const entryNegated = hasNegation(next.text);
