@@ -4,11 +4,9 @@ Pre-existing: the Second Seat idea and an earlier prototype in a separate repo (
 
 ## What it is
 
-I sit through vendor calls. I got tired of that. So Second Seat reads a meeting transcript or screenshots I hand it and drafts a short brief: what was offered, what was asked, what needs a decision. It never joins calls. It takes no action. I decide. That is the whole deal.
+Second Seat is a text-input meeting decision assistant: I paste in meeting text, Glimmer redacts the PII, I review the redacted text, and Spark writes a short brief with citations: what was offered, what was asked, what needs a decision. Pressure items are held for review. I edit a reply and copy it out myself. Second Seat never sends a reply to the vendor. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. I decide. That is the whole deal.
 
 ## Why it matters
-
-<!-- BRIDGETT: your vendor-pressure story, in your words -->
 
 TARGET figures only: none yet. I have not written down my time-per-call or risk numbers. Until I do, there is nothing here but a TARGET label and me telling you vendors talk fast on purpose.
 
@@ -42,19 +40,19 @@ Redact sampling: temperature 1.0, top_p 0.95 [eval/results/prompt-freeze.md]. Ye
 
 ## Results
 
-Brief scores. Hero: 9 brief entries against 12 truth entries, 8 validator-clean, 11 matched, 8 category agreement [eval/results/hero-brief-score.json]. Dev meetings: 10/10 validator-clean, recall 13/16, category agreement 9/13, total cost $0.0547 [eval/results/dev-briefs.md]. Per meeting: dev01 recall 4/5 at $0.0212 [eval/results/dev01-brief-score.json], dev02 recall 4/5 at $0.0159 [eval/results/dev02-brief-score.json], dev03 recall 5/6 at $0.0176 [eval/results/dev03-brief-score.json]. dev04 and dev05 were not scored (3-call cap) [eval/results/dev-briefs.md].
+Brief scores. Hero (recorded brief scored against synthetic truth): 9 brief entries against 12 truth entries, 8 validator-clean, 11 matched, 8 category agreement [eval/results/hero-brief-score.json]. Dev meetings (live): 10/10 validator-clean, recall 13/16, category agreement 9/13, total cost estimated $0.0547 [eval/results/dev-briefs.md]. Per meeting: dev01 recall 4/5 at estimated $0.0212 [eval/results/dev01-brief-score.json], dev02 recall 4/5 at estimated $0.0159 [eval/results/dev02-brief-score.json], dev03 recall 5/6 at estimated $0.0176 [eval/results/dev03-brief-score.json]. dev04 and dev05 were not scored (3-call cap) [eval/results/dev-briefs.md].
 
-Seeded-error suite. Fixture judge: caught 9/9, Wilson 95% CI [0.701, 1], false alarms 0/4, CI [0, 0.49] [eval/results/support-score.json]. Live frozen run: same 9/9 catch and 0/4 false alarms with the same CIs [eval/results/support-score-frozen-live.json], but 2 cases mismatched exact grade (F4, M3) [eval/results/support-table-frozen-live.md]. So it catches everything and quibbles twice. Baseline with the judge off catches 0/9, CI [0, 0.299] [eval/results/support-table.md]. Good. That means the judge is doing the work.
+Seeded-error suite. Fixture judge (synthetic): caught 9/9, Wilson 95% CI [0.701, 1], false alarms 0/4, CI [0, 0.49] [eval/results/support-score.json]. Live frozen run (recorded): same 9/9 catch and 0/4 false alarms with the same CIs [eval/results/support-score-frozen-live.json], but 2 cases mismatched exact grade (F4, M3) [eval/results/support-table-frozen-live.md]. So it catches everything and quibbles twice. Baseline with the judge off (synthetic) catches 0/9, CI [0, 0.299] [eval/results/support-table.md]. Good. That means the judge is doing the work.
 
-Load and prompt freeze. Fixture mode only, localhost, says nothing about production [eval/results/load-fixture.md]. HTTP GET x500 at concurrency 20: 0 failed, p50 106.6ms, p90 116.3ms, max 1245ms [eval/results/load-fixture.json]. Brief CLI x20: 0 failed, p50 1.4ms, p90 4.2ms, max 8.9ms [eval/results/load-fixture.json]. Prompts pinned by sha256 [eval/results/prompt-freeze.md].
+Load and prompt freeze (mock). Fixture mode only, localhost, says nothing about production [eval/results/load-fixture.md]. HTTP GET x500 at concurrency 20: 0 failed, p50 106.6ms, p90 116.3ms, max 1245ms [eval/results/load-fixture.json]. Brief CLI x20: 0 failed, p50 1.4ms, p90 4.2ms, max 8.9ms [eval/results/load-fixture.json]. Prompts pinned by sha256 [eval/results/prompt-freeze.md].
 
-Glimmer: 10/10 recall, 12 spans returned for 10 expected entities, no misses [services/bot/fixtures/glimmer-live-eval-n10.json].
+Glimmer (live): 10/10 recall, 12 spans returned for 10 expected entities, no misses [services/bot/fixtures/glimmer-live-eval-n10.json]. That's the older Oct 26 run. The latest 39-item attempt (Oct 26, 4:21 PM CDT) was incomplete: 6/8 cases completed, 18/29 recall on completed cases, 18/39 on the full batch, so it is not a valid score [services/bot/fixtures/glimmer-run/glimmer-live-eval.json].
 
-Tests: 150 passing (core 62, bot 36, web 28, eval 24) from `pnpm -r test` on Oct 26.
+Tests: 163 passing (core 62, bot 49, web 28, eval 24) from `pnpm -r test` on Oct 26. CI runs typecheck, unit tests, hash check, secret scan; Playwright (12 tests) is run locally.
 
 ## Ground truth
 
-Sealed before generation (synthetic) + AMI human annotations (third party). The synthetic meetings are labeled synthetic, written Oct 26, no real people [eval/truth/DATA.md]. AMI mapping rules and license (CC BY 4.0) are recorded before any run [eval/truth/ami-mapping-rules.md]. Sealed held-out run status: not run yet [eval/heldout-presealed.sha256].
+Sealed before generation (synthetic) + AMI human annotations (third party). The synthetic meetings are labeled synthetic, written Oct 26, no real people [eval/truth/DATA.md]. AMI mapping rules and license (CC BY 4.0) are recorded before any run [eval/truth/ami-mapping-rules.md]. AMI run: planned, not yet run. Sealed held-out brief run: seal PENDING, not run [eval/heldout-presealed.sha256].
 
 ## Known gaps
 
