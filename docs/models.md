@@ -8,14 +8,16 @@ and log tokens and cost with a hard cap of $5/day per provider.
 
 - `muse-spark-1.3` — coding agent for this repo (Contributor mode off).
   Baseten id: `meta-models/muse-spark-open-1026`.
-- `sam-3.1` — later phase.
+- `sam-3.1` — experimental, outside the text-only core flow, off by default
+  (live calls require `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`).
 - Glimmer 30B — Phase 04a.
 
 ## Optional models (later phases)
 
 - `muse-voice-transcribe-1.0`
 - `muse-wonder-1.0`
-- `muse-image-1.0`
+- `muse-image-1.0` — experimental, outside the text-only core flow, off by
+  default (live calls require `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`).
 
 ## Local setup
 

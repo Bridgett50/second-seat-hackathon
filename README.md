@@ -31,10 +31,10 @@ I am the only one who acts. The loop ends at me.
 | muse-spark-1.3 | brief | reasoning medium, seed 42, max tokens 16000, strict JSON schema [eval/results/prompt-freeze.md] |
 | muse-spark-1.3 | Shield classifier | reasoning low [eval/results/prompt-freeze.md] |
 | muse-spark-1.3 | support judge | reasoning medium [eval/results/prompt-freeze.md] |
-| sam-3.1 | vision regions | masked frames only [eval/results/prompt-freeze.md] |
+| sam-3.1 | vision regions (experimental, outside the core flow, off by default) | masked frames only [eval/results/prompt-freeze.md] |
 | Muse Glimmer 30B | redact PII | self-hosted vLLM on Modal; recall 10/10 on n=10 [services/bot/fixtures/glimmer-live-eval-n10.json] |
 
-No Muse Image row. The hero-chain fixtures do not show it, so it does not go here. A longer Glimmer run was invalid due to a reply-parsing bug. Fixed. Not yet re-run. (No count given: no committed file states it, so I am not printing one.)
+Image/SAM features (sam-3.1, muse-image-1.0) are experimental, outside the text-only core flow, and off by default (live calls require SECOND_SEAT_EXPERIMENTAL_IMAGES=1). No Muse Image row. The hero-chain fixtures do not show it, so it does not go here. A longer Glimmer run was invalid due to a reply-parsing bug. Fixed. Not yet re-run. (No count given: no committed file states it, so I am not printing one.)
 
 Redact sampling: temperature 1.0, top_p 0.95 [eval/results/prompt-freeze.md]. Yes, that is warm for a redactor. It is on my list.
 

@@ -4,10 +4,13 @@
 // (no network). If fixtures are missing, rebuild them locally in fixture
 // mode (no network) so the chain test passes offline.
 //
-// Live (--live): generate a synthetic vendor slide (date "30th", visibly
-// labeled SYNTHETIC) with muse-image-1.0 -> mask it (04a MockRedactor when
-// available) -> locate the "date" region with sam-3.1 -> read the date in
-// the region with muse-spark-1.3. Saves prompt, image png, raw SAM output
+// Live (--live): EXPERIMENTAL, outside the text-only core flow, off by
+// default (requires SECOND_SEAT_EXPERIMENTAL_IMAGES=1). Generate a synthetic
+// vendor slide (date "30th", visibly labeled SYNTHETIC) with muse-image-1.0
+// -> mask it (04a MockRedactor when available; if masking fails the frame is
+// dropped, never sent unmasked) -> locate the "date" region with sam-3.1 ->
+// read the date in the region with muse-spark-1.3. Saves prompt, image png,
+// raw SAM output
 // and spark output into services/bot/fixtures/hero-chain/ and appends
 // {at,model,stage:"image-slide"|"sam-region",...} lines to
 // apps/web/fixtures/run-log.jsonl. Logs token/cost; respects a $5/day cap.
@@ -130,16 +133,29 @@ function toPercent(box, W, H) {
   return { x: r((box.x / W) * 100), y: r((box.y / H) * 100), w: r((box.w / W) * 100), h: r((box.h / H) * 100) };
 }
 
+export function requireMasked(masked) {
+  if (!masked.masked) {
+    throw new Error(
+      `hero-chain: masking failed (${masked.label}); dropping the frame — an unmasked frame is never sent`,
+    );
+  }
+  return masked;
+}
+
 async function maskPng(png) {
   // Mask via the existing 04a MockRedactor when the bot build is available.
+  // No unmasked-frame fallback: if masking is unavailable or fails, throw and
+  // the caller drops the frame (it is never sent unmasked).
+  let res;
   try {
     const { MockRedactor } = await import("../dist/src/private/redact.js");
     const redactor = new MockRedactor();
-    const res = await redactor.redactImage(png, "hero-chain-slide.png");
-    return { png: res.png, masked: res.masked, label: redactor.label };
-  } catch {
-    return { png, masked: false, label: "masking unavailable (unbuilt); sent unmasked" };
+    res = await redactor.redactImage(png, "hero-chain-slide.png");
+    res = { png: res.png, masked: res.masked, label: redactor.label };
+  } catch (err) {
+    throw new Error(`hero-chain: masking unavailable; dropping the frame — an unmasked frame is never sent (${err})`);
   }
+  return requireMasked(res);
 }
 
 function appendRunLog(lines) {
@@ -239,6 +255,9 @@ async function replayOrBuildFixtures() {
 }
 
 async function live() {
+  if (process.env["SECOND_SEAT_EXPERIMENTAL_IMAGES"] !== "1") {
+    throw new Error("hero-chain --live is experimental and off by default (set SECOND_SEAT_EXPERIMENTAL_IMAGES=1)");
+  }
   checkCap();
   const k = key();
   const t0 = Date.now();
@@ -388,9 +407,13 @@ async function live() {
   process.stdout.write(`hero-chain live: date=${date ?? "?"} box=${JSON.stringify(box)} flags=${flags.join(",") || "none"}\n`);
 }
 
-const liveMode = process.argv.includes("--live");
-if (liveMode) {
-  await live();
-} else {
-  await replayOrBuildFixtures();
+const invokedAsMain =
+  process.argv[1] !== undefined &&
+  import.meta.url === (await import("node:url")).pathToFileURL(process.argv[1]).href;
+if (invokedAsMain) {
+  if (process.argv.includes("--live")) {
+    await live();
+  } else {
+    await replayOrBuildFixtures();
+  }
 }

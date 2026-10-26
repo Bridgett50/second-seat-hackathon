@@ -157,6 +157,7 @@ export interface HeroChainProof {
 }
 
 export interface RenderOpts {
+  /** Deprecated, ignored: the core flow is text-only and has no live-call control. */
   liveDev?: boolean;
   pressureFallback?: PressureItem[];
   payloadDemo?: PayloadDemo | null;
@@ -243,7 +244,7 @@ export function renderBriefPage(
   runLog: RunLogLine[],
   opts: RenderOpts = {},
 ): string {
-  const liveDev = opts.liveDev === true;
+  void opts.liveDev; // deprecated, ignored: no live-call control in the text-only core flow.
   const chips = modelChips(runLog);
   const pressure = pressureItemsFor(brief, opts.pressureFallback ?? []);
   const byCategory = new Map<string, BriefEntry[]>();
@@ -435,11 +436,9 @@ export function renderBriefPage(
   const payloadHtml = payload
     ? `<section id="what-left-this-server"><h2>Example payload</h2><p>Example payload (recorded fixture), not from this session.</p><pre>${esc(payload.maskedText)}</pre>` +
       (payload.note ? `<p>${esc(payload.note)}</p>` : "") +
-      `<label>Upload transcript (.vtt): <input type="file" id="upload-vtt" accept=".vtt"></label>\n` +
-      `<label>Upload frame (.png): <input type="file" id="upload-png" accept=".png,image/png"></label></section>`
+      `<label>Upload transcript (.vtt): <input type="file" id="upload-vtt" accept=".vtt"></label></section>`
     : `<section id="what-left-this-server"><h2>Example payload</h2><p>Example payload (recorded fixture), not from this session.</p>` +
-      `<label>Upload transcript (.vtt): <input type="file" id="upload-vtt" accept=".vtt"></label>\n` +
-      `<label>Upload frame (.png): <input type="file" id="upload-png" accept=".png,image/png"></label></section>`;
+      `<label>Upload transcript (.vtt): <input type="file" id="upload-vtt" accept=".vtt"></label></section>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -503,7 +502,6 @@ ${flaggedHtml}
 <section id="frames"><h2>Frames</h2>${frameHtml}</section>
 ${heroChainHtml}
 ${payloadHtml}
-${liveDev ? `<button type="button" id="live-call-btn">Start live call</button>` : ""}
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script type="application/json" id="transcript-data">${transcriptJson}</script>
 <script>
