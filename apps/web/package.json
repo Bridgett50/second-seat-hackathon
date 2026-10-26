@@ -10,7 +10,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "serve": "node dist/src/server.js",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "prebuild": "pnpm --filter @second-seat/bot build",
+    "pretest": "pnpm --filter @second-seat/bot build",
+    "preserve": "pnpm --filter @second-seat/bot build",
+    "pretypecheck": "pnpm --filter @second-seat/bot build"
+  },
+  "dependencies": {
+    "@second-seat/bot": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.56.0",

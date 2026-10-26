@@ -255,9 +255,9 @@ async function replayOrBuildFixtures() {
 }
 
 async function live() {
-  if (process.env["SECOND_SEAT_EXPERIMENTAL_IMAGES"] !== "1") {
-    throw new Error("hero-chain --live is experimental and off by default (set SECOND_SEAT_EXPERIMENTAL_IMAGES=1)");
-  }
+  throw new Error(
+    "hero-chain --live refuses to run: model calls must go through the server-side privacy gate (services/bot/src/private/gate.ts)",
+  );
   checkCap();
   const k = key();
   const t0 = Date.now();

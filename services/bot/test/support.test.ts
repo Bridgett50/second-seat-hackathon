@@ -11,6 +11,7 @@ import {
   SUPPORT_JSON_SCHEMA,
   SUPPORT_PROMPT_VERSION,
 } from "../src/judge/support.js";
+import { createPrivacyGate } from "../src/private/gate.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const casesPath = join(here, "..", "..", "..", "eval", "fixtures", "support-cases.json");
@@ -94,9 +95,13 @@ describe("live client shape (no live calls)", () => {
     delete process.env["MUSE_API_KEY"];
     try {
       const judge = new SparkSupportJudge();
-      await expect(judge.gradeSupport({ entryId: "F1-overreach", entryText: "x", citedSpans: ["y"] })).rejects.toThrow(
-        /META_API_KEY/,
-      );
+      const gate = createPrivacyGate({ mode: "fixture" });
+      const prepared = await gate.prepare("x y");
+      const token = gate.approve(prepared.runId, prepared.redactedText);
+      const gated = await gate.send(prepared.runId, token, async (g) => g);
+      await expect(
+        judge.gradeSupport({ entryId: "F1-overreach", entryText: gated, citedSpans: [gated] }),
+      ).rejects.toThrow(/META_API_KEY/);
     } finally {
       if (savedMeta !== undefined) process.env["META_API_KEY"] = savedMeta;
       if (savedMuse !== undefined) process.env["MUSE_API_KEY"] = savedMuse;
