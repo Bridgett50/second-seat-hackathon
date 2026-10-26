@@ -28,3 +28,5 @@ export type {
   EvidenceSettings,
   EvidenceBrief,
 } from "./schema.js";
+export { validateBrief } from "./validate.js";
+export type { ValidateInput, ValidateSegment, ValidateFrame } from "./validate.js";
