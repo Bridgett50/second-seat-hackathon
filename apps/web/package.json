@@ -11,13 +11,14 @@
     "test": "vitest run",
     "serve": "node dist/src/server.js",
     "e2e": "playwright test",
-    "prebuild": "pnpm --filter @second-seat/bot build",
-    "pretest": "pnpm --filter @second-seat/bot build",
-    "preserve": "pnpm --filter @second-seat/bot build",
-    "pretypecheck": "pnpm --filter @second-seat/bot build"
+    "prebuild": "pnpm --filter @second-seat/core build && pnpm --filter @second-seat/bot build",
+    "pretest": "pnpm --filter @second-seat/core build && pnpm --filter @second-seat/bot build",
+    "preserve": "pnpm --filter @second-seat/core build && pnpm --filter @second-seat/bot build",
+    "pretypecheck": "pnpm --filter @second-seat/core build && pnpm --filter @second-seat/bot build"
   },
   "dependencies": {
-    "@second-seat/bot": "workspace:*"
+    "@second-seat/bot": "workspace:*",
+    "@second-seat/core": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.56.0",
