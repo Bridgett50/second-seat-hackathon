@@ -66,7 +66,7 @@ rechecked before authorization; not enforced by the current timeout.
 | Prompt hash | ____ | inline system prompt in `services/bot/src/private/redact.ts` (no separate file) |
 | Response-schema hash | ____ | inline JSON schema (`spans[{start,end,label}]`, `boxes[]`) in same file |
 | Scorer version | ____ | `services/bot/scripts/redaction-eval-lib.mjs` (+ runner `redaction-eval-runner.mjs`: canary-first, concurrency 2, unique run dir) |
-| Decoding settings | ____ | `temperature 1.0, top_p 0.95, top_k 64, reasoning_strength low` (never greedy) |
+| Decoding settings | ____ | `temperature 0.0, no top_p/top_k, reasoning_strength low` (E10, draft PR #76) |
 | Retry policy | ____ | none (`retries=0`; no rerun cherry-picking) |
 | Concurrency | ____ | 2 (runner); one unique run dir `/results/<run_id>/`, never reused |
 | Token / request limits | ____ | `max_tokens 2048`; 90 s per-request timeout default; work deadline 780 s; function timeout 840 s; ready wait up to 300 s inside deadline |
@@ -74,6 +74,8 @@ rechecked before authorization; not enforced by the current timeout.
 | Teardown | ____ | `python3 -m modal app stop second-seat-glimmer`; confirm scale-to-zero before closing budget |
 | Proposed ceiling | $2.10 ($2 Modal + $0.10 Spark) | proposed limit, prices to be rechecked before authorization; not enforced by the current timeout |
 | Actual cost | ____ | to be filled from receipt after an authorized run |
+
+Any prepared holdout config must be re-frozen before launch — re-freeze it after the E10 decoding/prompt change (the frozen inline redaction prompt hash and decoding row change; E10, draft PR #76; hashed by the E14 prompt-freeze).
 
 ## 3) Execution checklist (do not run — preparation only)
 
