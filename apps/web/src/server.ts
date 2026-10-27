@@ -248,6 +248,7 @@ export function createWebServer(deps?: WebServerDeps) {
           briefScore: demo.briefScore,
           seededScore: demo.seededScore,
           heroChain: demo.heroChain,
+          cacheUsage: demo.cacheUsage,
         },
       );
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

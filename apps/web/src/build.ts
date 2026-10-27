@@ -17,6 +17,7 @@ const html = renderBriefPage(
     briefScore: demo.briefScore,
     seededScore: demo.seededScore,
     heroChain: demo.heroChain,
+    cacheUsage: demo.cacheUsage,
   },
 );
 const outDir = join(WEB_ROOT, "dist-site", "briefs", "demo");
