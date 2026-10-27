@@ -63,6 +63,8 @@ export interface PreparedRun {
   redactedText: string;
   spans: TextSpan[];
   needsReview: boolean;
+  /** An empty span list is never a PII-free claim, it requires owner review. */
+  piiFree: false;
 }
 
 interface StoredRun {
@@ -189,6 +191,7 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
         redactedText: redacted.maskedText,
         spans: redacted.spans,
         needsReview: redacted.spans.length === 0,
+        piiFree: false,
       };
     },
 

@@ -24,6 +24,7 @@ export interface TextSpan {
   start: number;
   end: number;
   label: string;
+  originalLabel?: string;
 }
 
 export interface RedactTextResult {
@@ -52,6 +53,9 @@ export interface Redactor {
   health(): Promise<{ ok: boolean; label: string }>;
 }
 
+/** Date policy: every calendar date in a transcript is treated as potentially
+ * identifying and masked under canonical label date_of_birth; generic DATE
+ * aliases to it. Unknown labels still throw. */
 export const ALLOWED_LABELS = [
   "person",
   "phone",
@@ -60,6 +64,7 @@ export const ALLOWED_LABELS = [
   "account_number",
   "iban",
   "address",
+  "date_of_birth",
 ] as const;
 
 export type GlimmerLabel = (typeof ALLOWED_LABELS)[number];
@@ -78,10 +83,17 @@ export const LABEL_ALIASES: Record<string, string> = {
   NAME: "person",
   CREDIT_CARD: "credit_card",
   CREDIT_CARD_NUMBER: "credit_card",
+  CARD: "credit_card",
   ACCOUNT_NUMBER: "account_number",
   BANK_ACCOUNT_NUMBER: "account_number",
+  ACCOUNT: "account_number",
   IBAN: "iban",
   ADDRESS: "address",
+  DOB: "date_of_birth",
+  DATE_OF_BIRTH: "date_of_birth",
+  BIRTHDATE: "date_of_birth",
+  BIRTH_DATE: "date_of_birth",
+  DATE: "date_of_birth",
 };
 
 export function normalizeGlimmerLabel(label: string): string {
@@ -123,6 +135,15 @@ export function validateGlimmerReply(input: string, parsed: unknown): ValidateGl
     const st = start as number;
     const en = end as number;
     if (st < 0 || en > input.length || en <= st) throw new Error("glimmer: span out of range");
+    for (const i of [st, en]) {
+      if (i > 0 && i < input.length) {
+        const prev = input.charCodeAt(i - 1);
+        const cur = input.charCodeAt(i);
+        if (prev >= 0xd800 && prev <= 0xdbff && cur >= 0xdc00 && cur <= 0xdfff) {
+          throw new Error("glimmer: span splits a surrogate pair");
+        }
+      }
+    }
     // Slice must equal the covered text (offsets are UTF-16 code unit offsets).
     const covered = input.slice(st, en);
     if (covered.length === 0 || !input.includes(covered)) throw new Error("glimmer: span is not a substring");
@@ -148,6 +169,30 @@ export function validateGlimmerOutput(text: string, value: unknown): { spans: Te
     spans: spans.map(({ start, end, label }) => ({ start, end, label })),
     boxes,
   };
+}
+
+export function mergeSpans(spans: TextSpan[]): TextSpan[] {
+  for (const s of spans) {
+    if (!Number.isInteger(s.start) || !Number.isInteger(s.end)) {
+      throw new Error("maskText: span out of range");
+    }
+    if (s.start < 0 || s.end <= s.start) throw new Error("maskText: span out of range");
+  }
+  const sorted = [...spans].sort((a, b) => a.start - b.start || b.end - a.end);
+  const out: TextSpan[] = [];
+  for (const s of sorted) {
+    const cur = out[out.length - 1];
+    if (cur === undefined) {
+      out.push({ start: s.start, end: s.end, label: s.label, ...(s.originalLabel !== undefined ? { originalLabel: s.originalLabel } : {}) });
+      continue;
+    }
+    if (s.start < cur.end) {
+      if (s.end > cur.end) cur.end = s.end;
+    } else {
+      out.push({ start: s.start, end: s.end, label: s.label, ...(s.originalLabel !== undefined ? { originalLabel: s.originalLabel } : {}) });
+    }
+  }
+  return out;
 }
 
 function luhnOk(digits: string): boolean {
@@ -233,7 +278,15 @@ export function detectPii(text: string): DetectedSpan[] {
 }
 
 export function maskText(text: string, spans: TextSpan[]): string {
-  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  for (const s of spans) {
+    if (!Number.isInteger(s.start) || !Number.isInteger(s.end)) {
+      throw new Error("maskText: span out of range");
+    }
+    if (s.start < 0 || s.end > text.length || s.end <= s.start) {
+      throw new Error("maskText: span out of range");
+    }
+  }
+  const sorted = mergeSpans(spans);
   let out = "";
   let cur = 0;
   for (const s of sorted) {
@@ -249,7 +302,12 @@ export class MockRedactor implements Redactor {
   readonly label = MOCK_LABEL;
 
   async redactText(text: string): Promise<RedactTextResult> {
-    const spans = detectPii(text).map(({ start, end, label }) => ({ start, end, label }));
+    const spans: TextSpan[] = detectPii(text).map(({ start, end, label }) => ({
+      start,
+      end,
+      label: normalizeGlimmerLabel(label),
+      originalLabel: label,
+    }));
     return { maskedText: maskText(text, spans), spans };
   }
 
@@ -344,7 +402,8 @@ export class GlimmerClient implements Redactor {
 
   async redactText(text: string): Promise<RedactTextResult> {
     const parsed = await this.chat(text, "text");
-    const { spans } = validateGlimmerOutput(text, parsed);
+    // Keep the model's original label alongside the canonical one.
+    const { spans } = validateGlimmerReply(text, parsed);
     return { maskedText: maskText(text, spans), spans };
   }
 
@@ -376,7 +435,7 @@ export class GlimmerClient implements Redactor {
       top_k: 64,
       chat_template_kwargs: { reasoning_strength: "low" },
       messages: [
-        { role: "system", content: `Return JSON only for ${kind}. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, and input.slice(start,end) must equal the entity text. Return {"spans":[],"boxes":[]} when nothing is found.` },
+        { role: "system", content: `Return JSON only for ${kind}. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth, and input.slice(start,end) must equal the entity text. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found.` },
         { role: "user", content: text },
       ],
     };
@@ -395,7 +454,7 @@ export class GlimmerClient implements Redactor {
                   properties: {
                     start: { type: "integer" },
                     end: { type: "integer" },
-                    label: { type: "string" },
+                    label: { type: "string", enum: ALLOWED_LABELS },
                   },
                   required: ["start", "end", "label"],
                 },

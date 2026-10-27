@@ -2,6 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // One worker: e2e specs share one server whose outbound log is global, so
+  // parallel specs made exact analyzer-call assertions racy.
+  workers: 1,
   use: {
     baseURL: "http://localhost:4173",
   },
