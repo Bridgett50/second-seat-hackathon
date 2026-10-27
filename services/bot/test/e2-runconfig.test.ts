@@ -26,6 +26,8 @@ const appPath = join(repoRoot, "infra", "modal", "glimmer_app.py");
 // Nondefault invented run-config values (hex/ids are dummy placeholders).
 const REV_E2 = "deadbeef".repeat(5); // invented 40-hex model revision
 const MAX_TOKENS_E2 = 512;
+// G3a2: --max-model-len is the frozen whole-context budget, not the output limit.
+const CONTEXT_TOKENS_E2 = 4096;
 const DATASET_SHA_E2 = "a".repeat(64);
 
 // Minimal clean env for subprocesses: PATH only, so no Glimmer endpoint,
@@ -48,7 +50,7 @@ function e2RunConfig(): Record<string, unknown> {
     schema: { sha256: "e".repeat(64) },
     scorer: { sha256: "f".repeat(64) },
     decoding: { temperature: 0, seed: 42, reasoning: "low" },
-    tokenLimits: { maxTokens: MAX_TOKENS_E2 },
+    tokenLimits: { maxTokens: MAX_TOKENS_E2, contextTokens: CONTEXT_TOKENS_E2 },
     timeouts: { requestMs: 60000, workDeadlineS: 700, functionTimeoutS: 840 },
     retry: { maxAttempts: 1 },
     modal: {
@@ -143,7 +145,7 @@ describe("E2 frozen run config reaches the launcher", () => {
     expect(argv[rev + 1]).toBe(REV_E2);
     const mml = argv.indexOf("--max-model-len");
     expect(mml).toBeGreaterThan(-1);
-    expect(argv[mml + 1]).toBe(String(MAX_TOKENS_E2));
+    expect(argv[mml + 1]).toBe(String(CONTEXT_TOKENS_E2));
   });
 
   it("E2-3: redaction-eval --dry-run reports derived runner/client settings", () => {
