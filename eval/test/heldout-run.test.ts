@@ -74,7 +74,7 @@ describe("heldout-run.mjs", () => {
   it("exits 2 when HELDOUT_DIR is missing", () => {
     const { presealedPath, presealedDir } = writeFakePresealed("0".repeat(64));
     try {
-      const env = { ...process.env, HELDOUT_PRESEALED_PATH: presealedPath };
+      const env: NodeJS.ProcessEnv = { ...process.env, HELDOUT_PRESEALED_PATH: presealedPath };
       delete env["HELDOUT_DIR"];
       let status = 0;
       let output = "";
