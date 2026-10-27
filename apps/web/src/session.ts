@@ -60,6 +60,8 @@ export interface SessionSnapshot {
   superseded: SupersededRecord | null;
   offline: boolean;
   draft: { text: string; origin: "user"; approved: boolean } | null;
+  /** Null before analysis and after any content change; else the current assessment. */
+  pressure: PressureAssessment | null;
   /**
    * Transport-boundary dispatch receipts for every run this session has
    * ever used (in run order). Survives invalidation and setTranscript:
@@ -97,12 +99,141 @@ function isLiveAnalyzer(
   return typeof (analyzer as LiveBriefAnalyzer).completeBrief === "function";
 }
 
+/** One tactic claim about a transcript segment. `span` must be a substring. */
+export interface PressureLabel {
+  segmentId: string;
+  tactic: string;
+  ask: string;
+  target: string;
+  span: string;
+  source: "pattern" | "spark" | "fixture";
+}
+
+export interface PressureClassifier {
+  mode: "fixture" | "live";
+  classify(lines: { segmentId: string; text: string }[]): Promise<PressureLabel[]>;
+}
+
+export interface PressureItem {
+  id: string;
+  tactic: string;
+  quote: string;
+  segmentId: string;
+  unresolvedTerm: string;
+}
+
+export interface PressureAssessment {
+  items: PressureItem[];
+  rejected: number;
+  reviewed: string[];
+  allReviewed: boolean;
+  source: "offline-pattern" | "offline-fixture" | "live" | "none";
+  offline: boolean;
+}
+
 export interface SessionStoreOptions {
   gate?: PrivacyGate;
   redactor?: { redactText: (t: string) => Promise<unknown> } & Record<string, unknown>;
   analyzer?: AnalyzerTransport | LiveBriefAnalyzer;
   analyzerLabel?: string;
   offline?: boolean;
+  pressureClassifier?: PressureClassifier;
+}
+
+/**
+ * Deterministic offline pattern layer. Mirrors detectPressurePatterns in
+ * packages/core/src/evidence/pressure.ts (same per-tactic markers, first
+ * match per tactic wins, span set to the matched substring). No model calls,
+ * no network.
+ */
+const TACTIC_PATTERNS: readonly { tactic: string; pattern: RegExp }[] = [
+  {
+    tactic: "authority",
+    pattern:
+      /\b(CEO|board|legal|counsel|compliance|auditor|regulator|chief executive)\b[^.]{0,60}\b(requires?|demands?|orders?|directs?|says? (so|you must)|approved? this)\b|\b(as|I'm|I am) (your|the) (CEO|boss|manager|director|lawyer|doctor)\b|\blegal (requires|demands)|per (company )?policy,? (you|we) must/i,
+  },
+  {
+    tactic: "commitment",
+    pattern:
+      /\byou (already )?(agreed|promised|committed|said you would|gave your word)\b|\bas you (agreed|promised|committed)\b|\bstay consistent\b|\byou told us you would\b/i,
+  },
+  {
+    tactic: "liking",
+    pattern:
+      /\bas a friend\b|\bwe (really )?(like|love|appreciate) you\b|\byou(['’]re| are) so (great|wonderful|amazing|terrific|smart)\b|\bfriends? like us\b/i,
+  },
+  {
+    tactic: "reciprocity",
+    pattern:
+      /\bafter (all|everything) we (did|have done|gave)\b|\bwe (already|just) (gave|did|sent|offered) you\b|\bin return for\b|\byou owe us\b|\bdo us this (one )?favor\b|\bwe did you a favor\b/i,
+  },
+  {
+    tactic: "scarcity",
+    pattern:
+      /\bonly \d+ (left|remaining|spots?)\b|\blast chance\b|\bexpires? (at|tonight|today|midnight)\b|\blimited (time|offer|spots?|availability)\b|\bact (now|fast|today)\b|\bbefore it(['’]s| is) gone\b|\brunning out\b/i,
+  },
+  {
+    tactic: "social_proof",
+    pattern:
+      /\beveryone else (already )?(agreed|signed|approved)\b|\ball (your|the) (peers|competitors|neighbors) (already )?(agreed|signed|approved)\b|\bmost (teams|people|customers|clients) (already )?(agreed|signed|chose)\b|\bjoin the rest\b|\bnobody else refused\b/i,
+  },
+  {
+    tactic: "unity",
+    pattern:
+      /\bas (a fellow|one of us|part of)\b|\bwe(['’]re| are) (all )?(in this together|on the same team|family)\b|\bfellow (members?|teammates?)\b|\bour (team|family|community) (always |needs |counts on )\b/i,
+  },
+];
+
+function detectPressurePatterns(text: string, segmentId = ""): PressureLabel[] {
+  const labels: PressureLabel[] = [];
+  for (const { tactic, pattern } of TACTIC_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match?.[0] !== undefined) {
+      labels.push({
+        segmentId,
+        tactic,
+        ask: text.trim(),
+        target: "owner",
+        span: match[0],
+        source: "pattern",
+      });
+    }
+  }
+  return labels;
+}
+
+/**
+ * ApplyPressure-style span verification against the current approved
+ * segments: tactic "none" is skipped (never rejected); a label is accepted
+ * only when its segmentId names a current approved segment and its span is
+ * non-empty and a substring of that segment's text.
+ */
+function verifyPressureLabels(
+  labels: PressureLabel[],
+  segments: Segment[],
+  source: PressureAssessment["source"],
+  offline: boolean,
+): PressureAssessment {
+  const byId = new Map(segments.map((s) => [s.id, s.text]));
+  const items: PressureItem[] = [];
+  let rejected = 0;
+  for (const label of labels) {
+    if (label.tactic === "none") continue;
+    const text = typeof label.segmentId === "string" ? byId.get(label.segmentId) : undefined;
+    const span = typeof label.span === "string" ? label.span : "";
+    if (text !== undefined && span !== "" && text.includes(span)) {
+      items.push({
+        id: `p${items.length + 1}`,
+        tactic: typeof label.tactic === "string" ? label.tactic : "unknown",
+        quote: span,
+        segmentId: label.segmentId,
+        unresolvedTerm: typeof label.ask === "string" ? label.ask : "",
+      });
+    } else {
+      rejected += 1;
+    }
+  }
+  return { items, rejected, reviewed: [], allReviewed: items.length === 0, source, offline };
 }
 
 interface SessionRecord {
@@ -119,6 +250,7 @@ interface SessionRecord {
   result: AnalysisResult | null;
   payload: PayloadRecord | null;
   superseded: SupersededRecord | null;
+  pressure: PressureAssessment | null;
   draft: DraftRecord | null;
   inFlight: { approvedText: string; sentAt: string } | null;
   generation: number;
@@ -455,6 +587,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
     (async (approvedText: string) => buildOfflineBrief(approvedText, []));
   const analyzerLabel =
     options?.analyzerLabel ?? (isLiveAnalyzer(analyzer) ? "MuseClient" : "offline heuristic");
+  const pressureClassifier = options?.pressureClassifier;
   const sessions = new Map<string, SessionRecord>();
 
   function lookup(sessionId: string): SessionRecord {
@@ -481,6 +614,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       superseded: s.superseded,
       receipts,
       offline,
+      pressure: s.pressure,
       draft:
         s.draft === null
           ? null
@@ -490,7 +624,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
               approved:
                 s.draft.approvedHash !== null &&
                 s.draft.approvedHash === hashDraft(s.draft.text) &&
-                s.draft.resultGeneration === s.generation,
+                s.draft.resultGeneration === s.generation &&
+                (s.pressure === null || s.pressure.allReviewed),
             },
     };
     if (s.reason !== undefined) snap.reason = s.reason;
@@ -505,6 +640,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
     s.approvedText = "";
     s.result = null;
     s.payload = null;
+    s.pressure = null;
     s.draft = null;
     if (s.inFlight) {
       s.superseded = { ...s.inFlight, status: "sent" };
@@ -546,6 +682,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
         result: null,
         payload: null,
         superseded: null,
+        pressure: null,
         draft: null,
         inFlight: null,
         generation: 0,
@@ -575,6 +712,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       const s = lookup(sessionId);
       if (s.redactPending) return s.redactPending.then(() => snapshot(s));
       s.state = "redaction_pending";
+      s.pressure = null;
       delete s.reason;
       const gen = s.generation;
       let p!: Promise<void>;
@@ -761,8 +899,52 @@ export function createSessionStore(options?: SessionStoreOptions) {
             }
             if (result.entries.length === 0) result = { offline: result.offline, entries: [] };
           }
+          // Pressure evidence for this generation: classify the approved
+          // (redacted) segments once after a successful analysis. The
+          // default is the deterministic offline pattern layer; a live store
+          // with no injected classifier skips. Never a network call.
+          let pressure: PressureAssessment;
+          if (pressureClassifier !== undefined) {
+            let labels: PressureLabel[] = [];
+            try {
+              labels = await pressureClassifier.classify(
+                approvedSegments.map((g) => ({ segmentId: g.id, text: g.text })),
+              );
+            } catch {
+              labels = [];
+            }
+            if (s.generation !== gen) {
+              if (dispatched) {
+                s.superseded = { approvedText, sentAt, status: "sent" };
+              }
+              return;
+            }
+            pressure = verifyPressureLabels(
+              labels,
+              approvedSegments,
+              pressureClassifier.mode === "live" ? "live" : "offline-fixture",
+              !(pressureClassifier.mode === "live" && !offline),
+            );
+          } else if (offline) {
+            pressure = verifyPressureLabels(
+              approvedSegments.flatMap((g) => detectPressurePatterns(g.text, g.id)),
+              approvedSegments,
+              "offline-pattern",
+              true,
+            );
+          } else {
+            pressure = {
+              items: [],
+              rejected: 0,
+              reviewed: [],
+              allReviewed: true,
+              source: "none",
+              offline: false,
+            };
+          }
           s.inFlight = null;
           s.result = result;
+          s.pressure = pressure;
           s.draft = { text: "", origin: "user", resultGeneration: gen, approvedHash: null };
           s.payload = {
             approvedText,
@@ -816,6 +998,23 @@ export function createSessionStore(options?: SessionStoreOptions) {
     rejectDraft(sessionId: string): SessionSnapshot {
       const s = lookup(sessionId);
       if (s.draft) s.draft.approvedHash = null;
+      return snapshot(s);
+    },
+
+    reviewPressure(sessionId: string, itemId: string): SessionSnapshot {
+      const s = lookup(sessionId);
+      if (!s.pressure) throw new Error("no current pressure assessment: analyze first");
+      if (!s.pressure.items.some((i) => i.id === itemId)) {
+        throw new Error(`unknown pressure item: ${itemId}`);
+      }
+      if (!s.pressure.reviewed.includes(itemId)) {
+        const reviewed = [...s.pressure.reviewed, itemId];
+        s.pressure = {
+          ...s.pressure,
+          reviewed,
+          allReviewed: s.pressure.items.every((i) => reviewed.includes(i.id)),
+        };
+      }
       return snapshot(s);
     },
 

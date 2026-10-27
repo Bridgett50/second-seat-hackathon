@@ -48,6 +48,7 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/session/draft/approve": new Set(["sessionId", "text"]),
   "/api/session/draft/reject": new Set(["sessionId"]),
   "/api/session/invalidate": new Set(["sessionId", "scope"]),
+  "/api/session/pressure-review": new Set(["sessionId", "itemId"]),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -506,6 +507,20 @@ export function createWebServer(deps?: WebServerDeps) {
               json(res, 200, sessions.rejectDraft(sessionId));
             } catch (err: unknown) {
               json(res, 404, { error: err instanceof Error ? err.message : "reject failed" });
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/pressure-review") {
+            const sessionId = body?.["sessionId"];
+            const itemId = body?.["itemId"];
+            if (typeof sessionId !== "string" || typeof itemId !== "string") {
+              json(res, 400, { error: 'fields "sessionId" and "itemId" must be strings' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.reviewPressure(sessionId, itemId));
+            } catch (err: unknown) {
+              json(res, 404, { error: err instanceof Error ? err.message : "review failed" });
             }
             return;
           }
