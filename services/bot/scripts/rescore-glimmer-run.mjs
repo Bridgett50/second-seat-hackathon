@@ -32,7 +32,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const piiDir = join(here, "..", "fixtures", "pii");
 const legacyRunDir = join(here, "..", "fixtures", "glimmer-run");
 
-function rescoreLegacyGlimmerRun() {
+function rescoreLegacyGlimmerRun(outPath) {
   const cases = JSON.parse(readFileSync(join(piiDir, "cases.json"), "utf8"));
   // Planned batch = the 8 basic cases.
   const plannedInputs = cases.filter((c) => /^basic-\d+\.txt$/.test(c.file));
@@ -124,7 +124,7 @@ function rescoreLegacyGlimmerRun() {
     generatedAt: new Date().toISOString(),
   };
 
-  const out = join(legacyRunDir, "rescore.json");
+  const out = outPath ?? join(legacyRunDir, "rescore.json");
   writeFileSync(out, JSON.stringify(payload, null, 2) + "\n");
   const rc = summary.request_completion;
   console.log(`requests: ${rc.completed}/${rc.planned}`);
@@ -482,5 +482,11 @@ if (isMainEntry) {
   }
   const { parseGlimmerAnswer } = await import("../dist/src/private/redact.js");
   void parseGlimmerAnswer;
-  rescoreLegacyGlimmerRun();
+  const outFlag = argv.indexOf("--out");
+  const outPath = outFlag !== -1 ? argv[outFlag + 1] : undefined;
+  if (outFlag !== -1 && outPath === undefined) {
+    console.error("error: --out <path> required");
+    process.exit(2);
+  }
+  rescoreLegacyGlimmerRun(outPath);
 }

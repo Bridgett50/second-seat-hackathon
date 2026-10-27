@@ -310,36 +310,60 @@ out = [run(200), run(0), run(400)]`);
 
   it("B5-10: an interrupted writer leaves recoverable incomplete evidence", async () => {
     const outDir = mkdtempSync(join(tmpdir(), "b5-int-"));
-    const text = "Call Ana at 555-0100";
-    const content = JSON.stringify({ spans: [{ start: 5, end: 8, label: "PERSON_NAME" }], boxes: [] });
-    let n = 0;
-    const fetchImpl = (async () => {
-      n += 1;
-      if (n > 1) return new Promise(() => {}); // writer "dies" mid-case
-      return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }] }) };
-    }) as unknown as typeof fetch;
-    void runEval({
-      cases: [
-        { file: "a.txt", entities: ["Ana"] },
-        { file: "b.txt", entities: ["Ana"] },
-      ],
-      readText: async () => text,
-      makeRedactor: () => new GlimmerClient("http://localhost:9", { fetchImpl }),
-      concurrency: 1,
-      runId: "b5-10",
-      outDir,
-    });
-    const recs = join(outDir, "b5-10", "records.jsonl");
-    for (let i = 0; i < 20000 && !(existsSync(recs) && readFileSync(recs, "utf8").includes("\n")); i++) {
-      await new Promise((res) => setImmediate(res));
+    try {
+      const text = "Call Ana at 555-0100";
+      const content = JSON.stringify({ spans: [{ start: 5, end: 8, label: "PERSON_NAME" }], boxes: [] });
+      let n = 0;
+      let secondStartedResolve!: () => void;
+      const secondStarted = new Promise<void>((resolve) => {
+        secondStartedResolve = resolve;
+      });
+      let releaseReject!: (err: Error) => void;
+      const release = new Promise<never>((_, reject) => {
+        releaseReject = reject;
+      });
+      // Prevent an unhandled rejection while the writer is parked.
+      release.catch(() => {});
+      const fetchImpl = (async () => {
+        n += 1;
+        if (n > 1) {
+          secondStartedResolve(); // first case already persisted (concurrency 1)
+          return release; // writer "dies" mid-case until the test releases it
+        }
+        return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }] }) };
+      }) as unknown as typeof fetch;
+      const runPromise = runEval({
+        cases: [
+          { file: "a.txt", entities: ["Ana"] },
+          { file: "b.txt", entities: ["Ana"] },
+        ],
+        readText: async () => text,
+        makeRedactor: () => new GlimmerClient("http://localhost:9", { fetchImpl }),
+        concurrency: 1,
+        runId: "b5-10",
+        outDir,
+      });
+      // Cleanup path: release the parked writer and wait for the run to settle.
+      const cleanup = async () => {
+        releaseReject(new Error("writer died mid-case"));
+        await runPromise;
+      };
+      try {
+        await secondStarted;
+        const recs = join(outDir, "b5-10", "records.jsonl");
+        expect(readFileSync(recs, "utf8").trim().split("\n")).toHaveLength(1);
+        appendFileSync(recs, '{"file":"b.txt","sta'); // torn write
+        const re = await rescoreRun(join(outDir, "b5-10"), { parseAnswer: parseGlimmerAnswer });
+        expect(re.truncated).toBe(true);
+        expect(re.complete).toBe(false);
+        expect(re.records.map((x: { file: string; status: string }) => [x.file, x.status])).toEqual([["a.txt", "ok"]]);
+        expect(re.output.recall_end_to_end).toEqual({ k: 1, n: 2 });
+      } finally {
+        await cleanup();
+      }
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
     }
-    expect(readFileSync(recs, "utf8").trim().split("\n")).toHaveLength(1);
-    appendFileSync(recs, '{"file":"b.txt","sta'); // torn write
-    const re = await rescoreRun(join(outDir, "b5-10"), { parseAnswer: parseGlimmerAnswer });
-    expect(re.truncated).toBe(true);
-    expect(re.complete).toBe(false);
-    expect(re.records.map((x: { file: string; status: string }) => [x.file, x.status])).toEqual([["a.txt", "ok"]]);
-    expect(re.output.recall_end_to_end).toEqual({ k: 1, n: 2 });
   });
 
   it("B5-11: no B5 test or launch helper references an actual sealed path", () => {

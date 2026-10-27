@@ -1,25 +1,24 @@
-// CPU-only dry run over fixtures/holdout-v1: exercises the real runEval +
+// CPU-only dry run over an explicit dataset dir: exercises the real runEval +
 // rescoreRun paths with a local fake redactor. Offline: installs a throwing
 // global fetch guard and asserts it is never called. Writes only into a temp
 // dir. Never runs Modal, never calls a model.
 //
-// Usage: node scripts/holdout-dry-run.mjs [--mode success|canary-fail|interrupted|all]
+// Usage: node scripts/holdout-dry-run.mjs --dir <dataset-dir> [--mode success|canary-fail|interrupted|all]
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { annotateOccurrences } from "./redaction-eval-lib.mjs";
 import { caseEntities, runEval } from "./redaction-eval-runner.mjs";
 import { rescoreRun } from "./rescore-glimmer-run.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const holdoutDir = join(here, "..", "fixtures", "holdout-v1");
-
-const cases = JSON.parse(readFileSync(join(holdoutDir, "cases.json"), "utf8"));
-const texts = new Map(
-  cases.map((c) => [c.file, readFileSync(join(holdoutDir, c.file), "utf8")]),
-);
-const readText = async (c) => texts.get(c.file);
+export function loadDataset(datasetDir) {
+  const cases = JSON.parse(readFileSync(join(datasetDir, "cases.json"), "utf8"));
+  const texts = new Map(
+    cases.map((c) => [c.file, readFileSync(join(datasetDir, c.file), "utf8")]),
+  );
+  const readText = async (c) => texts.get(c.file);
+  return { cases, texts, readText };
+}
 
 // Network guard: any fetch attempt throws and is counted.
 let fetchCount = 0;
@@ -42,14 +41,16 @@ function maskAll(text, c) {
   return { maskedText, spans };
 }
 
-const successRedactor = () => ({
-  label: "dry-run-fake",
-  timeoutMs: 0,
-  async redactText(text) {
-    const c = cases.find((k) => texts.get(k.file) === text);
-    return maskAll(text, c);
-  },
-});
+function successRedactorFor(cases, texts) {
+  return () => ({
+    label: "dry-run-fake",
+    timeoutMs: 0,
+    async redactText(text) {
+      const c = cases.find((k) => texts.get(k.file) === text);
+      return maskAll(text, c);
+    },
+  });
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,12 +62,13 @@ function oneLine(result) {
   );
 }
 
-export async function drySuccess(outParent) {
+export async function drySuccess(datasetDir, outParent) {
+  const { cases, texts, readText } = loadDataset(datasetDir);
   const outDir = mkdtempSync(join(outParent, "dry-success-"));
   const result = await runEval({
     cases,
     readText,
-    makeRedactor: successRedactor,
+    makeRedactor: successRedactorFor(cases, texts),
     concurrency: 2,
     runId: "dry-success",
     outDir,
@@ -75,7 +77,8 @@ export async function drySuccess(outParent) {
   return result;
 }
 
-export async function dryCanaryFail(outParent) {
+export async function dryCanaryFail(datasetDir, outParent) {
+  const { cases, readText } = loadDataset(datasetDir);
   const outDir = mkdtempSync(join(outParent, "dry-canary-"));
   const result = await runEval({
     cases,
@@ -98,7 +101,8 @@ export async function dryCanaryFail(outParent) {
   return result;
 }
 
-export async function dryInterrupted(outParent) {
+export async function dryInterrupted(datasetDir, outParent) {
+  const { cases, texts, readText } = loadDataset(datasetDir);
   const outDir = mkdtempSync(join(outParent, "dry-interrupted-"));
   // Abort mid-batch: an already-expired budget lets the canary finish but
   // marks every remaining case not_run; then rescore the partial dir offline.
@@ -127,13 +131,20 @@ export async function dryInterrupted(outParent) {
   return { result, rescore };
 }
 
-const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+const isMain = process.argv[1] !== undefined && import.meta.url.endsWith("holdout-dry-run.mjs") &&
+  process.argv[1].endsWith("holdout-dry-run.mjs");
 if (isMain) {
   const argv = process.argv.slice(2);
-  const modeFlag = (() => {
-    const i = argv.indexOf("--mode");
-    return i !== -1 ? argv[i + 1] : "all";
-  })();
+  const flagValue = (name) => {
+    const i = argv.indexOf(name);
+    return i !== -1 ? argv[i + 1] : undefined;
+  };
+  const datasetDir = flagValue("--dir");
+  if (datasetDir === undefined || datasetDir === "") {
+    console.error("holdout-dry-run: missing required --dir <dataset-dir>");
+    process.exit(2);
+  }
+  const modeFlag = flagValue("--mode") ?? "all";
   const modes =
     modeFlag === "all" ? ["success", "canary-fail", "interrupted"] : [modeFlag];
   if (modes.some((m) => !["success", "canary-fail", "interrupted"].includes(m))) {
@@ -142,9 +153,9 @@ if (isMain) {
   }
   const parent = mkdtempSync(join(tmpdir(), "holdout-dry-"));
   for (const m of modes) {
-    if (m === "success") await drySuccess(parent);
-    else if (m === "canary-fail") await dryCanaryFail(parent);
-    else await dryInterrupted(parent);
+    if (m === "success") await drySuccess(datasetDir, parent);
+    else if (m === "canary-fail") await dryCanaryFail(datasetDir, parent);
+    else await dryInterrupted(datasetDir, parent);
   }
   console.log(`fetch calls: ${fetchCalls()} (must be 0)`);
   if (fetchCalls() !== 0) process.exit(1);
