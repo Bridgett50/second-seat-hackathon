@@ -505,7 +505,6 @@ footer{margin-top:2rem;border-top:1px solid #999;padding-top:.5rem}
 <h1>Vendor brief — demo</h1>
 <p class="replay-label">Replay of recorded brief — Analysis precomputed ${esc(brief.createdAt)}</p>
 <div id="model-strip">${chipHtml}</div>
-${renderCacheRatio(opts.cacheUsage ?? [])}
 <section id="hero" aria-label="Demo hero">
 <div id="pressure-badges">${badgeHtml}</div>
 ${conflictsSection(brief)}
@@ -536,6 +535,7 @@ ${flaggedHtml}
 <section id="frames"><h2>Frames</h2>${frameHtml}</section>
 ${heroChainHtml}
 ${payloadHtml}
+${renderCacheRatio(opts.cacheUsage ?? [])}
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script type="application/json" id="transcript-data">${transcriptJson}</script>
 <script>
