@@ -16,7 +16,7 @@
 //    network. Tolerates interrupted runs (truncated trailing partial line,
 //    missing summary.json): missing cases become explicit not_run records and
 //    the result reports complete:false with a reason.
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -26,7 +26,7 @@ import {
   summarize,
   summarizeWithIntegrity,
 } from "./redaction-eval-lib.mjs";
-import { caseEntities, formatReport } from "./redaction-eval-runner.mjs";
+import { annotationSha256, buildOkRecord, caseEntities, formatReport, sha256Hex } from "./redaction-eval-runner.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const piiDir = join(here, "..", "fixtures", "pii");
@@ -134,6 +134,236 @@ function rescoreLegacyGlimmerRun() {
   console.log(`rescore: ${out}`);
 }
 
+function readSavedSummary(runDir) {
+  try {
+    return JSON.parse(readFileSync(join(runDir, "summary.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function deepEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// Offline replay from immutable evidence. Read-only: never writes.
+// Recomputes ONLY from manifest.json, inputs/, glimmer-raw.jsonl and
+// records.jsonl (record keys/status only; never trust saved hits/spans).
+//
+// Returns { ok, complete, errors, mismatches, truncated, records, output,
+// report, run_id, summary, misses, span_misses, integrity }.
+async function rescoreStrict(runDir, { parseAnswer }) {
+  const errors = [];
+  const manifest = JSON.parse(readFileSync(join(runDir, "manifest.json"), "utf8"));
+  const runId = manifest.run_id;
+  const plannedCases = manifest.planned ?? [];
+  const plannedByFile = new Map(plannedCases.map((c) => [c.file, c]));
+
+  // Immutable inputs + annotation hashes.
+  const texts = new Map();
+  for (const c of plannedCases) {
+    let text = null;
+    try {
+      text = readFileSync(join(runDir, "inputs", c.file), "utf8");
+    } catch (err) {
+      errors.push(`missing input file ${c.file}: ${err?.message ?? err}`);
+      texts.set(c.file, "");
+      continue;
+    }
+    texts.set(c.file, text);
+    if (sha256Hex(text) !== c.input_sha256) {
+      errors.push(`input hash mismatch for ${c.file}: inputs/${c.file} does not match manifest input_sha256`);
+    }
+    const expectedAnnot = annotationSha256({ entities: c.entities, names: c.names, extra_entities: c.extra_entities });
+    if (typeof c.annotation_sha256 !== "string" || c.annotation_sha256 !== expectedAnnot) {
+      errors.push(`annotation hash mismatch for ${c.file}: manifest annotation_sha256 does not match entities/names/extra_entities`);
+    }
+  }
+
+  // Records: truncated/unparseable last line is ignored with truncated=true.
+  let truncated = false;
+  let parsed = [];
+  try {
+    const raw = readFileSync(join(runDir, "records.jsonl"), "utf8");
+    const segments = raw.split("\n");
+    // Drop the single trailing empty segment from a file ending in newline.
+    if (segments.length > 0 && segments[segments.length - 1] === "") segments.pop();
+    const lines = segments.filter((l) => l.trim() !== "");
+    lines.forEach((line, idx) => {
+      const last = idx === lines.length - 1;
+      try {
+        parsed.push(JSON.parse(line));
+      } catch {
+        if (last) truncated = true;
+        else errors.push(`unparseable records.jsonl line ${idx + 1}`);
+      }
+    });
+  } catch (err) {
+    errors.push(`missing records.jsonl: ${err?.message ?? err}`);
+  }
+
+  // Record key verification.
+  const seen = new Set();
+  const firstByFile = new Map();
+  for (const r of parsed) {
+    const file = r?.file;
+    if (typeof file !== "string") {
+      errors.push(`record missing case id: ${JSON.stringify(r)?.slice(0, 80)}`);
+      continue;
+    }
+    if (seen.has(file)) {
+      errors.push(`duplicate record for ${file}`);
+      continue;
+    }
+    seen.add(file);
+    if (!firstByFile.has(file)) firstByFile.set(file, r);
+    if (!plannedByFile.has(file)) {
+      errors.push(`unexpected record case ${file}: not in planned manifest`);
+      continue;
+    }
+    const plannedEntry = plannedByFile.get(file);
+    if (r?.run_id !== runId) {
+      errors.push(`run_id mismatch for ${file}: record run_id does not match manifest run_id`);
+    }
+    if (r?.case_id !== file) {
+      errors.push(`case mismatch for ${file}: record case_id does not match file`);
+    }
+    if (typeof r?.input_sha256 !== "string" || r.input_sha256 !== plannedEntry.input_sha256) {
+      errors.push(`input hash mismatch for ${file}: record input_sha256 does not match manifest`);
+    }
+    const status = r?.status;
+    if (status !== "ok" && status !== "error" && status !== "not_run") {
+      errors.push(`invalid status for ${file}: ${JSON.stringify(status)}`);
+    }
+  }
+  for (const c of plannedCases) {
+    if (!seen.has(c.file)) errors.push(`missing record for ${c.file}`);
+  }
+
+  // Raw receipts keyed by run_id + case_id + input_sha256.
+  const receiptsByKey = new Map();
+  try {
+    const raw = readFileSync(join(runDir, "glimmer-raw.jsonl"), "utf8");
+    for (const line of raw.split("\n")) {
+      if (line.trim() === "") continue;
+      let obj = null;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (obj !== null && typeof obj === "object") {
+        receiptsByKey.set(`${obj.run_id}\n${obj.case_id}\n${obj.input_sha256}`, obj);
+      }
+    }
+  } catch {
+    /* no raw file: records carrying raw_sha256 will error below */
+  }
+  const receiptFor = (run_id, case_id, input_sha256) =>
+    receiptsByKey.get(`${run_id}\n${case_id}\n${input_sha256}`) ?? null;
+
+  for (const r of parsed) {
+    if (typeof r?.file !== "string" || !plannedByFile.has(r.file)) continue;
+    if (r.status !== "ok" && r.status !== "error") continue;
+    if (typeof r.raw_sha256 !== "string") {
+      errors.push(`missing raw_sha256 for ${r.file}: record carries no raw hash`);
+      continue;
+    }
+    const receipt = receiptFor(r.run_id, r.case_id, r.input_sha256);
+    if (receipt === null) {
+      errors.push(`missing raw receipt for ${r.file}: no glimmer-raw.jsonl entry for run_id+case_id+input_sha256`);
+      continue;
+    }
+    if (typeof receipt.content !== "string" || sha256Hex(receipt.content) !== r.raw_sha256) {
+      errors.push(`raw hash mismatch for ${r.file}: receipt content does not match record raw_sha256`);
+    }
+  }
+
+  // Per-case recompute from raw evidence only. Missing planned cases get no
+  // synthesized record (the missing error forces incomplete); truncated tails
+  // are already dropped above.
+  const recomputed = [];
+  for (const c of plannedCases) {
+    const text = texts.get(c.file) ?? "";
+    const saved = firstByFile.get(c.file);
+    const total = (c.entities ?? []).length;
+    if (saved === undefined) continue;
+    if (saved.status === "not_run") {
+      recomputed.push({ file: c.file, hits: 0, total, status: "not_run" });
+      continue;
+    }
+    if (saved.status !== "ok" && saved.status !== "error") {
+      recomputed.push({ file: c.file, hits: 0, total, status: "error", error: `invalid status ${JSON.stringify(saved.status)}` });
+      continue;
+    }
+    const receipt = receiptFor(saved.run_id, saved.case_id, saved.input_sha256);
+    if (receipt === null) {
+      recomputed.push({ file: c.file, hits: 0, total, status: "error", error: `missing raw receipt for ${c.file}` });
+      continue;
+    }
+    if (typeof receipt.error === "string" && receipt.error !== "") {
+      recomputed.push({ file: c.file, hits: 0, total, status: "error", error: receipt.error });
+      continue;
+    }
+    let spans;
+    try {
+      const out = parseAnswer(text, receipt.content, receipt.finish_reason ?? "stop");
+      spans = out?.spans ?? out;
+      if (!Array.isArray(spans)) throw new Error("glimmer: no JSON in reply");
+    } catch (err) {
+      recomputed.push({ file: c.file, hits: 0, total, status: "error", error: err?.message ?? String(err) });
+      continue;
+    }
+    recomputed.push(buildOkRecord({ file: c.file, entities: c.entities, names: c.names, extra_entities: c.extra_entities }, text, spans));
+  }
+
+  const planned = plannedCases.map((c) => {
+    const text = texts.get(c.file) ?? "";
+    return {
+      file: c.file,
+      total: (c.entities ?? []).length,
+      expected: annotateOccurrences(text, caseEntities(c)).length,
+    };
+  });
+
+  const summary = summarizeWithIntegrity(recomputed, planned);
+  if (errors.length > 0) {
+    summary.complete = false;
+    summary.all_valid = false;
+  }
+  const misses = recomputed.flatMap((r) => r.misses ?? []);
+  const spanMisses = recomputed.flatMap((r) => r.span_misses ?? []);
+  const output = JSON.parse(JSON.stringify({ run_id: runId, ...summary, misses, span_misses: spanMisses }));
+  if (errors.length > 0) output.complete = false;
+  const report = formatReport(recomputed, summary, misses, spanMisses);
+
+  const savedSummary = readSavedSummary(runDir);
+  const mismatches = [];
+  if (savedSummary !== null && typeof savedSummary === "object") {
+    for (const key of Object.keys(savedSummary)) {
+      if (!deepEqual(savedSummary[key], output[key])) mismatches.push(key);
+    }
+  }
+
+  const ok = errors.length === 0;
+  const complete = ok && !truncated && output.complete === true;
+  return {
+    ok,
+    complete,
+    errors,
+    mismatches,
+    truncated,
+    records: recomputed,
+    output,
+    report,
+    run_id: runId,
+    summary,
+    misses,
+    span_misses: spanMisses,
+    integrity: summary.integrity,
+  };
+}
+
 // Offline rescoring for a runEval run dir. No redactor, no network: planned
 // expectations are recomputed from the case files, and per-case results come
 // from the saved records.jsonl lines.
@@ -147,7 +377,8 @@ function rescoreLegacyGlimmerRun() {
 // Returns { run_id, records, summary, misses, span_misses, output, report,
 // complete, truncated, integrity }. output matches the run's saved
 // summary.json exactly (same construction as runEval).
-export async function rescoreRun(runDir, { readText } = {}) {
+export async function rescoreRun(runDir, { parseAnswer, readText } = {}) {
+  if (typeof parseAnswer === "function") return rescoreStrict(runDir, { parseAnswer });
   const manifest = JSON.parse(readFileSync(join(runDir, "manifest.json"), "utf8"));
   const plannedCases = manifest.planned ?? [];
   const read = readText ?? (async (c) => readFileSync(join(piiDir, c.file), "utf8"));
@@ -208,7 +439,18 @@ export async function rescoreRun(runDir, { readText } = {}) {
   const spanMisses = ordered.flatMap((r) => r.span_misses ?? []);
   const output = JSON.parse(JSON.stringify({ run_id: manifest.run_id, ...summary, misses, span_misses: spanMisses }));
   const report = formatReport(ordered, summary, misses, spanMisses);
+  const savedSummary = readSavedSummary(runDir);
+  const mismatches = [];
+  if (savedSummary !== null && typeof savedSummary === "object") {
+    for (const key of Object.keys(savedSummary)) {
+      if (!deepEqual(savedSummary[key], output[key])) mismatches.push(key);
+    }
+  }
+  const errors = combined.ok ? [] : [combined.reason];
   return {
+    ok: combined.ok,
+    errors,
+    mismatches,
     run_id: manifest.run_id,
     records: ordered,
     summary,
@@ -225,5 +467,7 @@ export async function rescoreRun(runDir, { readText } = {}) {
 const isMainEntry =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMainEntry) {
+  const { parseGlimmerAnswer } = await import("../dist/src/private/redact.js");
+  void parseGlimmerAnswer;
   rescoreLegacyGlimmerRun();
 }

@@ -412,10 +412,33 @@ describe("offline rescoring", () => {
       ["a.txt", textA],
       ["b.txt", textB],
     ]);
-    const r = await runFake(cases, texts, new Map<string, Behavior>([
-      [textA, maskAll(textA)],
-      [textB, maskAll(textB)],
-    ]), { runId: "rescore-me", outDir });
+    const fetchImpl = (async (_u: unknown, init?: { body?: unknown }) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        messages?: Array<{ content?: unknown }>;
+      };
+      const text = String(body.messages?.[1]?.content ?? "");
+      const content = JSON.stringify({
+        spans: [{ start: 0, end: text.length, label: "person" }],
+        boxes: [],
+      });
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            choices: [{ message: { content }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          }),
+      };
+    }) as unknown as typeof fetch;
+    const r = await runEval({
+      cases,
+      readText: async (c: { file: string }) => texts.get(c.file) as string,
+      makeRedactor: () => new GlimmerClient("http://localhost:9", { fetchImpl }),
+      concurrency: 1,
+      runId: "rescore-me",
+      outDir,
+    });
     expect(r.complete).toBe(true);
 
     const runDir = join(outDir, "rescore-me");
@@ -423,7 +446,10 @@ describe("offline rescoring", () => {
     const savedReport = readFileSync(join(runDir, "report.txt"), "utf8");
 
     // No redactor is passed at all: rescoring is offline by construction.
-    const re = await rescoreRun(runDir, { readText: async (c: { file: string }) => texts.get(c.file) as string });
+    const { parseGlimmerAnswer } = (await import("../src/private/redact.js")) as unknown as {
+      parseGlimmerAnswer: (text: string, content: string, finishReason?: string) => unknown;
+    };
+    const re = await rescoreRun(runDir, { parseAnswer: parseGlimmerAnswer });
     expect(re.output).toEqual(savedSummary);
     expect(re.report + "\n").toBe(savedReport);
     expect(re.complete).toBe(true);
