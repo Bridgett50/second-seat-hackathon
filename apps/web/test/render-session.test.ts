@@ -9,6 +9,7 @@ import {
 
 const base: SessionPageSnapshot = {
   state: "input",
+  revision: 0,
   segments: [],
   redactedText: "",
   approved: false,
