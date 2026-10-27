@@ -255,6 +255,9 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
     ({ parseGlimmerAnswer: parse } = await import("../dist/src/private/redact.js"));
   }
   const errors = [];
+  // A planned case with no record line stays incomplete, not an integrity
+  // failure: these notices surface in errors without flipping ok/status.
+  const missingRecordNotices = [];
   const runId = manifest.run_id;
   const plannedCases = manifest.planned;
   const plannedByFile = new Map(plannedCases.map((c) => [c.file, c]));
@@ -337,9 +340,10 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
     }
   }
   // A planned case with no record line (removed record, receipt still
-  // present) is an incomplete run, not an integrity failure: leave it out of
-  // errors so ok stays true and summarizeWithIntegrity marks the
-  // reconstruction incomplete with the full planned denominator.
+  // present) is an incomplete run, not an integrity failure: report it via
+  // missingRecordNotices (surfaced in errors at return) so ok stays true and
+  // summarizeWithIntegrity marks the reconstruction incomplete with the full
+  // planned denominator.
   // Duplicate/unexpected records and bad identities above stay errors.
 
   // Raw receipts keyed by run_id + case_id + input_sha256. Duplicates,
@@ -421,7 +425,10 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
     const text = texts.get(c.file) ?? "";
     const saved = firstByFile.get(c.file);
     const total = (c.entities ?? []).length;
-    if (saved === undefined) continue;
+    if (saved === undefined) {
+      missingRecordNotices.push(`missing record for ${c.file}`);
+      continue;
+    }
     if (saved.status === "not_run") {
       recomputed.push({ file: c.file, hits: 0, total, status: "not_run" });
       continue;
@@ -461,14 +468,14 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
   });
 
   const summary = summarizeWithIntegrity(recomputed, planned);
-  if (errors.length > 0 || truncated) {
+  if (errors.length > 0 || truncated || missingRecordNotices.length > 0) {
     summary.complete = false;
     summary.all_valid = false;
   }
   const misses = recomputed.flatMap((r) => r.misses ?? []);
   const spanMisses = recomputed.flatMap((r) => r.span_misses ?? []);
   const output = JSON.parse(JSON.stringify({ run_id: runId, ...summary, misses, span_misses: spanMisses }));
-  if (errors.length > 0 || truncated) output.complete = false;
+  if (errors.length > 0 || truncated || missingRecordNotices.length > 0) output.complete = false;
   const report = formatReport(recomputed, summary, misses, spanMisses);
 
   const savedSummary = readSavedSummary(runDir);
@@ -504,7 +511,7 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
   return {
     ok,
     complete,
-    errors,
+    errors: [...errors, ...missingRecordNotices],
     mismatches,
     truncated,
     records: recomputed,
