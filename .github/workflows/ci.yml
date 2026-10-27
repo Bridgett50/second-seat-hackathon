@@ -41,6 +41,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: bash scripts/tests/muse-helper.test.sh
       - run: pnpm -r typecheck
       - run: pnpm -r test
       - run: pnpm -r build
