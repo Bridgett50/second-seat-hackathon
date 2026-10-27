@@ -37,8 +37,14 @@ export interface AnalysisResult {
 
 export interface PayloadRecord {
   approvedText: string;
-  /** "prepared" = approved but no transport ran; "dispatched" = a transport actually ran. */
-  status: "prepared" | "dispatched";
+  /**
+   * Live analyzers derive this from the gate receipts recorded for the
+   * analysis: "prepared" (no receipt), "invoked" (fetch ran, outcome
+   * pending), "dispatched" (provider confirmed), "failed" (HTTP or
+   * transport failure). Offline transports record no receipts: "prepared"
+   * until adapter entry marks dispatch.
+   */
+  status: "prepared" | "invoked" | "dispatched" | "failed";
   sentAt?: string;
   adapterLabel?: string;
 }
@@ -281,6 +287,14 @@ interface SessionRecord {
   pressure: PressureAssessment | null;
   draft: DraftRecord | null;
   inFlight: { approvedText: string; sentAt: string } | null;
+  /**
+   * The live analysis currently in flight (if any): the run it sends
+   * through, how many receipts that run already had, and the approved
+   * text. Lets snapshot() derive the payload panel from the HTTP-boundary
+   * receipts for this analysis while the transport is still running.
+   * Cleared when the analysis settles or the content is invalidated.
+   */
+  pendingSend: { approvedText: string; runId: string; receiptsBefore: number } | null;
   generation: number;
   /** Strictly increasing on every server-side content/approval change. */
   revision: number;
@@ -634,6 +648,31 @@ export function createSessionStore(options?: SessionStoreOptions) {
       seen.add(runId);
       receipts.push(...gate.receipts(runId));
     }
+    // Live payload panel, read at snapshot time from the HTTP-boundary
+    // receipts for the in-flight analysis (beyond receiptsBefore): no
+    // receipt -> prepared; latest "invoked" -> invoked; latest
+    // "provider_confirmed" -> dispatched; "http_error"/"transport_failed"
+    // -> failed. sentAt is the first such receipt's dispatchedAt.
+    let payload = s.payload;
+    if (payload !== null && s.pendingSend !== null && isLiveAnalyzer(analyzer)) {
+      const fresh = gate.receipts(s.pendingSend.runId).slice(s.pendingSend.receiptsBefore);
+      if (fresh.length > 0) {
+        const first = fresh[0] as DispatchReceipt;
+        const latest = fresh[fresh.length - 1] as DispatchReceipt;
+        const status: PayloadRecord["status"] =
+          latest.outcome === "provider_confirmed"
+            ? "dispatched"
+            : latest.outcome === "invoked"
+              ? "invoked"
+              : "failed";
+        payload = {
+          approvedText: s.pendingSend.approvedText,
+          status,
+          sentAt: first.dispatchedAt,
+          adapterLabel: analyzerLabel,
+        };
+      }
+    }
     const snap: SessionSnapshot = {
       state: s.state,
       revision: s.revision,
@@ -641,7 +680,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       redactedText: s.redactedText,
       approved: s.approved,
       result: s.result,
-      payload: s.payload,
+      payload,
       superseded: s.superseded,
       receipts,
       offline,
@@ -678,6 +717,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       s.superseded = { ...s.inFlight, status: "sent" };
       s.inFlight = null;
     }
+    s.pendingSend = null;
     s.analyzePending = null;
     delete s.reason;
   }
@@ -717,6 +757,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
         pressure: null,
         draft: null,
         inFlight: null,
+        pendingSend: null,
         generation: 0,
         revision: 0,
         state: "input",
@@ -859,15 +900,44 @@ export function createSessionStore(options?: SessionStoreOptions) {
       // later invalidation cannot move the receipt accounting to a new run.
       const sendRunId = s.runId;
       const receiptsBefore = sendRunId === null ? 0 : gate.receipts(sendRunId).length;
-      const refreshDispatched = (): void => {
-        // Truthful dispatch for live analyzers: true only when the
-        // transport boundary recorded a receipt for this analysis, never
-        // on entry into the send callback.
-        if (sendRunId !== null && gate.receipts(sendRunId).length > receiptsBefore) {
-          dispatched = true;
+      // Live dispatch identity comes from the HTTP-boundary receipts for
+      // this analysis (beyond receiptsBefore), never from adapter entry or
+      // completion timestamps. Offline transports record no receipts, so
+      // entry still marks dispatch there.
+      const freshReceipts = (): DispatchReceipt[] =>
+        sendRunId === null ? [] : gate.receipts(sendRunId).slice(receiptsBefore);
+      const receiptSentAt = (): string | null => {
+        const fresh = freshReceipts();
+        return fresh.length > 0 ? ((fresh[0] as DispatchReceipt).dispatchedAt ?? null) : null;
+      };
+      const receiptStatus = (): PayloadRecord["status"] | null => {
+        const fresh = freshReceipts();
+        if (fresh.length === 0) return null;
+        const latest = (fresh[fresh.length - 1] as DispatchReceipt).outcome;
+        if (latest === "provider_confirmed") return "dispatched";
+        if (latest === "invoked") return "invoked";
+        return "failed";
+      };
+      const recordSuperseded = (): void => {
+        if (live) {
+          const at = receiptSentAt();
+          if (at === null) return;
+          s.superseded = { approvedText, sentAt: at, status: "sent" };
+          s.revision += 1;
+          return;
+        }
+        if (dispatched) {
+          s.superseded = { approvedText, sentAt, status: "sent" };
+          s.revision += 1;
         }
       };
       let dispatched = false;
+      // Identity token so settling this analysis never clears a newer
+      // analysis's tracking.
+      const thisSend = sendRunId === null ? null : { approvedText, runId: sendRunId, receiptsBefore };
+      if (live && thisSend !== null) {
+        s.pendingSend = thisSend;
+      }
       let p!: Promise<void>;
       p = (async () => {
         await Promise.resolve();
@@ -897,12 +967,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
             }
             return analyzer(approvedText);
           });
-          if (live) refreshDispatched();
           if (s.generation !== gen) {
-            if (dispatched) {
-              s.superseded = { approvedText, sentAt, status: "sent" };
-              s.revision += 1;
-            }
+            recordSuperseded();
             return;
           }
           let result: AnalysisResult;
@@ -955,10 +1021,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
               labels = [];
             }
             if (s.generation !== gen) {
-              if (dispatched) {
-                s.superseded = { approvedText, sentAt, status: "sent" };
-                s.revision += 1;
-              }
+              recordSuperseded();
               return;
             }
             pressure = verifyPressureLabels(
@@ -989,24 +1052,38 @@ export function createSessionStore(options?: SessionStoreOptions) {
           s.result = result;
           s.pressure = pressure;
           s.draft = { text: "", origin: "user", resultGeneration: gen, approvedHash: null };
-          s.payload = {
-            approvedText,
-            status: "dispatched",
-            sentAt: new Date().toISOString(),
-            adapterLabel: analyzerLabel,
-          };
+          if (live) {
+            // Receipts are the source of dispatch identity and time: the
+            // first receipt's dispatchedAt, never adapter completion time.
+            // No receipt means the transport never ran: stay prepared.
+            const status = receiptStatus();
+            const at = receiptSentAt();
+            s.payload =
+              status === null || at === null
+                ? { approvedText, status: "prepared" }
+                : { approvedText, status, sentAt: at, adapterLabel: analyzerLabel };
+          } else {
+            s.payload = {
+              approvedText,
+              status: "dispatched",
+              sentAt: new Date().toISOString(),
+              adapterLabel: analyzerLabel,
+            };
+          }
           s.state = "completed";
           s.revision += 1;
         } catch (err: unknown) {
-          if (live) refreshDispatched();
           if (s.generation !== gen) {
-            if (dispatched) {
-              s.superseded = { approvedText, sentAt, status: "sent" };
-              s.revision += 1;
-            }
+            recordSuperseded();
             return;
           }
-          if (dispatched) {
+          if (live) {
+            const status = receiptStatus();
+            const at = receiptSentAt();
+            if (status !== null && at !== null) {
+              s.payload = { approvedText, status, sentAt: at, adapterLabel: analyzerLabel };
+            }
+          } else if (dispatched) {
             s.payload = {
               approvedText,
               status: "dispatched",
@@ -1018,6 +1095,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
           s.revision += 1;
         } finally {
           if (s.analyzePending === p) s.analyzePending = null;
+          if (s.pendingSend === thisSend) s.pendingSend = null;
         }
       })();
       s.analyzePending = p;
