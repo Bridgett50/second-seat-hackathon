@@ -23,7 +23,7 @@
 
 import { BRIEF_API_URL, BRIEF_MAX_COMPLETION_TOKENS, BRIEF_SEED } from "../brief/muse.js";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
-import { requireGatedText, type GatedText } from "../private/gate.js";
+import { requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const SUPPORT_MODEL = "muse-spark-1.3";
 export const SUPPORT_PROMPT_VERSION = "support-v1";
@@ -296,8 +296,8 @@ export class SparkSupportJudge {
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
-    const entryText = requireGatedText(input.entryText).text;
-    const citedSpans = input.citedSpans.map((span) => requireGatedText(span).text);
+    const entryText = requireLiveGatedText(input.entryText).text;
+    const citedSpans = input.citedSpans.map((span) => requireLiveGatedText(span).text);
     await checkCapsPreCall();
     const userMessage = buildSupportUserMessage({ entryId: input.entryId, entryText, citedSpans });
     checkPerCallTokenCap(
