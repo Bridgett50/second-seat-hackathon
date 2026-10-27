@@ -705,16 +705,25 @@ function sessionSupersededHtml(snap: SessionPageSnapshot): string {
   return `<p id="superseded-notice">An earlier approved text was sent to the analyzer before your edit; its result was discarded. ${esc(snap.superseded.approvedText)}</p>`;
 }
 
+export function payloadStatusLabel(
+  payload: { status: string; sentAt?: string; adapterLabel?: string } | null,
+): string {
+  if (payload === null) return "Not prepared yet";
+  if (payload.status === "invoked") {
+    return `Transport invoked at ${payload.sentAt ?? "unknown time"} — outcome pending`;
+  }
+  if (payload.status === "dispatched") {
+    return `Dispatched to ${payload.adapterLabel ?? "analyzer"} at ${payload.sentAt ?? "unknown time"}`;
+  }
+  if (payload.status === "failed") {
+    return `Dispatch attempted at ${payload.sentAt ?? "unknown time"} — failed or unknown outcome`;
+  }
+  return "Prepared (not dispatched)";
+}
+
 function sessionPayloadHtml(snap: SessionPageSnapshot): string {
-  if (snap.payload === null) {
-    return `<pre id="payload-text"></pre><p id="payload-status">Not prepared yet</p>${sessionSupersededHtml(snap)}`;
-  }
-  if (snap.payload.status !== "dispatched") {
-    return `<pre id="payload-text">${esc(snap.payload.approvedText)}</pre><p id="payload-status">Prepared (not sent)</p>${sessionSupersededHtml(snap)}`;
-  }
-  const label = snap.payload.adapterLabel ?? "analyzer";
-  const at = snap.payload.sentAt ?? "unknown time";
-  return `<pre id="payload-text">${esc(snap.payload.approvedText)}</pre><p id="payload-status">Dispatched to ${esc(label)} at ${esc(at)}</p>${sessionSupersededHtml(snap)}`;
+  const text = snap.payload === null ? "" : snap.payload.approvedText;
+  return `<pre id="payload-text">${esc(text)}</pre><p id="payload-status">${esc(payloadStatusLabel(snap.payload))}</p>${sessionSupersededHtml(snap)}`;
 }
 
 export function renderSessionPage(snap: SessionPageSnapshot): string {
@@ -801,7 +810,11 @@ function render(s){
     (e.segmentIds||[]).forEach(function(id){var link=el("a",{href:"#"+id},"["+id+"]");c.appendChild(link);c.appendChild(document.createTextNode(" "));});
     a.appendChild(c);resultsEl.appendChild(a);});}
   if(!s.payload){payloadText.textContent="";payloadStatus.textContent=(lastRedacted&&redacted.value!==lastRedacted)?"Not prepared — preview edited, approve again":"Not prepared yet";}
-  else{payloadText.textContent=s.payload.approvedText;payloadStatus.textContent=s.payload.status==="dispatched"?("Dispatched to "+(s.payload.adapterLabel||"analyzer")+" at "+(s.payload.sentAt||"unknown time")):"Prepared (not sent)";}
+  else{payloadText.textContent=s.payload.approvedText;var pst=s.payload.status;
+  if(pst==="invoked")payloadStatus.textContent="Transport invoked at "+(s.payload.sentAt||"unknown time")+" — outcome pending";
+  else if(pst==="dispatched")payloadStatus.textContent="Dispatched to "+(s.payload.adapterLabel||"analyzer")+" at "+(s.payload.sentAt||"unknown time");
+  else if(pst==="failed")payloadStatus.textContent="Dispatch attempted at "+(s.payload.sentAt||"unknown time")+" — failed or unknown outcome";
+  else payloadStatus.textContent="Prepared (not dispatched)";}
   syncPressure(s);
   var d=s.draft||null;
   if(draftSection)draftSection.hidden=!d;

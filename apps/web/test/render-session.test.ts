@@ -105,7 +105,7 @@ describe("renderSessionPage", () => {
         state: "approved",
         payload: { approvedText: "x", status: "prepared" },
       }),
-    ).toContain("Prepared (not sent)");
+    ).toContain("Prepared (not dispatched)");
   });
 
   it("shows analysis-error without 'No findings' when state is error", () => {
