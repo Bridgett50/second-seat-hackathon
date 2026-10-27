@@ -13,4 +13,4 @@
 - [ ] Support numbers shown with misses: frozen rerun mismatched 2 cases [eval/results/support-table-frozen-live.md].
 - [ ] No "catches everything" claim. No unsupported privacy guarantee: say what the code does (approved redacted text through the privacy gate; test mode offline even with credentials) [apps/web/src/liveConfig.ts], never "the raw transcript never left our server" as a guarantee.
 - [ ] Founder story, user observations, video URLs: PENDING — not yet supplied. Nothing invented.
-- [ ] Statuses stated accurately: A1–A9 merged, offline verified, live NOT performed, partner none; draft PRs B1–B8 pending review.
+- [ ] Statuses stated accurately: A1–A9 merged, criteria met on the tested commits, live NOT performed, partner none; draft PRs B1–B8 pending review.
