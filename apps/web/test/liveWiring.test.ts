@@ -86,8 +86,21 @@ function evidenceBrief(entries: unknown[]) {
   };
 }
 
+/** "m" is a placeholder: the fake echoes the meeting id the app actually requested (B3 identity check). */
+function withRequestedMeeting(payload: unknown, body: string): unknown {
+  if (typeof payload !== "object" || payload === null || (payload as { meetingId?: unknown }).meetingId !== "m") {
+    return payload;
+  }
+  const m = /^meetingId: (.+)$/m.exec(userMessageText({ url: "", body }));
+  return { ...(payload as Record<string, unknown>), meetingId: m ? m[1] : "missing" };
+}
+
 function liveDeps(payload: unknown, calls: FetchCall[]) {
-  const fetchImpl = fakeFetchFactory(calls, () => sseResponse(JSON.stringify(payload)));
+  const fetchImpl = (async (url: unknown, init?: { body?: unknown }) => {
+    const body = String((init as { body?: unknown } | undefined)?.body ?? "");
+    calls.push({ url: String(url), body });
+    return sseResponse(JSON.stringify(withRequestedMeeting(payload, body)));
+  }) as typeof fetch;
   const gate = createPrivacyGate({
     mode: "live",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
