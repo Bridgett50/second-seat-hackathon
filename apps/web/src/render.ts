@@ -1,4 +1,5 @@
 import { modelChips, type RunLogLine } from "./modelStrip.js";
+import { renderCacheRatio, type CacheUsage } from "./cacheRatio.js";
 import type { PressureAssessment } from "./session.js";
 
 export interface Citation {
@@ -166,6 +167,7 @@ export interface RenderOpts {
   briefScore?: BriefScore | null;
   seededScore?: SeededScore | null;
   heroChain?: HeroChainProof | null;
+  cacheUsage?: CacheUsage[];
 }
 
 function esc(s: string): string {
@@ -503,6 +505,7 @@ footer{margin-top:2rem;border-top:1px solid #999;padding-top:.5rem}
 <h1>Vendor brief — demo</h1>
 <p class="replay-label">Replay of recorded brief — Analysis precomputed ${esc(brief.createdAt)}</p>
 <div id="model-strip">${chipHtml}</div>
+${renderCacheRatio(opts.cacheUsage ?? [])}
 <section id="hero" aria-label="Demo hero">
 <div id="pressure-badges">${badgeHtml}</div>
 ${conflictsSection(brief)}
