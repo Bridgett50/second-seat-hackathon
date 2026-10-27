@@ -174,8 +174,8 @@ async function postChat(
   gated: readonly GatedText[],
   transport: "muse",
   fetchImpl?: typeof fetch,
+  maxAttempts = 4,
 ): Promise<Response> {
-  const maxAttempts = 4;
   for (let attempt = 0; ; attempt += 1) {
     // Every attempt (including retries) revalidates approval at the
     // transport boundary and records a receipt. `fetch` is read here at
@@ -278,10 +278,12 @@ export class MuseClient {
   readonly mode = "live" as const;
   private readonly fetchImpl: typeof fetch | undefined;
   private readonly labelSegments: boolean;
+  private readonly maxAttempts: number;
 
-  constructor(opts?: { fetchImpl?: typeof fetch; labelTranscriptSegments?: boolean }) {
+  constructor(opts?: { fetchImpl?: typeof fetch; labelTranscriptSegments?: boolean; maxAttempts?: number }) {
     this.fetchImpl = opts?.fetchImpl;
     this.labelSegments = opts?.labelTranscriptSegments ?? false;
+    this.maxAttempts = opts?.maxAttempts ?? 4;
   }
 
   /**
@@ -343,6 +345,7 @@ export class MuseClient {
       gatedValues,
       "muse",
       this.fetchImpl,
+      this.maxAttempts,
     );
     const { content, usage } = await readStreamedChat(response);
     const result: BriefResult = {
