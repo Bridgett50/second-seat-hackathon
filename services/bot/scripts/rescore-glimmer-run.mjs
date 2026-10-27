@@ -1,6 +1,14 @@
 // Re-score the recorded glimmer-run predictions against fixtures/pii inputs.
 // Offline only: never contacts a model, never reads held-out data.
 //
+// CLI usage: node rescore-glimmer-run.mjs --run-dir <existing run dir>
+//   (--legacy-glimmer-run [--out <path>] re-scores the historical fixture;
+//   --help prints usage and exit codes).
+// CLI exit codes: 0 complete_match | 1 integrity_failure | 3 incomplete |
+//   4 mismatch | 5 complete_uncompared (complete reconstruction but saved
+//   summary.json or report.txt is missing, so there is nothing to compare
+//   against) | 2 usage error.
+//
 // Two entry points:
 //
 // 1. Legacy CLI (run as a script): rescores fixtures/glimmer-run
@@ -17,7 +25,7 @@
 //    missing summary.json): missing cases become explicit not_run records and
 //    the result reports complete:false with a reason.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   annotateOccurrences,
@@ -152,16 +160,106 @@ function deepEqual(a, b) {
 //
 // Returns { ok, complete, errors, mismatches, truncated, records, output,
 // report, run_id, summary, misses, span_misses, integrity, status } where
-// status is one of integrity_failure | incomplete | mismatch | complete_match.
+// status is one of integrity_failure | incomplete | mismatch |
+// complete_match | complete_uncompared. complete_uncompared means a complete
+// reconstruction with no saved summary.json/report.txt to compare against.
+// A manifest that fails shape validation yields integrity_failure with
+// output/summary/report all null (no aggregate metrics are published) and
+// no further reads of case inputs, records, receipts, or saved outputs.
+const RUN_ID_RE = /^[A-Za-z0-9._-]+$/;
+const CASE_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
+
+function manifestShapeErrors(manifest) {
+  const errors = [];
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return ["invalid manifest: manifest.json must be an object"];
+  }
+  const runId = manifest.run_id;
+  if (typeof runId !== "string" || runId === "" || !RUN_ID_RE.test(runId)) {
+    errors.push(
+      "invalid manifest: run_id must be a nonempty id matching /^[A-Za-z0-9._-]+$/",
+    );
+  }
+  const planned = manifest.planned;
+  if (!Array.isArray(planned)) {
+    errors.push("invalid manifest: planned must be an array");
+    return errors;
+  }
+  const seen = new Set();
+  planned.forEach((c, idx) => {
+    const where = `planned[${idx}]`;
+    if (c === null || typeof c !== "object" || Array.isArray(c)) {
+      errors.push(`invalid manifest: ${where} must be an object`);
+      return;
+    }
+    const file = c.file;
+    if (typeof file !== "string" || file === "") {
+      errors.push(`invalid manifest: ${where} is missing its case id`);
+      return;
+    }
+    let flaw = null;
+    if (file.includes("\\")) flaw = "backslash";
+    else if (file.startsWith("/")) flaw = "absolute path";
+    else if (file.split("/").includes("..")) flaw = '".." segment';
+    else if (!file.split("/").every((seg) => CASE_SEGMENT_RE.test(seg))) flaw = "unsafe characters";
+    if (flaw !== null) {
+      errors.push(`invalid manifest: unsafe case path ${JSON.stringify(file)} (${flaw})`);
+      return;
+    }
+    if (seen.has(file)) {
+      errors.push(`invalid manifest: duplicate planned case id ${JSON.stringify(file)}`);
+      return;
+    }
+    seen.add(file);
+  });
+  return errors;
+}
+
 async function rescoreStrict(runDir, { parseAnswer } = {}) {
+  let manifest = null;
+  let manifestReadError = null;
+  try {
+    manifest = JSON.parse(readFileSync(join(runDir, "manifest.json"), "utf8"));
+  } catch (err) {
+    manifestReadError = err?.message ?? String(err);
+  }
+  const shapeErrors =
+    manifestReadError !== null
+      ? [`invalid manifest: cannot read manifest.json: ${manifestReadError}`]
+      : manifestShapeErrors(manifest);
+  if (shapeErrors.length > 0) {
+    const fallbackId =
+      manifest !== null && typeof manifest.run_id === "string" && manifest.run_id !== ""
+        ? manifest.run_id
+        : basename(runDir);
+    const reason = shapeErrors.join("; ");
+    return {
+      ok: false,
+      complete: false,
+      errors: shapeErrors,
+      mismatches: [],
+      truncated: false,
+      records: [],
+      output: null,
+      report: null,
+      run_id: fallbackId,
+      summary: null,
+      misses: [],
+      span_misses: [],
+      integrity: { ok: false, reason },
+      status: "integrity_failure",
+    };
+  }
   let parse = parseAnswer;
   if (typeof parse !== "function") {
     ({ parseGlimmerAnswer: parse } = await import("../dist/src/private/redact.js"));
   }
   const errors = [];
-  const manifest = JSON.parse(readFileSync(join(runDir, "manifest.json"), "utf8"));
+  // A planned case with no record line stays incomplete, not an integrity
+  // failure: these notices surface in errors without flipping ok/status.
+  const missingRecordNotices = [];
   const runId = manifest.run_id;
-  const plannedCases = manifest.planned ?? [];
+  const plannedCases = manifest.planned;
   const plannedByFile = new Map(plannedCases.map((c) => [c.file, c]));
 
   // Immutable inputs + annotation hashes.
@@ -241,9 +339,12 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
       errors.push(`invalid status for ${file}: ${JSON.stringify(status)}`);
     }
   }
-  for (const c of plannedCases) {
-    if (!seen.has(c.file)) errors.push(`missing record for ${c.file}`);
-  }
+  // A planned case with no record line (removed record, receipt still
+  // present) is an incomplete run, not an integrity failure: report it via
+  // missingRecordNotices (surfaced in errors at return) so ok stays true and
+  // summarizeWithIntegrity marks the reconstruction incomplete with the full
+  // planned denominator.
+  // Duplicate/unexpected records and bad identities above stay errors.
 
   // Raw receipts keyed by run_id + case_id + input_sha256. Duplicates,
   // unexpected cases, wrong identities, and malformed lines are all errors.
@@ -324,7 +425,10 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
     const text = texts.get(c.file) ?? "";
     const saved = firstByFile.get(c.file);
     const total = (c.entities ?? []).length;
-    if (saved === undefined) continue;
+    if (saved === undefined) {
+      missingRecordNotices.push(`missing record for ${c.file}`);
+      continue;
+    }
     if (saved.status === "not_run") {
       recomputed.push({ file: c.file, hits: 0, total, status: "not_run" });
       continue;
@@ -364,45 +468,50 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
   });
 
   const summary = summarizeWithIntegrity(recomputed, planned);
-  if (errors.length > 0 || truncated) {
+  if (errors.length > 0 || truncated || missingRecordNotices.length > 0) {
     summary.complete = false;
     summary.all_valid = false;
   }
   const misses = recomputed.flatMap((r) => r.misses ?? []);
   const spanMisses = recomputed.flatMap((r) => r.span_misses ?? []);
   const output = JSON.parse(JSON.stringify({ run_id: runId, ...summary, misses, span_misses: spanMisses }));
-  if (errors.length > 0 || truncated) output.complete = false;
+  if (errors.length > 0 || truncated || missingRecordNotices.length > 0) output.complete = false;
   const report = formatReport(recomputed, summary, misses, spanMisses);
 
   const savedSummary = readSavedSummary(runDir);
+  const savedSummaryValid =
+    savedSummary !== null && typeof savedSummary === "object" && !Array.isArray(savedSummary);
+  let savedReport = null;
+  try {
+    savedReport = readFileSync(join(runDir, "report.txt"), "utf8");
+  } catch {
+    savedReport = null;
+  }
   const mismatches = [];
-  if (savedSummary !== null && typeof savedSummary === "object") {
+  if (savedSummaryValid) {
     for (const key of Object.keys(savedSummary)) {
       if (!deepEqual(savedSummary[key], output[key])) mismatches.push(key);
     }
-    let savedReport = null;
-    try {
-      savedReport = readFileSync(join(runDir, "report.txt"), "utf8");
-    } catch {
-      savedReport = null;
-    }
-    if (savedReport !== null ? savedReport !== `${report}\n` : false) {
-      if (!mismatches.includes("report")) mismatches.push("report");
-    } else if (savedReport === null && output.complete === true) {
+    if (savedReport !== null && savedReport !== `${report}\n`) {
       if (!mismatches.includes("report")) mismatches.push("report");
     }
   }
 
   const ok = errors.length === 0;
   const complete = output.complete === true && summary.complete === true;
+  // A missing saved summary.json or report.txt means there is nothing to
+  // compare against: a complete reconstruction reports complete_uncompared,
+  // never complete_match. The API and the CLI share this policy.
+  const compared = savedSummaryValid && savedReport !== null;
   let status = "complete_match";
   if (!ok) status = "integrity_failure";
   else if (!complete) status = "incomplete";
+  else if (!compared) status = "complete_uncompared";
   else if (mismatches.length > 0) status = "mismatch";
   return {
     ok,
     complete,
-    errors,
+    errors: [...errors, ...missingRecordNotices],
     mismatches,
     truncated,
     records: recomputed,
@@ -532,6 +641,17 @@ const isMainEntry =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMainEntry) {
   const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(`usage: rescore-glimmer-run.mjs --run-dir <existing run dir>
+  Reconstructs a run's metrics from manifest.json, inputs/,
+  glimmer-raw.jsonl and records.jsonl (read-only; never writes into the
+  input dir) and compares against the saved summary.json/report.txt.
+  exit codes: 0 complete_match | 1 integrity_failure | 3 incomplete |
+    4 mismatch | 5 complete_uncompared | 2 usage error
+  complete_uncompared: the reconstruction is complete but saved summary.json
+    or report.txt is missing, so there is nothing to compare against.`);
+    process.exit(0);
+  }
   const legacyFlag = argv.indexOf("--legacy-glimmer-run");
   if (legacyFlag !== -1) {
     const rest = [...argv.slice(0, legacyFlag), ...argv.slice(legacyFlag + 1)];
@@ -572,7 +692,7 @@ if (isMainEntry) {
       process.exit(1);
     }
     console.log(JSON.stringify({ run_id: re.run_id, status: re.status, ok: re.ok, complete: re.complete, truncated: re.truncated, errors: re.errors, mismatches: re.mismatches }));
-    const code = re.status === "complete_match" ? 0 : re.status === "integrity_failure" ? 1 : re.status === "incomplete" ? 3 : re.status === "mismatch" ? 4 : 1;
+    const code = re.status === "complete_match" ? 0 : re.status === "integrity_failure" ? 1 : re.status === "incomplete" ? 3 : re.status === "mismatch" ? 4 : re.status === "complete_uncompared" ? 5 : 1;
     process.exit(code);
   } else {
     if (argv.includes("--run-dir")) console.error("error: --run-dir <existing dir> required");
