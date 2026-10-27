@@ -1,4 +1,5 @@
 import { modelChips, type RunLogLine } from "./modelStrip.js";
+import type { PressureAssessment } from "./session.js";
 
 export interface Citation {
   kind: string;
@@ -611,7 +612,34 @@ export type SessionPageSnapshot = {
   superseded?: { approvedText: string; sentAt?: string; status?: string } | null;
   offline: boolean;
   draft?: { text: string; origin: string; approved: boolean } | null;
+  pressure?: PressureAssessment | null;
 };
+
+function pressureSourceLabel(source: string): string {
+  if (source === "offline-fixture") return "offline fixture";
+  if (source === "live") return "live check";
+  return "offline pattern check";
+}
+
+function sessionPressureHtml(snap: SessionPageSnapshot): string {
+  const p = snap.pressure ?? null;
+  if (p === null || p.items.length === 0) return "";
+  const items = p.items
+    .map(
+      (item) =>
+        `<article class="pressure-item" id="pressure-${esc(item.id)}">` +
+        `<a class="pressure-badge" href="#${esc(item.segmentId)}">pressure: ${esc(item.id)}</a>` +
+        `<p class="pressure-quote">${esc(item.quote)}</p>` +
+        `<p class="pressure-tactic">tactic: ${esc(item.tactic)}</p>` +
+        `<p class="pressure-term">unresolved term: ${esc(item.unresolvedTerm)}</p>` +
+        `<label class="pressure-check"><input type="checkbox" class="pressure-review" data-pressure="${esc(item.id)}"${p.reviewed.includes(item.id) ? " checked" : ""}> Reviewed</label>` +
+        `</article>`,
+    )
+    .join("\n");
+  return `<section id="pressure" aria-label="Possible pressure">` +
+    `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
+    `<p id="pressure-source">${esc(pressureSourceLabel(p.source))}</p>${items}</section>`;
+}
 
 function sessionDraftHtml(snap: SessionPageSnapshot): string {
   const d = snap.draft ?? null;
@@ -723,6 +751,7 @@ ${snap.offline ? `<p id="offline-label">Offline demo</p>` : ""}
 <button type="button" id="btn-analyze"${dis(snap.state !== "approved" && snap.state !== "completed")}>Analyze</button></div>
 </section>
 <section id="findings" aria-label="Findings"><h2>Findings</h2><div id="results">${sessionFindingsHtml(snap)}</div></section>
+${sessionPressureHtml(snap)}
 <section id="transcript" aria-label="Approved transcript"><h2>Approved transcript segments</h2><ol id="segments">${segmentHtml}</ol></section>
 ${sessionDraftHtml(snap)}
 <section id="payload-panel" aria-label="Payload"><h2>Payload</h2>${sessionPayloadHtml(snap)}</section>
@@ -765,6 +794,7 @@ function render(s){
     a.appendChild(c);resultsEl.appendChild(a);});}
   if(!s.payload){payloadText.textContent="";payloadStatus.textContent=(lastRedacted&&redacted.value!==lastRedacted)?"Not prepared — preview edited, approve again":"Not prepared yet";}
   else{payloadText.textContent=s.payload.approvedText;payloadStatus.textContent=s.payload.status==="dispatched"?("Dispatched to "+(s.payload.adapterLabel||"analyzer")+" at "+(s.payload.sentAt||"unknown time")):"Prepared (not sent)";}
+  syncPressure(s);
   var d=s.draft||null;
   if(draftSection)draftSection.hidden=!d;
   if(d){
@@ -775,7 +805,7 @@ function render(s){
     if(document.activeElement===draftText&&draftText.value!==(d.text||"")){draftStatus.textContent="Edited — approve again";approvedNow=false;}
     btnDraftApprove.disabled=pending||false;
     btnDraftReject.disabled=pending||false;
-    btnCopy.disabled=pending||!approvedNow||editedSince;
+    btnCopy.disabled=pending||!approvedNow||editedSince||!pressureOk(s);
   }else{
     if(document.activeElement!==draftText)draftText.value="";
     draftText.disabled=true;
@@ -788,12 +818,45 @@ function render(s){
   }
 }
 function call(path,body){return fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(b){return {ok:r.ok,body:b};});});}
+function pressureOk(s){var p=s.pressure||null;if(!p||!p.items||p.items.length===0)return true;return !!p.allReviewed;}
+function pressureLabel(source){if(source==="offline-fixture")return "offline fixture";if(source==="live")return "live check";return "offline pattern check";}
+function syncPressure(s){
+  var old=document.getElementById("pressure");
+  if(old&&old.parentNode)old.parentNode.removeChild(old);
+  var p=s.pressure||null;
+  if(!p||!p.items||p.items.length===0)return;
+  var findings=document.getElementById("findings");
+  if(!findings||!findings.parentNode)return;
+  var sec=el("section",{id:"pressure","aria-label":"Possible pressure"});
+  sec.appendChild(el("h2",{},"Possible pressure — assessment, not a judgment of anyone's intent"));
+  sec.appendChild(el("p",{id:"pressure-source"},pressureLabel(p.source)));
+  p.items.forEach(function(item){
+    var art=el("article",{"class":"pressure-item",id:"pressure-"+item.id});
+    art.appendChild(el("a",{"class":"pressure-badge",href:"#"+item.segmentId},"pressure: "+item.id));
+    art.appendChild(el("p",{"class":"pressure-quote"},item.quote));
+    art.appendChild(el("p",{"class":"pressure-tactic"},"tactic: "+item.tactic));
+    art.appendChild(el("p",{"class":"pressure-term"},"unresolved term: "+item.unresolvedTerm));
+    var lab=document.createElement("label");lab.setAttribute("class","pressure-check");
+    var box=document.createElement("input");box.setAttribute("type","checkbox");box.setAttribute("class","pressure-review");box.setAttribute("data-pressure",item.id);
+    if(p.reviewed&&p.reviewed.indexOf(item.id)>=0)box.checked=true;
+    (function(id,checkbox){
+      checkbox.addEventListener("change",function(){
+        if(!checkbox.checked||!sessionId)return;
+        run(call("/api/session/pressure-review",{sessionId:sessionId,itemId:id}));
+      });
+    })(item.id,box);
+    lab.appendChild(box);lab.appendChild(document.createTextNode(" Reviewed"));
+    art.appendChild(lab);sec.appendChild(art);
+  });
+  findings.parentNode.insertBefore(sec,findings.nextSibling);
+}
 function refresh(){if(!sessionId)return;pending=true;updateButtons();var my=++seq;fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){pending=false;if(my!==seq)return;editedSince=false;render(s);}).catch(function(){pending=false;updateButtons();});}
 function updateButtons(){btnRedact.disabled=true;btnApprove.disabled=true;btnAnalyze.disabled=true;if(btnDraftApprove)btnDraftApprove.disabled=true;if(btnDraftReject)btnDraftReject.disabled=true;if(btnCopy)btnCopy.disabled=true;}
 function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq)return;editedSince=false;if(r.ok)render(r.body);else if(r.body&&r.body.state)render(r.body);else refresh();}).catch(function(){pending=false;if(my!==seq)return;refresh();});}
 function invalidateLocal(scope){
   editedSince=true;
   seq++;
+  var po=document.getElementById("pressure");if(po&&po.parentNode)po.parentNode.removeChild(po);
   while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);
   resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));
   clearDraftLocal();
