@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hashDraft } from "./draftApproval.js";
 import {
   createPrivacyGate,
   type PrivacyGate,
@@ -53,6 +54,14 @@ export interface SessionSnapshot {
   payload: PayloadRecord | null;
   superseded: SupersededRecord | null;
   offline: boolean;
+  draft: { text: string; origin: "user"; approved: boolean } | null;
+}
+
+export interface DraftRecord {
+  text: string;
+  origin: "user";
+  resultGeneration: number;
+  approvedHash: string | null;
 }
 
 export type AnalyzerTransport = (approvedText: string) => Promise<unknown>;
@@ -76,6 +85,7 @@ interface SessionRecord {
   result: AnalysisResult | null;
   payload: PayloadRecord | null;
   superseded: SupersededRecord | null;
+  draft: DraftRecord | null;
   inFlight: { approvedText: string; sentAt: string } | null;
   generation: number;
   state: SessionStatus;
@@ -223,6 +233,17 @@ export function createSessionStore(options?: SessionStoreOptions) {
       payload: s.payload,
       superseded: s.superseded,
       offline,
+      draft:
+        s.draft === null
+          ? null
+          : {
+              text: s.draft.text,
+              origin: "user" as const,
+              approved:
+                s.draft.approvedHash !== null &&
+                s.draft.approvedHash === hashDraft(s.draft.text) &&
+                s.draft.resultGeneration === s.generation,
+            },
     };
     if (s.reason !== undefined) snap.reason = s.reason;
     return snap;
@@ -259,6 +280,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
         result: null,
         payload: null,
         superseded: null,
+        draft: null,
         inFlight: null,
         generation: 0,
         state: "input",
@@ -283,6 +305,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       s.approvedText = "";
       s.result = null;
       s.payload = null;
+      s.draft = null;
       if (s.inFlight) {
         s.superseded = { ...s.inFlight, status: "sent" };
         s.inFlight = null;
@@ -331,6 +354,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       s.approvalToken = null;
       s.approvedText = "";
       s.payload = null;
+      s.draft = null;
       if (s.inFlight) {
         s.superseded = { ...s.inFlight, status: "sent" };
         s.inFlight = null;
@@ -349,6 +373,11 @@ export function createSessionStore(options?: SessionStoreOptions) {
         s.approvalToken = token;
         s.approved = true;
         s.approvedText = s.redactedText;
+        s.segments = s.approvedText
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0)
+          .map((line, i) => ({ id: `seg-${i + 1}`, text: line }));
         s.payload = { approvedText: s.redactedText, status: "prepared" };
         s.state = "approved";
         delete s.reason;
@@ -405,6 +434,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
           if (result.entries.length === 0) result = { offline: result.offline, entries: [] };
           s.inFlight = null;
           s.result = result;
+          s.draft = { text: "", origin: "user", resultGeneration: gen, approvedHash: null };
           s.payload = {
             approvedText,
             status: "sent",
@@ -425,6 +455,28 @@ export function createSessionStore(options?: SessionStoreOptions) {
       })();
       s.analyzePending = p;
       return p.then(() => snapshot(s));
+    },
+
+    editDraft(sessionId: string, text: string): SessionSnapshot {
+      const s = lookup(sessionId);
+      if (!s.result) throw new Error("no completed result: analyze first");
+      s.draft = { text, origin: "user", resultGeneration: s.generation, approvedHash: null };
+      return snapshot(s);
+    },
+
+    approveDraft(sessionId: string, text: string): SessionSnapshot {
+      const s = lookup(sessionId);
+      if (!s.result || !s.draft) throw new Error("no completed result: analyze first");
+      if (text.length === 0) throw new Error("cannot approve an empty draft");
+      if (text !== s.draft.text) throw new Error("draft changed; review again");
+      s.draft.approvedHash = hashDraft(text);
+      return snapshot(s);
+    },
+
+    rejectDraft(sessionId: string): SessionSnapshot {
+      const s = lookup(sessionId);
+      if (s.draft) s.draft.approvedHash = null;
+      return snapshot(s);
     },
 
     expireApprovals(): void {

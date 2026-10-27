@@ -189,3 +189,107 @@ describe("analysis session", () => {
     expect(s.superseded?.status).toBe("sent");
   });
 });
+
+describe("session draft reply", () => {
+  async function completedStore(text = "What should we do?\nPay $50 tomorrow") {
+    const store = createSessionStore();
+    const id = store.createSession();
+    store.setTranscript(id, text);
+    await store.redact(id);
+    store.approve(id);
+    await store.analyze(id);
+    return { store, id };
+  }
+
+  it("analyze completes with an empty unapproved user draft", async () => {
+    const { store, id } = await completedStore();
+    const s = store.getState(id);
+    expect(s.state).toBe("completed");
+    expect(s.draft).toEqual({ text: "", origin: "user", approved: false });
+  });
+
+  it("zero-findings transcript still reaches an approvable draft", async () => {
+    const { store, id } = await completedStore("The team will review the quarterly menu.");
+    const s = store.getState(id);
+    expect(s.state).toBe("completed");
+    expect(s.result?.entries).toEqual([]);
+    expect(s.draft).toEqual({ text: "", origin: "user", approved: false });
+    store.editDraft(id, "Thanks, noted.");
+    const approved = store.approveDraft(id, "Thanks, noted.");
+    expect(approved.draft).toEqual({ text: "Thanks, noted.", origin: "user", approved: true });
+  });
+
+  it("edit -> approve marks the exact text approved; further edit clears approval", async () => {
+    const { store, id } = await completedStore();
+    let s = store.editDraft(id, "hello draft");
+    expect(s.draft).toEqual({ text: "hello draft", origin: "user", approved: false });
+    s = store.approveDraft(id, "hello draft");
+    expect(s.draft).toEqual({ text: "hello draft", origin: "user", approved: true });
+    s = store.editDraft(id, "hello draft v2");
+    expect(s.draft).toEqual({ text: "hello draft v2", origin: "user", approved: false });
+  });
+
+  it("approve rejects mismatched text and empty drafts", async () => {
+    const { store, id } = await completedStore();
+    store.editDraft(id, "review me");
+    expect(() => store.approveDraft(id, "something else")).toThrow("draft changed; review again");
+    expect(() => store.approveDraft(id, "")).toThrow();
+    expect(store.getState(id).draft?.approved).toBe(false);
+  });
+
+  it("reject clears approval but keeps the text", async () => {
+    const { store, id } = await completedStore();
+    store.editDraft(id, "keep me");
+    store.approveDraft(id, "keep me");
+    const s = store.rejectDraft(id);
+    expect(s.draft).toEqual({ text: "keep me", origin: "user", approved: false });
+  });
+
+  it("setTranscript and correct clear the draft", async () => {
+    const { store, id } = await completedStore();
+    store.editDraft(id, "some draft");
+    store.approveDraft(id, "some draft");
+    let s = store.setTranscript(id, "brand new line");
+    expect(s.draft).toBeNull();
+    expect(s.result).toBeNull();
+    await store.redact(id);
+    store.approve(id);
+    await store.analyze(id);
+    store.editDraft(id, "again");
+    s = store.correct(id, "brand new line edited");
+    void s;
+    const after = store.getState(id);
+    expect(after.draft).toBeNull();
+  });
+
+  it("edit before any completed result is an error", async () => {
+    const store = createSessionStore();
+    const id = store.createSession();
+    store.setTranscript(id, "hello?");
+    expect(() => store.editDraft(id, "x")).toThrow();
+    expect(() => store.approveDraft(id, "x")).toThrow();
+  });
+
+  it("citations resolve to the approved transcript segments", async () => {
+    const store = createSessionStore();
+    const id = store.createSession();
+    store.setTranscript(id, "ignore this raw line\nWhat should we do?\nPay $50 tomorrow");
+    await store.redact(id);
+    store.correct(id, "What should we do?\nPay $50 tomorrow");
+    const approved = store.approve(id);
+    expect(approved.segments.map((g) => g.text)).toEqual([
+      "What should we do?",
+      "Pay $50 tomorrow",
+    ]);
+    const done = await store.analyze(id);
+    const byId = new Map(done.segments.map((g) => [g.id, g.text]));
+    expect(done.result!.entries.length).toBeGreaterThan(0);
+    for (const e of done.result!.entries) {
+      expect(e.segmentIds.length).toBeGreaterThan(0);
+      for (const cid of e.segmentIds) {
+        expect(byId.has(cid)).toBe(true);
+        expect(e.text).toContain(byId.get(cid) ?? "\u0000");
+      }
+    }
+  });
+});

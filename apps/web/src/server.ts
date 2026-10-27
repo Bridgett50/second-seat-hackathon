@@ -43,6 +43,9 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/session/correct": new Set(["sessionId", "text"]),
   "/api/session/approve": new Set(["sessionId"]),
   "/api/session/analyze": new Set(["sessionId"]),
+  "/api/session/draft": new Set(["sessionId", "text"]),
+  "/api/session/draft/approve": new Set(["sessionId", "text"]),
+  "/api/session/draft/reject": new Set(["sessionId"]),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -429,6 +432,50 @@ export function createWebServer(deps?: WebServerDeps) {
               .catch((err: unknown) =>
                 json(res, 404, { error: err instanceof Error ? err.message : "analyze failed" }),
               );
+            return;
+          }
+          if (url.pathname === "/api/session/draft") {
+            // draft routes
+            const sessionId = body?.["sessionId"];
+            const text = body?.["text"];
+            if (typeof sessionId !== "string" || typeof text !== "string") {
+              json(res, 400, { error: 'fields "sessionId" and "text" must be strings' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.editDraft(sessionId, text));
+            } catch (err: unknown) {
+              json(res, 400, { error: err instanceof Error ? err.message : "draft failed" });
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/draft/approve") {
+            const sessionId = body?.["sessionId"];
+            const text = body?.["text"];
+            if (typeof sessionId !== "string" || typeof text !== "string") {
+              json(res, 400, { error: 'fields "sessionId" and "text" must be strings' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.approveDraft(sessionId, text));
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : "approve failed";
+              const status = msg === "draft changed; review again" ? 409 : 400;
+              json(res, status, { error: msg });
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/draft/reject") {
+            const sessionId = body?.["sessionId"];
+            if (typeof sessionId !== "string") {
+              json(res, 400, { error: 'field "sessionId" must be a string' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.rejectDraft(sessionId));
+            } catch (err: unknown) {
+              json(res, 404, { error: err instanceof Error ? err.message : "reject failed" });
+            }
             return;
           }
           json(res, 404, { error: "not found" });
