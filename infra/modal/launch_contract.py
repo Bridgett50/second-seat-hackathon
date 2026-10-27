@@ -192,11 +192,11 @@ def _run_config_max_model_len(run_config):
     if isinstance(run_config, dict):
         limits = run_config.get("tokenLimits")
         if isinstance(limits, dict):
-            maximum = limits.get("maxTokens")
-            if isinstance(maximum, bool):
+            context = limits.get("contextTokens")
+            if isinstance(context, bool):
                 pass
-            elif isinstance(maximum, int) and maximum > 0:
-                return maximum
+            elif isinstance(context, int) and context > 0:
+                return context
     return _VLLM_DEFAULT_MAX_MODEL_LEN
 
 
@@ -205,9 +205,11 @@ def vllm_argv(run_config, host="127.0.0.1", port=8000):
 
     --revision comes from the run config (nested model.revision, or the
     flat launch-contract model_revision); --max-model-len comes from the
-    run config tokenLimits.maxTokens, defaulting to the historical 16384
-    when the config carries no token limit. Every other flag is the fixed
-    Glimmer serve shape.
+    run config tokenLimits.contextTokens, defaulting to the historical
+    16384 when the config carries no context limit.
+    tokenLimits.maxTokens is the per-request generation limit and is NEVER
+    used as the server context. Every other flag is the fixed Glimmer
+    serve shape.
     """
     model = _run_config_model_name(run_config)
     revision = _run_config_revision(run_config)

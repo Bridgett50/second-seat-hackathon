@@ -210,6 +210,11 @@ export function validateRunConfig(cfg: unknown): string[] {
       }
       if (!("reasoning" in decoding) || typeof decoding["reasoning"] !== "string") {
         errors.push("decoding.reasoning is missing or not a string");
+      } else if (decoding["reasoning"] !== "low" && decoding["reasoning"] !== "medium" && decoding["reasoning"] !== "high") {
+        errors.push(`decoding.reasoning unsupported: ${decoding["reasoning"]}`);
+      }
+      if ("seed" in decoding && typeof decoding["seed"] === "number" && !Number.isInteger(decoding["seed"])) {
+        errors.push("decoding.seed must be an integer");
       }
     }
   }
@@ -222,6 +227,19 @@ export function validateRunConfig(cfg: unknown): string[] {
       const maxTokens = tokenLimits["maxTokens"];
       if (!(typeof maxTokens === "number" && Number.isInteger(maxTokens) && maxTokens > 0)) {
         errors.push("tokenLimits.maxTokens must be a positive integer");
+      }
+      if ("contextTokens" in tokenLimits) {
+        const contextTokens = tokenLimits["contextTokens"];
+        if (!(typeof contextTokens === "number" && Number.isInteger(contextTokens) && contextTokens > 0)) {
+          errors.push("tokenLimits.contextTokens must be a positive integer");
+        } else if (
+          typeof maxTokens === "number" &&
+          Number.isInteger(maxTokens) &&
+          maxTokens > 0 &&
+          !(contextTokens > maxTokens)
+        ) {
+          errors.push("tokenLimits.contextTokens must exceed tokenLimits.maxTokens");
+        }
       }
     }
   }
@@ -339,7 +357,7 @@ export interface RunConfigView {
   model: { name: string; revision: string };
   image: { ref: string; digest: string };
   decoding: { temperature: number; seed: number; reasoning: string };
-  tokenLimits: { maxTokens: number };
+  tokenLimits: { maxTokens: number; contextTokens?: number };
   timeouts: { requestMs: number; workDeadlineS: number; functionTimeoutS: number };
   retry: { maxAttempts: number };
   modal: { concurrency: number };
@@ -390,20 +408,28 @@ export interface RunnerSettings {
   deadlineMs: number;
   requestMs: number;
   maxTokens: number;
+  /** Whole-server context capacity (vLLM --max-model-len). Defaults to 16384. */
+  contextTokens: number;
   decoding: { temperature: number; seed: number; reasoning: string };
   maxAttempts: number;
 }
+
+/** Default server context capacity (vLLM --max-model-len) when the frozen
+ * config carries no tokenLimits.contextTokens. */
+export const RUNNER_CONTEXT_TOKENS_DEFAULT = 16384;
 
 /**
  * Map a TS run config to runner/request settings: eval worker concurrency,
  * deadlines, token/decoding settings, and the proof retry budget.
  */
 export function toRunnerSettings(cfg: RunConfigView): RunnerSettings {
+  const contextTokens = cfg.tokenLimits.contextTokens;
   return {
     concurrency: cfg.modal.concurrency,
     deadlineMs: cfg.timeouts.workDeadlineS * 1000,
     requestMs: cfg.timeouts.requestMs,
     maxTokens: cfg.tokenLimits.maxTokens,
+    contextTokens: typeof contextTokens === "number" ? contextTokens : RUNNER_CONTEXT_TOKENS_DEFAULT,
     decoding: {
       temperature: cfg.decoding.temperature,
       seed: cfg.decoding.seed,

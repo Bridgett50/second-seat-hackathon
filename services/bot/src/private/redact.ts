@@ -20,6 +20,59 @@ export function glimmerMaxTokens(): number {
   return GLIMMER_MAX_TOKENS_DEFAULT;
 }
 
+/** Whole-context budget for one Glimmer request (vLLM --max-model-len).
+ * Read per request like GLIMMER_MAX_TOKENS; undefined means no local
+ * budget check. */
+export function glimmerContextTokens(): number | undefined {
+  const raw = process.env["GLIMMER_CONTEXT_TOKENS"] ?? "";
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return undefined;
+}
+
+/** Frozen decoding settings for one Glimmer request. Every field is
+ * optional: explicit opts win, then the per-request GLIMMER_TEMPERATURE /
+ * GLIMMER_SEED / GLIMMER_REASONING env fallbacks, then the historical
+ * extraction defaults (temperature 0.0, reasoning "low", no seed). */
+export interface GlimmerDecoding {
+  temperature?: number;
+  seed?: number;
+  reasoning?: string;
+}
+
+function glimmerEnvTemperature(): number | undefined {
+  const raw = process.env["GLIMMER_TEMPERATURE"] ?? "";
+  if (raw.trim() === "") return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function glimmerEnvSeed(): number | undefined {
+  const raw = process.env["GLIMMER_SEED"] ?? "";
+  if (raw.trim() === "") return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+function glimmerEnvReasoning(): string | undefined {
+  const raw = process.env["GLIMMER_REASONING"] ?? "";
+  return raw !== "" ? raw : undefined;
+}
+
+/**
+ * Deterministic local upper bound on input size: the total UTF-8 byte
+ * length of all message contents. Used locally to refuse an oversized
+ * request before any transport call; the production counterpart is the
+ * vLLM server tokenizer enforcing --max-model-len.
+ */
+export function estimateInputTokens(messages: ReadonlyArray<{ content?: unknown }>): number {
+  let total = 0;
+  for (const message of messages) {
+    if (typeof message?.content === "string") total += Buffer.byteLength(message.content, "utf8");
+  }
+  return total;
+}
+
 export interface TextSpan {
   start: number;
   end: number;
@@ -499,11 +552,19 @@ export class GlimmerClient implements Redactor {
   private baseUrl: string;
   private timeoutMs: number | undefined;
   private readonly fetchImpl: typeof fetch | undefined;
+  private readonly decoding: GlimmerDecoding | undefined;
+  private readonly contextTokens: number | undefined;
   private receiptContext: GlimmerReceiptContext = {};
 
   constructor(
     baseUrl?: string,
-    opts?: { timeoutMs?: number; fetchImpl?: typeof fetch; receiptContext?: GlimmerReceiptContext },
+    opts?: {
+      timeoutMs?: number;
+      fetchImpl?: typeof fetch;
+      receiptContext?: GlimmerReceiptContext;
+      decoding?: GlimmerDecoding;
+      contextTokens?: number;
+    },
   ) {
     const resolved = baseUrl ?? process.env["GLIMMER_BASE_URL"] ?? "";
     if (resolved === "") throw new Error("glimmer: GLIMMER_BASE_URL is unset");
@@ -513,6 +574,8 @@ export class GlimmerClient implements Redactor {
     this.baseUrl = resolved.replace(/\/$/, "");
     this.timeoutMs = opts?.timeoutMs;
     this.fetchImpl = opts?.fetchImpl;
+    this.decoding = opts?.decoding;
+    this.contextTokens = opts?.contextTokens;
     if (opts?.receiptContext !== undefined) this.receiptContext = { ...opts.receiptContext };
   }
 
@@ -653,16 +716,44 @@ export class GlimmerClient implements Redactor {
     // against it.") advises against greedy decoding in general, but extraction
     // follows the structured-output recipe instead.
     const timeoutMs = this.timeoutMs ?? glimmerTimeoutMs();
+    const maxTokens = glimmerMaxTokens();
+    // Frozen decoding settings reach the request: explicit opts win, then
+    // the per-request GLIMMER_TEMPERATURE / GLIMMER_SEED /
+    // GLIMMER_REASONING env fallbacks, then the historical extraction
+    // defaults. When decoding is set nowhere, the body below is
+    // byte-identical to the historical one (temperature 0.0, reasoning
+    // strength "low", no seed key).
+    const envTemperature = glimmerEnvTemperature();
+    const envSeed = glimmerEnvSeed();
+    const envReasoning = glimmerEnvReasoning();
+    const temperature = this.decoding?.temperature ?? envTemperature ?? 0.0;
+    const reasoning = this.decoding?.reasoning ?? envReasoning ?? "low";
+    const seed = this.decoding?.seed ?? envSeed;
+    const decodingSet =
+      this.decoding !== undefined ||
+      envTemperature !== undefined ||
+      envSeed !== undefined ||
+      envReasoning !== undefined;
+    const messages = [
+      { role: "system", content: `Return JSON only for ${kind}. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth, and input.slice(start,end) must equal the entity text. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` },
+      { role: "user", content: text },
+    ];
+    // Extraction defaults: temperature 0.0, reasoning "low", no seed. The
+    // freeze doc reads the 0.0 literal below as the default; frozen decoding
+    // settings override it afterwards. When decoding is set nowhere, this
+    // body is byte-identical to the historical one.
     const requestBody: Record<string, unknown> = {
       model: GLIMMER_MODEL,
-      max_tokens: glimmerMaxTokens(),
+      max_tokens: maxTokens,
       temperature: 0.0,
       chat_template_kwargs: { reasoning_strength: "low" },
-      messages: [
-        { role: "system", content: `Return JSON only for ${kind}. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth, and input.slice(start,end) must equal the entity text. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` },
-        { role: "user", content: text },
-      ],
+      messages,
     };
+    if (decodingSet) {
+      requestBody["temperature"] = temperature;
+      if (seed !== undefined) requestBody["seed"] = seed;
+      requestBody["chat_template_kwargs"] = { reasoning_strength: reasoning };
+    }
     if ((process.env["GLIMMER_JSON_SCHEMA"] ?? "") === "1") {
       requestBody["response_format"] = {
         type: "json_schema",
@@ -703,72 +794,97 @@ export class GlimmerClient implements Redactor {
       };
     }
     const started = Date.now();
+    // Refuse an oversized request before any transport call: the local
+    // input estimate plus the generation limit must fit the frozen
+    // whole-context budget.
+    const contextTokens = this.contextTokens ?? glimmerContextTokens();
+    if (contextTokens !== undefined) {
+      const estimate = estimateInputTokens(messages);
+      if (estimate + maxTokens > contextTokens) {
+        const message = `glimmer: input budget exceeded (${estimate} + ${maxTokens} > ${contextTokens})`;
+        this.writeReceipt({
+          ...this.receiptBase(kind),
+          status: 0,
+          content: "",
+          spans: [],
+          reasoning: "",
+          finish_reason: "unknown",
+          usage: null,
+          latency_ms: Date.now() - started,
+          error: message,
+        });
+        throw new Error(message);
+      }
+    }
     // Abort via an AbortController driven by the global setTimeout (not
     // AbortSignal.timeout) so the abort is driven by the fake-able global
-    // timer and the abort signal reaches fetchImpl.
+    // timer and the abort signal reaches fetchImpl. The timer stays armed
+    // until the response body has been read.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let res: Response;
     try {
-      res = await (this.fetchImpl ?? fetch)(`${this.baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify(requestBody),
-      });
-    } catch (err) {
-      const message = errMessage(err);
-      this.writeReceipt({
-        ...this.receiptBase(kind),
-        status: 0,
-        content: "",
-        spans: [],
-        reasoning: "",
-        finish_reason: "unknown",
-        usage: null,
-        latency_ms: Date.now() - started,
-        error: message,
-      });
-      throw err;
+      let res: Response;
+      try {
+        res = await (this.fetchImpl ?? fetch)(`${this.baseUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify(requestBody),
+        });
+      } catch (err) {
+        const message = errMessage(err);
+        this.writeReceipt({
+          ...this.receiptBase(kind),
+          status: 0,
+          content: "",
+          spans: [],
+          reasoning: "",
+          finish_reason: "unknown",
+          usage: null,
+          latency_ms: Date.now() - started,
+          error: message,
+        });
+        throw err;
+      }
+      if (!res.ok) {
+        const message = `glimmer: chat failed ${res.status}`;
+        this.writeReceipt({
+          ...this.receiptBase(kind),
+          status: res.status,
+          content: "",
+          spans: [],
+          reasoning: "",
+          finish_reason: "unknown",
+          usage: null,
+          latency_ms: Date.now() - started,
+          error: message,
+        });
+        throw new Error(message);
+      }
+      const raw = await res.text();
+      let body: unknown;
+      try {
+        body = JSON.parse(raw) as unknown;
+      } catch {
+        const message = `glimmer: no JSON in reply (finish_reason=unknown, len=${raw.length})`;
+        this.writeReceipt({
+          ...this.receiptBase(kind),
+          status: res.status,
+          content: raw,
+          spans: [],
+          reasoning: "",
+          finish_reason: "unknown",
+          usage: null,
+          latency_ms: Date.now() - started,
+          error: message,
+        });
+        throw new Error(message);
+      }
+      // The caller writes exactly one receipt for the parse/validate outcome.
+      return body;
     } finally {
       clearTimeout(timer);
     }
-    if (!res.ok) {
-      const message = `glimmer: chat failed ${res.status}`;
-      this.writeReceipt({
-        ...this.receiptBase(kind),
-        status: res.status,
-        content: "",
-        spans: [],
-        reasoning: "",
-        finish_reason: "unknown",
-        usage: null,
-        latency_ms: Date.now() - started,
-        error: message,
-      });
-      throw new Error(message);
-    }
-    const raw = await res.text();
-    let body: unknown;
-    try {
-      body = JSON.parse(raw) as unknown;
-    } catch {
-      const message = `glimmer: no JSON in reply (finish_reason=unknown, len=${raw.length})`;
-      this.writeReceipt({
-        ...this.receiptBase(kind),
-        status: res.status,
-        content: raw,
-        spans: [],
-        reasoning: "",
-        finish_reason: "unknown",
-        usage: null,
-        latency_ms: Date.now() - started,
-        error: message,
-      });
-      throw new Error(message);
-    }
-    // The caller writes exactly one receipt for the parse/validate outcome.
-    return body;
   }
 }
 
