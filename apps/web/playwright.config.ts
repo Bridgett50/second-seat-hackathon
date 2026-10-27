@@ -5,11 +5,17 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:4173",
   },
+  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   webServer: {
     command: "node dist/src/server.js",
     port: 4173,
     reuseExistingServer: !process.env.CI,
-    env: { PORT: "4173" },
+    env: {
+      PORT: "4173",
+      SECOND_SEAT_TEST_MODE: "1",
+      MODEL_API_KEY: "test-dummy-not-a-key",
+      META_API_KEY: "test-dummy-not-a-key",
+    },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

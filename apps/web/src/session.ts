@@ -70,6 +70,7 @@ interface SessionRecord {
   payload: PayloadRecord | null;
   state: SessionStatus;
   reason?: string;
+  approvalExpired: boolean;
   redactPending: Promise<void> | null;
   analyzePending: Promise<void> | null;
 }
@@ -120,14 +121,73 @@ function toAnalysisResult(value: unknown, offline: boolean): AnalysisResult {
   return { offline, entries: [] };
 }
 
+const SESSION_TEST_MODE = process.env.SECOND_SEAT_TEST_MODE === "1";
+
+function redactTimeoutMs(): number {
+  if (SESSION_TEST_MODE) return 500;
+  const raw = process.env.SECOND_SEAT_REDACT_TIMEOUT_MS ?? "";
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return 30000;
+}
+
+function withRedactTimeout<T>(promise: Promise<T>): Promise<T> {
+  const ms = redactTimeoutMs();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`redaction timeout after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
+function assertWellFormedRedaction(prepared: unknown): void {
+  const p = prepared as { redactedText?: unknown; spans?: unknown } | null;
+  if (
+    typeof p !== "object" ||
+    p === null ||
+    typeof p.redactedText !== "string" ||
+    !Array.isArray(p.spans)
+  ) {
+    throw new Error("malformed redactor output: expected { redactedText: string, spans: array }");
+  }
+  for (const s of p.spans) {
+    const span = s as { start?: unknown; end?: unknown; label?: unknown };
+    if (!Number.isInteger(span.start) || !Number.isInteger(span.end) || typeof span.label !== "string") {
+      throw new Error("malformed redactor output: every span needs integer start/end and string label");
+    }
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function wrapTestRedactor(base: any): any {
+  return {
+    label: "test-fake",
+    redactText: async (text: string): Promise<unknown> => {
+      if (text.includes("[[fault:malformed]]")) {
+        return { maskedText: 42, spans: [{ start: "n", end: "s", label: 42 }] };
+      }
+      if (text.includes("[[fault:timeout]]")) {
+        return new Promise<never>(() => {});
+      }
+      return base.redactText(text);
+    },
+    redactImage: (png: Buffer, name: string): Promise<unknown> => base.redactImage(png, name),
+    health: async (): Promise<{ ok: boolean; label: string }> => ({ ok: true, label: "test-fake" }),
+  };
+}
+
 export function createSessionStore(options?: SessionStoreOptions) {
   const offline = options?.offline ?? true;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseRedactor = (options?.redactor as any) ?? new MockRedactor();
   const gate: PrivacyGate =
     options?.gate ??
     createPrivacyGate({
       mode: "fixture",
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      redactor: (options?.redactor as any) ?? new MockRedactor(),
+      redactor: (SESSION_TEST_MODE ? wrapTestRedactor(baseRedactor) : baseRedactor) as any,
     });
   const analyzer: AnalyzerTransport =
     options?.analyzer ??
@@ -161,7 +221,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       name === "GateApprovalError" ||
       name === "ResidualPIIError" ||
       name === "GateConfigError" ||
-      /residual|approval|stale|expired|config|glimmer/i.test(msg)
+      /residual|approval|stale|expired|config|glimmer|malformed|timeout/i.test(msg)
     ) {
       s.state = "blocked";
     } else {
@@ -185,6 +245,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
         result: null,
         payload: null,
         state: "input",
+        approvalExpired: false,
         redactPending: null,
         analyzePending: null,
       });
@@ -197,6 +258,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       s.segments = lines.map((line, i) => ({ id: `seg-${i + 1}`, text: line }));
       s.rawText = text;
       s.runId = null;
+      s.approvalExpired = false;
       s.approvalToken = null;
       s.redactedText = "";
       s.approved = false;
@@ -215,7 +277,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
       delete s.reason;
       const p: Promise<void> = (async () => {
         try {
-          const prepared = await gate.prepare(s.rawText);
+          const prepared = await withRedactTimeout(gate.prepare(s.rawText));
+          assertWellFormedRedaction(prepared);
           s.runId = prepared.runId;
           s.redactedText = prepared.redactedText;
           s.approved = false;
@@ -270,6 +333,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       const p: Promise<void> = (async () => {
         try {
           if (!s.runId || !s.approvalToken) throw new Error("approval required");
+          if (s.approvalExpired) throw new Error("approval is stale: test hook expired approvals");
           const approvedText = s.approvedText;
           const approvedSegments = [...s.segments];
           const raw = await gate.send(s.runId, s.approvalToken, async () => analyzer(approvedText));
@@ -307,6 +371,12 @@ export function createSessionStore(options?: SessionStoreOptions) {
       })();
       s.analyzePending = p;
       return p.then(() => snapshot(s));
+    },
+
+    expireApprovals(): void {
+      for (const s of sessions.values()) {
+        if (s.approvalToken !== null) s.approvalExpired = true;
+      }
     },
 
     getState(sessionId: string): SessionSnapshot {

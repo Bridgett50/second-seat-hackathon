@@ -169,6 +169,21 @@ export interface DetectedSpan extends TextSpan {
   value: string;
 }
 
+const PERSON_STOPWORDS: ReadonlySet<string> = new Set([
+  "The", "A", "An", "Guest", "Front", "Main", "Lobby",
+  "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+  "Mon", "Tue", "Tues", "Wed", "Thu", "Thur", "Thurs", "Fri", "Sat", "Sun",
+  "January", "February", "March", "April", "May", "June", "July", "August",
+  "September", "October", "November", "December",
+  "Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Sept", "Oct", "Nov", "Dec",
+  "Please", "Thanks", "Thank", "Hi", "Hello", "Hey", "Dear", "Reminder",
+  "We", "I", "Our", "Ours", "You", "Your", "Yours", "He", "She", "It", "They", "Them",
+  "His", "Her", "Hers", "Its", "Their", "Theirs", "This", "That", "These", "Those",
+  "And", "But", "Or", "For", "Nor", "So", "Yet", "At", "By", "In", "Of", "On", "To",
+  "From", "With", "As", "Is", "Are", "Was", "Were", "Be", "Been",
+  "Call", "Bring", "Note",
+]);
+
 export function detectPii(text: string): DetectedSpan[] {
   const out: DetectedSpan[] = [];
   const push = (start: number, end: number, label: string) => {
@@ -204,6 +219,15 @@ export function detectPii(text: string): DetectedSpan[] {
     push(m.index + idx, m.index + idx + num.length, "account");
   }
   while ((m = street.exec(text)) !== null) push(m.index, m.index + m[0].length, "address");
+  const person = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/g;
+  while ((m = person.exec(text)) !== null) {
+    const first = m[0].split(/\s+/)[0] as string;
+    if (PERSON_STOPWORDS.has(first)) {
+      person.lastIndex = m.index + 1;
+      continue;
+    }
+    push(m.index, m.index + m[0].length, "person");
+  }
   out.sort((a, b) => a.start - b.start);
   return out;
 }

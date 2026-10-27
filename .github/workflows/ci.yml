@@ -22,6 +22,18 @@ jobs:
       - run: pnpm -r test
       - name: Truth hash seal (scorer refuses on mismatch)
         run: node eval/check-hashes.mjs
+      - run: pnpm -r build
+      - run: pnpm --filter @second-seat/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @second-seat/web exec playwright test
+        env:
+          CI: "true"
+          SECOND_SEAT_TEST_MODE: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: apps/web/playwright-report
+          retention-days: 14
       - name: Secret scan (no keys in tracked files)
         run: |
           # The scan patterns live in this file, so exclude it from its own scan.
