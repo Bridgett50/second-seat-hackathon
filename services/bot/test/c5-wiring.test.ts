@@ -209,6 +209,7 @@ ga.subprocess.Popen = _popen
 lc.wait_ready = lambda *a, **k: {"ready": False, "remaining_ms": 0, "remaining_s": 0}
 import pathlib, tempfile
 _tmp = tempfile.mkdtemp()
+ga._RESULTS_ROOT = _tmp
 _orig = pathlib.Path
 ga.Path = lambda p, *a: _orig(_tmp) / str(p).lstrip("/") if str(p).startswith("/results") else _orig(p, *a)
 ga.serve.f()

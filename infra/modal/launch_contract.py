@@ -502,6 +502,41 @@ def git_binding_blockers(repo_root, source_sha, allow_untracked=()):
     return blockers
 
 
+def rels_from_entries(entries, run_id):
+    """Relative paths under run_id from SDK-shaped FileEntry objects.
+
+    Directory entries (type name "DIRECTORY" or value 2) are skipped.
+    Every other entry whose path is absolute, is not under "<run_id>/",
+    or contains a ".." segment raises ValueError (never silently dropped).
+    """
+    if not isinstance(run_id, str) or run_id == "":
+        raise ValueError(f"run_id required, got {run_id!r}")
+    prefix = f"{run_id}/"
+    rels = []
+    for entry in entries or []:
+        typ = getattr(entry, "type", None)
+        tname = getattr(typ, "name", None)
+        tvalue = getattr(typ, "value", typ)
+        if tname == "DIRECTORY" or tvalue == 2:
+            continue
+        full = getattr(entry, "path", None)
+        if not isinstance(full, str):
+            continue
+        if os.path.isabs(full) or full.startswith("/") or full.startswith("\\"):
+            raise ValueError(f"unsafe entry path (absolute): {full!r}")
+        if len(full) >= 2 and full[1] == ":":
+            raise ValueError(f"unsafe entry path (absolute): {full!r}")
+        if ".." in full.replace("\\", "/").split("/"):
+            raise ValueError(f"unsafe entry path (..): {full!r}")
+        if not full.startswith(prefix):
+            raise ValueError(f"entry outside run prefix {prefix!r}: {full!r}")
+        rel = full[len(prefix):]
+        if rel == "" or ".." in rel.replace("\\", "/").split("/"):
+            raise ValueError(f"unsafe entry path: {full!r}")
+        rels.append(rel)
+    return rels
+
+
 def _reject_unsafe_rel(rel):
     if not isinstance(rel, str) or rel == "":
         raise ValueError(f"unsafe rel path: {rel!r}")
