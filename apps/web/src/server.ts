@@ -185,6 +185,9 @@ export function createWebServer(deps?: WebServerDeps) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         redactor: new MockRedactor() as any,
         analyzer: async (approvedText: string) => {
+          if (approvedText.includes("[[slow]]")) {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
           recordAnalyzerCall(approvedText);
           return buildOfflineBrief(approvedText, []);
         },

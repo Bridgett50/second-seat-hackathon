@@ -37,6 +37,12 @@ export interface PayloadRecord {
   sentAt?: string;
 }
 
+export interface SupersededRecord {
+  approvedText: string;
+  sentAt: string;
+  status: "sent";
+}
+
 export interface SessionSnapshot {
   state: SessionStatus;
   reason?: string;
@@ -45,6 +51,7 @@ export interface SessionSnapshot {
   approved: boolean;
   result: AnalysisResult | null;
   payload: PayloadRecord | null;
+  superseded: SupersededRecord | null;
   offline: boolean;
 }
 
@@ -68,6 +75,9 @@ interface SessionRecord {
   approvedText: string;
   result: AnalysisResult | null;
   payload: PayloadRecord | null;
+  superseded: SupersededRecord | null;
+  inFlight: { approvedText: string; sentAt: string } | null;
+  generation: number;
   state: SessionStatus;
   reason?: string;
   approvalExpired: boolean;
@@ -171,6 +181,9 @@ function wrapTestRedactor(base: any): any {
       if (text.includes("[[fault:timeout]]")) {
         return new Promise<never>(() => {});
       }
+      if (text.includes("[[slow]]")) {
+        await new Promise((r) => setTimeout(r, 1500));
+      }
       return base.redactText(text);
     },
     redactImage: (png: Buffer, name: string): Promise<unknown> => base.redactImage(png, name),
@@ -208,6 +221,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       approved: s.approved,
       result: s.result,
       payload: s.payload,
+      superseded: s.superseded,
       offline,
     };
     if (s.reason !== undefined) snap.reason = s.reason;
@@ -244,6 +258,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
         approvedText: "",
         result: null,
         payload: null,
+        superseded: null,
+        inFlight: null,
+        generation: 0,
         state: "input",
         approvalExpired: false,
         redactPending: null,
@@ -257,6 +274,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       const lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
       s.segments = lines.map((line, i) => ({ id: `seg-${i + 1}`, text: line }));
       s.rawText = text;
+      s.generation += 1;
       s.runId = null;
       s.approvalExpired = false;
       s.approvalToken = null;
@@ -265,6 +283,12 @@ export function createSessionStore(options?: SessionStoreOptions) {
       s.approvedText = "";
       s.result = null;
       s.payload = null;
+      if (s.inFlight) {
+        s.superseded = { ...s.inFlight, status: "sent" };
+        s.inFlight = null;
+      }
+      s.redactPending = null;
+      s.analyzePending = null;
       s.state = "input";
       delete s.reason;
       return snapshot(s);
@@ -275,9 +299,12 @@ export function createSessionStore(options?: SessionStoreOptions) {
       if (s.redactPending) return s.redactPending.then(() => snapshot(s));
       s.state = "redaction_pending";
       delete s.reason;
-      const p: Promise<void> = (async () => {
+      const gen = s.generation;
+      let p!: Promise<void>;
+      p = (async () => {
         try {
           const prepared = await withRedactTimeout(gate.prepare(s.rawText));
+          if (s.generation !== gen) return;
           assertWellFormedRedaction(prepared);
           s.runId = prepared.runId;
           s.redactedText = prepared.redactedText;
@@ -285,9 +312,10 @@ export function createSessionStore(options?: SessionStoreOptions) {
           s.approvalToken = null;
           s.state = "review_required";
         } catch (err: unknown) {
+          if (s.generation !== gen) return;
           fail(s, err);
         } finally {
-          s.redactPending = null;
+          if (s.redactPending === p) s.redactPending = null;
         }
       })();
       s.redactPending = p;
@@ -297,11 +325,16 @@ export function createSessionStore(options?: SessionStoreOptions) {
     correct(sessionId: string, text: string): SessionSnapshot {
       const s = lookup(sessionId);
       if (!s.runId) throw new Error("no redaction to correct: redact first");
+      s.generation += 1;
       s.redactedText = gate.correct(s.runId, text);
       s.approved = false;
       s.approvalToken = null;
       s.approvedText = "";
       s.payload = null;
+      if (s.inFlight) {
+        s.superseded = { ...s.inFlight, status: "sent" };
+        s.inFlight = null;
+      }
       if (s.state !== "blocked" && s.state !== "error") s.state = "review_required";
       else s.state = "review_required";
       delete s.reason;
@@ -330,13 +363,27 @@ export function createSessionStore(options?: SessionStoreOptions) {
       if (s.analyzePending) return s.analyzePending.then(() => snapshot(s));
       s.state = "analysis_pending";
       delete s.reason;
-      const p: Promise<void> = (async () => {
+      const gen = s.generation;
+      const approvedText = s.approvedText;
+      const approvedSegments = [...s.segments];
+      const sentAt = new Date().toISOString();
+      let dispatched = false;
+      let p!: Promise<void>;
+      p = (async () => {
         try {
           if (!s.runId || !s.approvalToken) throw new Error("approval required");
           if (s.approvalExpired) throw new Error("approval is stale: test hook expired approvals");
-          const approvedText = s.approvedText;
-          const approvedSegments = [...s.segments];
-          const raw = await gate.send(s.runId, s.approvalToken, async () => analyzer(approvedText));
+          const raw = await gate.send(s.runId, s.approvalToken, async () => {
+            dispatched = true;
+            s.inFlight = { approvedText, sentAt };
+            return analyzer(approvedText);
+          });
+          if (s.generation !== gen) {
+            if (dispatched) {
+              s.superseded = { approvedText, sentAt, status: "sent" };
+            }
+            return;
+          }
           // Default analyzer ignores segments; rebuild offline brief with real ids when offline-shaped.
           let result = toAnalysisResult(raw, offline);
           if (offline && approvedText.length > 0) {
@@ -356,6 +403,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
             }
           }
           if (result.entries.length === 0) result = { offline: result.offline, entries: [] };
+          s.inFlight = null;
           s.result = result;
           s.payload = {
             approvedText,
@@ -364,9 +412,15 @@ export function createSessionStore(options?: SessionStoreOptions) {
           };
           s.state = "completed";
         } catch (err: unknown) {
+          if (s.generation !== gen) {
+            if (dispatched) {
+              s.superseded = { approvedText, sentAt, status: "sent" };
+            }
+            return;
+          }
           fail(s, err);
         } finally {
-          s.analyzePending = null;
+          if (s.analyzePending === p) s.analyzePending = null;
         }
       })();
       s.analyzePending = p;
