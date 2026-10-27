@@ -104,6 +104,7 @@ export interface LiveBriefAnalyzer {
     transcriptText: GatedText;
     framesSidecarText: GatedText | "";
     fixtureMode: boolean;
+    pressureAssessment?: string;
   }): Promise<{ rawText: unknown }>;
 }
 
@@ -139,11 +140,18 @@ export interface PressureItem {
 export interface PressureAssessment {
   /** Unique per completed analysis, even for identical text. */
   assessmentId: string;
+  /**
+   * Honest availability state. valid_* only when a classifier/pattern
+   * layer actually ran and returned a valid label array (positive iff
+   * items.length > 0). not_run and failed always carry items [] and
+   * allReviewed false: never an invisible negative or reviewed success.
+   */
+  status: "not_run" | "failed" | "valid_negative" | "valid_positive";
   items: PressureItem[];
   rejected: number;
   reviewed: string[];
   allReviewed: boolean;
-  source: "offline-pattern" | "offline-fixture" | "live" | "none";
+  source: "offline-pattern" | "offline-fixture" | "live" | "pattern" | "none";
   offline: boolean;
 }
 
@@ -153,7 +161,7 @@ export interface SessionStoreOptions {
   analyzer?: AnalyzerTransport | LiveBriefAnalyzer;
   analyzerLabel?: string;
   offline?: boolean;
-  pressureClassifier?: PressureClassifier;
+  pressureClassifier?: PressureClassifier | null;
 }
 
 /**
@@ -208,7 +216,7 @@ function detectPressurePatterns(text: string, segmentId = ""): PressureLabel[] {
       labels.push({
         segmentId,
         tactic,
-        ask: text.trim(),
+        ask: "",
         target: "owner",
         span: match[0],
         source: "pattern",
@@ -224,6 +232,24 @@ function detectPressurePatterns(text: string, segmentId = ""): PressureLabel[] {
  * only when its segmentId names a current approved segment and its span is
  * non-empty and a substring of that segment's text.
  */
+/**
+ * An unresolved term is shown only with validated provenance: label.ask
+ * must be a non-empty string that appears verbatim in the approved
+ * transcript text and is not equal to the whole (trimmed) cited segment
+ * text. Otherwise the item carries "" and renderers show
+ * "term not identified".
+ */
+function resolveUnresolvedTerm(
+  ask: unknown,
+  segmentText: string | undefined,
+  approvedText: string,
+): string {
+  if (typeof ask !== "string" || ask === "") return "";
+  if (!approvedText.includes(ask)) return "";
+  if (segmentText !== undefined && ask === segmentText.trim()) return "";
+  return ask;
+}
+
 function verifyPressureLabels(
   labels: PressureLabel[],
   segments: Segment[],
@@ -231,6 +257,7 @@ function verifyPressureLabels(
   offline: boolean,
 ): PressureAssessment {
   const byId = new Map(segments.map((s) => [s.id, s.text]));
+  const approvedText = segments.map((s) => s.text).join("\n");
   const items: PressureItem[] = [];
   let rejected = 0;
   for (const label of labels) {
@@ -243,13 +270,71 @@ function verifyPressureLabels(
         tactic: typeof label.tactic === "string" ? label.tactic : "unknown",
         quote: span,
         segmentId: label.segmentId,
-        unresolvedTerm: typeof label.ask === "string" ? label.ask : "",
+        unresolvedTerm: resolveUnresolvedTerm(label.ask, text, approvedText),
       });
     } else {
       rejected += 1;
     }
   }
-  return { assessmentId: randomUUID(), items, rejected, reviewed: [], allReviewed: items.length === 0, source, offline };
+  const status: PressureAssessment["status"] = items.length > 0 ? "valid_positive" : "valid_negative";
+  return {
+    assessmentId: randomUUID(),
+    status,
+    items,
+    rejected,
+    reviewed: [],
+    allReviewed: items.length === 0,
+    source,
+    offline,
+  };
+}
+
+function notRunPressure(offline: boolean): PressureAssessment {
+  return {
+    assessmentId: randomUUID(),
+    status: "not_run",
+    items: [],
+    rejected: 0,
+    reviewed: [],
+    allReviewed: false,
+    source: "none",
+    offline,
+  };
+}
+
+function failedPressure(offline: boolean): PressureAssessment {
+  return {
+    assessmentId: randomUUID(),
+    status: "failed",
+    items: [],
+    rejected: 0,
+    reviewed: [],
+    allReviewed: false,
+    source: "none",
+    offline,
+  };
+}
+
+/** A classifier result is usable only as a real array of well-formed labels. */
+function isValidLabelArray(value: unknown): value is PressureLabel[] {
+  if (!Array.isArray(value)) return false;
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) return false;
+    const r = entry as Record<string, unknown>;
+    if (typeof r["segmentId"] !== "string") return false;
+    if (typeof r["tactic"] !== "string") return false;
+    if (typeof r["span"] !== "string") return false;
+    if ("ask" in r && typeof r["ask"] !== "string") return false;
+  }
+  return true;
+}
+
+/** Copy/draft gating: valid_negative, or valid_positive with allReviewed. */
+function pressureSatisfied(p: PressureAssessment | null): boolean {
+  if (p === null) return true;
+  if (p.status === "valid_negative") return true;
+  if (p.status === "valid_positive") return p.allReviewed;
+  return false;
 }
 
 /** Thrown (by name) when a mutation names a stale revision or assessment. Changes nothing. */
@@ -642,7 +727,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
                 s.draft.approvedHash !== null &&
                 s.draft.approvedHash === hashDraft(s.draft.text) &&
                 s.draft.resultGeneration === s.generation &&
-                (s.pressure === null || s.pressure.allReviewed),
+                pressureSatisfied(s.pressure),
             },
     };
     if (s.reason !== undefined) snap.reason = s.reason;
@@ -891,6 +976,56 @@ export function createSessionStore(options?: SessionStoreOptions) {
         try {
           if (!s.runId || !s.approvalToken) throw new Error("approval required");
           if (s.approvalExpired) throw new Error("approval is stale: test hook expired approvals");
+          // Resolve the pressure assessment from the approved segments.
+          // Undefined classifier means the deterministic pattern layer is
+          // the default in both modes; null means not_run; a throwing
+          // classifier or a non-array/malformed label array means failed
+          // (never substitute the pattern heuristic). Never a network call.
+          const resolvePressure = async (): Promise<PressureAssessment> => {
+            if (pressureClassifier === undefined) {
+              return verifyPressureLabels(
+                approvedSegments.flatMap((g) => detectPressurePatterns(g.text, g.id)),
+                approvedSegments,
+                offline ? "offline-pattern" : "pattern",
+                offline,
+              );
+            }
+            if (pressureClassifier === null) return notRunPressure(offline);
+            let out: unknown;
+            try {
+              out = await pressureClassifier.classify(
+                approvedSegments.map((g) => ({ segmentId: g.id, text: g.text })),
+              );
+            } catch {
+              return failedPressure(offline);
+            }
+            if (!isValidLabelArray(out)) return failedPressure(offline);
+            return verifyPressureLabels(
+              out,
+              approvedSegments,
+              pressureClassifier.mode === "live" ? "live" : "offline-fixture",
+              !(pressureClassifier.mode === "live" && !offline),
+            );
+          };
+          // Live mode computes the assessment BEFORE the Spark request so
+          // it can ride inside the single owner-approved analysis request.
+          let livePressure: PressureAssessment | null = null;
+          let livePressureArg = "";
+          if (live) {
+            livePressure = await resolvePressure();
+            if (s.generation !== gen) {
+              recordSuperseded();
+              return;
+            }
+            livePressureArg = JSON.stringify({
+              status: livePressure.status,
+              items: livePressure.items.map((i) => ({
+                tactic: i.tactic,
+                quote: i.quote,
+                segmentId: i.segmentId,
+              })),
+            });
+          }
           const raw = await gate.send(s.runId, s.approvalToken, async (gated) => {
             if (!live) {
               // Offline transports have no transport boundary: entry marks
@@ -905,6 +1040,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
                 transcriptText: gated,
                 framesSidecarText: "",
                 fixtureMode: false,
+                pressureAssessment: livePressureArg,
               });
               const rawText = (res as { rawText?: unknown } | null)?.rawText;
               if (typeof rawText !== "string") {
@@ -953,47 +1089,20 @@ export function createSessionStore(options?: SessionStoreOptions) {
             }
             if (result.entries.length === 0) result = { offline: result.offline, entries: [] };
           }
-          // Pressure evidence for this generation: classify the approved
-          // (redacted) segments once after a successful analysis. The
-          // default is the deterministic offline pattern layer; a live store
-          // with no injected classifier skips. Never a network call.
+          // Pressure evidence for this generation, assigned only after a
+          // successful analysis: a failed analysis never leaves behind an
+          // allReviewed/valid assessment. Live mode reuses the assessment
+          // already computed (and sent) before the request; offline mode
+          // resolves it here from the same helper. Never a network call.
           let pressure: PressureAssessment;
-          if (pressureClassifier !== undefined) {
-            let labels: PressureLabel[] = [];
-            try {
-              labels = await pressureClassifier.classify(
-                approvedSegments.map((g) => ({ segmentId: g.id, text: g.text })),
-              );
-            } catch {
-              labels = [];
-            }
+          if (live) {
+            pressure = livePressure as PressureAssessment;
+          } else {
+            pressure = await resolvePressure();
             if (s.generation !== gen) {
               recordSuperseded();
               return;
             }
-            pressure = verifyPressureLabels(
-              labels,
-              approvedSegments,
-              pressureClassifier.mode === "live" ? "live" : "offline-fixture",
-              !(pressureClassifier.mode === "live" && !offline),
-            );
-          } else if (offline) {
-            pressure = verifyPressureLabels(
-              approvedSegments.flatMap((g) => detectPressurePatterns(g.text, g.id)),
-              approvedSegments,
-              "offline-pattern",
-              true,
-            );
-          } else {
-            pressure = {
-              assessmentId: randomUUID(),
-              items: [],
-              rejected: 0,
-              reviewed: [],
-              allReviewed: true,
-              source: "none",
-              offline: false,
-            };
           }
           s.inFlight = null;
           s.result = result;

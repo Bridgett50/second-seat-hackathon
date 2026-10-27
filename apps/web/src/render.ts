@@ -617,15 +617,28 @@ export type SessionPageSnapshot = {
   pressure?: PressureAssessment | null;
 };
 
-function pressureSourceLabel(source: string): string {
-  if (source === "offline-fixture") return "offline fixture";
-  if (source === "live") return "live check";
+function pressureSourceLabel(p: { source: string; status?: string }): string {
+  if (p.status === "not_run") return "not run";
+  if (p.status === "failed") return "failed / unavailable";
+  if (p.source === "offline-fixture") return "offline fixture";
+  if (p.source === "live") return "live check";
+  if (p.source === "pattern") return "pattern check";
+  if (p.source === "none") return "not run";
   return "offline pattern check";
 }
 
 function sessionPressureHtml(snap: SessionPageSnapshot): string {
   const p = snap.pressure ?? null;
-  if (p === null || p.items.length === 0) return "";
+  if (p === null) return "";
+  const status = (p as { status?: string }).status;
+  if (p.items.length === 0) {
+    if (status === "not_run" || status === "failed") {
+      return `<section id="pressure" aria-label="Possible pressure">` +
+        `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
+        `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p></section>`;
+    }
+    return "";
+  }
   const items = p.items
     .map(
       (item) =>
@@ -633,14 +646,14 @@ function sessionPressureHtml(snap: SessionPageSnapshot): string {
         `<a class="pressure-badge" href="#${esc(item.segmentId)}">pressure: ${esc(item.id)}</a>` +
         `<p class="pressure-quote">${esc(item.quote)}</p>` +
         `<p class="pressure-tactic">tactic: ${esc(item.tactic)}</p>` +
-        `<p class="pressure-term">unresolved term: ${esc(item.unresolvedTerm)}</p>` +
+        `<p class="pressure-term">unresolved term: ${esc(item.unresolvedTerm === "" ? "term not identified" : item.unresolvedTerm)}</p>` +
         `<label class="pressure-check"><input type="checkbox" class="pressure-review" data-pressure="${esc(item.id)}"${p.reviewed.includes(item.id) ? " checked" : ""}> Reviewed</label>` +
         `</article>`,
     )
     .join("\n");
   return `<section id="pressure" aria-label="Possible pressure">` +
     `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
-    `<p id="pressure-source">${esc(pressureSourceLabel(p.source))}</p>${items}</section>`;
+    `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p>${items}</section>`;
 }
 
 function sessionDraftHtml(snap: SessionPageSnapshot): string {
@@ -874,24 +887,27 @@ function mut(path,fields,opts){
     return r;
   });
 }
-function pressureOk(s){var p=s.pressure||null;if(!p||!p.items||p.items.length===0)return true;return !!p.allReviewed;}
-function pressureLabel(source){if(source==="offline-fixture")return "offline fixture";if(source==="live")return "live check";return "offline pattern check";}
+function pressureOk(s){var p=s.pressure||null;if(!p)return true;if(p.status==="valid_negative")return true;if(p.status==="valid_positive")return !!p.allReviewed;if(p.status==="not_run"||p.status==="failed")return false;if(!p.items||p.items.length===0)return true;return !!p.allReviewed;}
+function pressureLabel(p){if(p&&p.status==="not_run")return "not run";if(p&&p.status==="failed")return "failed / unavailable";var source=p?p.source:"";if(source==="offline-fixture")return "offline fixture";if(source==="live")return "live check";if(source==="pattern")return "pattern check";if(source==="none")return "not run";return "offline pattern check";}
 function syncPressure(s){
   var old=document.getElementById("pressure");
   if(old&&old.parentNode)old.parentNode.removeChild(old);
   var p=s.pressure||null;
-  if(!p||!p.items||p.items.length===0)return;
+  if(!p)return;
+  var empty=!p.items||p.items.length===0;
+  if(empty&&p.status!=="not_run"&&p.status!=="failed")return;
   var findings=document.getElementById("findings");
   if(!findings||!findings.parentNode)return;
   var sec=el("section",{id:"pressure","aria-label":"Possible pressure"});
   sec.appendChild(el("h2",{},"Possible pressure — assessment, not a judgment of anyone's intent"));
-  sec.appendChild(el("p",{id:"pressure-source"},pressureLabel(p.source)));
+  sec.appendChild(el("p",{id:"pressure-source"},pressureLabel(p)));
+  if(empty)return findings.parentNode.insertBefore(sec,findings.nextSibling);
   p.items.forEach(function(item){
     var art=el("article",{"class":"pressure-item",id:"pressure-"+item.id});
     art.appendChild(el("a",{"class":"pressure-badge",href:"#"+item.segmentId},"pressure: "+item.id));
     art.appendChild(el("p",{"class":"pressure-quote"},item.quote));
     art.appendChild(el("p",{"class":"pressure-tactic"},"tactic: "+item.tactic));
-    art.appendChild(el("p",{"class":"pressure-term"},"unresolved term: "+item.unresolvedTerm));
+    art.appendChild(el("p",{"class":"pressure-term"},"unresolved term: "+((item.unresolvedTerm===""||item.unresolvedTerm===undefined)?"term not identified":item.unresolvedTerm)));
     var lab=document.createElement("label");lab.setAttribute("class","pressure-check");
     var box=document.createElement("input");box.setAttribute("type","checkbox");box.setAttribute("class","pressure-review");box.setAttribute("data-pressure",item.id);
     if(p.reviewed&&p.reviewed.indexOf(item.id)>=0)box.checked=true;
