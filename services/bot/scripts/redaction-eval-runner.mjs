@@ -11,7 +11,8 @@
 // c.entities so the historical item count is preserved.
 //
 // Run records: every run gets a unique directory <outDir>/<runId>/ holding
-// manifest.json (run_id, planned case ids, input sha256 per case, started_at),
+// manifest.json (run_id, planned case ids, input sha256 per case, started_at,
+// request_ms, deadline_ms with null when no deadline),
 // records.jsonl (one terminal record per planned case, appended + fsynced as
 // soon as the case finishes), summary.json, and report.txt. An existing run
 // dir is never reused (runEval throws). The raw-response log lives under the
@@ -234,7 +235,12 @@ function keyRedactor(redactor, receipt) {
 //   readText:     async (case) => transcript text
 //   makeRedactor: () => redactor with redactText(text) and optional timeoutMs
 //   deadlineMs:   global budget in ms from eval start (optional)
-//   concurrency:  worker count for the non-canary remainder (default 2)
+//   requestMs:    per-request timeout in ms (positive integer, default 90000);
+//                 each request gets min(requestMs, remaining budget). Invalid
+//                 values throw before any request.
+//   concurrency:  worker count for the non-canary remainder (default 2);
+//                 must be an integer >= 1, else throws before readText and
+//                 makeRedactor are called.
 //   runId:        unique id for this run (default: timestamp + randomness)
 //   outDir:       parent dir for the run dir; when set, runEval writes
 //                 <outDir>/<runId>/{manifest.json,records.jsonl,summary.json,
@@ -260,6 +266,7 @@ export async function runEval({
   readText,
   makeRedactor,
   deadlineMs,
+  requestMs = 90_000,
   concurrency = 2,
   runId = defaultRunId(),
   outDir,
@@ -276,12 +283,18 @@ export async function runEval({
   if (typeof runId !== "string" || runId === "" || runId.includes("/") || runId.includes("\\")) {
     throw new Error(`runEval: invalid runId ${JSON.stringify(runId)}`);
   }
+  if (!Number.isInteger(requestMs) || requestMs <= 0) {
+    throw new Error("runEval: invalid requestMs");
+  }
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(`runEval: invalid concurrency ${String(concurrency)}`);
+  }
   const startedAt = Date.now();
   const deadline =
     Number.isInteger(deadlineMs) && deadlineMs > 0 ? startedAt + deadlineMs : Infinity;
   const remainingMs = () => deadline - Date.now();
   const applyTimeout = (redactor) => {
-    const perRequest = Math.max(1, Math.min(90_000, remainingMs() === Infinity ? 90_000 : remainingMs()));
+    const perRequest = Math.min(requestMs, remainingMs());
     if (redactor !== null && typeof redactor === "object" && "timeoutMs" in redactor) {
       redactor.timeoutMs = perRequest;
     } else {
@@ -366,6 +379,8 @@ export async function runEval({
       run_id: runId,
       started_at: new Date(startedAt).toISOString(),
       planned: manifestCases,
+      request_ms: requestMs,
+      deadline_ms: Number.isInteger(deadlineMs) && deadlineMs > 0 ? deadlineMs : null,
     };
     try {
       fs.writeFileSync(join(runDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -540,7 +555,7 @@ export async function runEval({
       }
     }
     const workers = [];
-    for (let w = 0; w < Math.max(1, concurrency); w++) workers.push(worker());
+    for (let w = 0; w < concurrency; w++) workers.push(worker());
     await Promise.all(workers);
     records.push(...results);
     return finish(records, false);

@@ -703,12 +703,17 @@ export class GlimmerClient implements Redactor {
       };
     }
     const started = Date.now();
+    // Abort via an AbortController driven by the global setTimeout (not
+    // AbortSignal.timeout) so the abort is driven by the fake-able global
+    // timer and the abort signal reaches fetchImpl.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res: Response;
     try {
       res = await (this.fetchImpl ?? fetch)(`${this.baseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: controller.signal,
         body: JSON.stringify(requestBody),
       });
     } catch (err) {
@@ -725,6 +730,8 @@ export class GlimmerClient implements Redactor {
         error: message,
       });
       throw err;
+    } finally {
+      clearTimeout(timer);
     }
     if (!res.ok) {
       const message = `glimmer: chat failed ${res.status}`;
