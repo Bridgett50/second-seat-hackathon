@@ -26,6 +26,7 @@ export interface BriefSourceInput {
   transcriptText: string;
   framesSidecarText: string;
   fixtureMode: boolean;
+  pressureAssessment?: string;
 }
 
 /**
@@ -40,6 +41,12 @@ export interface BriefGatedInput {
   // gate-minted GatedText like the transcript.
   framesSidecarText: GatedText | "";
   fixtureMode: boolean;
+  /**
+   * Optional structured pressure assessment carried inside the single
+   * owner-approved analysis request (compact JSON with status plus items
+   * mapped to {tactic, quote, segmentId}). No separate classifier call.
+   */
+  pressureAssessment?: string;
 }
 
 export interface BriefUsage {
@@ -95,6 +102,7 @@ async function loadDeveloperPrompt(): Promise<string> {
 }
 
 export async function buildUserMessage(input: BriefSourceInput): Promise<string> {
+  const assessment = typeof input.pressureAssessment === "string" ? input.pressureAssessment : "";
   return [
     `meetingId: ${input.meetingId}`,
     `model: ${BRIEF_MODEL}`,
@@ -108,6 +116,7 @@ export async function buildUserMessage(input: BriefSourceInput): Promise<string>
     "frames sidecar (frames.txt):",
     input.framesSidecarText.trim() === "" ? "(no frames)" : input.framesSidecarText,
     "",
+    ...(assessment === "" ? [] : ["pressure assessment:", assessment, ""]),
     "transcript (transcript.txt) — the evidence, last:",
     input.transcriptText,
     "</data>",
@@ -297,7 +306,8 @@ export class MuseClient {
     const framesSidecarText = framesSidecarValue === null ? "" : framesSidecarValue.text;
     const gatedValues: readonly GatedText[] =
       framesSidecarValue === null ? [gatedTranscriptValue] : [gatedTranscriptValue, framesSidecarValue];
-    const redactedInput: BriefSourceInput = { ...input, transcriptText, framesSidecarText };
+    const assessment = typeof input.pressureAssessment === "string" ? input.pressureAssessment : "";
+    const redactedInput: BriefSourceInput = { ...input, transcriptText, framesSidecarText, pressureAssessment: assessment };
     // Preflight order: the static developer prompt loads before the dynamic
     // caps check reads its state file, so a prompt-read failure refuses the
     // call before any fetch with no dispatch receipt. Caps and token guards
