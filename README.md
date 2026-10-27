@@ -4,7 +4,7 @@ Pre-existing: the Second Seat idea and an earlier prototype in a separate repo (
 
 ## What it is
 
-Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, the redaction step masks PII for my review, I review and correct the redacted text, I approve it, the brief step writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. `#btn-copy` stays disabled until I approve the exact current draft text and finish pressure review of every item; it only writes that text to my clipboard; any edit to the draft or transcript clears the approval. Second Seat never sends a reply or message to the vendor; I copy the approved draft myself. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
+Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, the redaction step masks PII for my review, I review and correct the redacted text, I approve it, the brief step writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. `#btn-copy` stays disabled until I approve the exact current draft text and finish pressure review of every item; approval requires an explicit click on `#btn-draft-approve`; it only writes that text to my clipboard; any edit to the draft or transcript clears the approval. Second Seat never sends a reply or message to the vendor; I copy the approved draft myself. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
 
 ## Demo modes: offline, recorded, live
 
@@ -35,13 +35,21 @@ The deterministic pattern layer runs by default in both offline and live modes a
 | B6 | draft PR (#49) | offline tests pass | live not performed | none |
 | B7 | this draft PR (docs) | docs checks pass | live not performed | none |
 | B8 | draft (evidence protocol only; no observations) | no observations | live not performed | none |
-| C1 | draft PR (#54) | criteria C1-1..C1-8; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/8d1ca970b1993b34112f1276b9915eb2219b0b7a; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479067260 success | live not performed | none |
-| C2 | draft PR (#55) | criteria C2-1..C2-6; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/2617b7978363963e5126d8e4ca643f176cecfd5f; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479898486 success | live not performed | none |
-| C3 | draft PR (#56) | criteria C3-1..C3-6; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/fb4c216d60b08aef4308a05f25250b5f8adfa925; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40480594570 failed (web build emitted to dist/apps/web because a test imported core source by relative path; fixed in C7 #59) | live not performed | none |
-| C4 | draft PR (#57) | criteria C4-1..C4-6; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/b383e12615b5df48866c7f276d1095d7f116850c; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484194423 failed (same build issue; fixed in C7 #59) | live not performed | none |
-| C5 | draft PR (#58) | criteria C5-1..C5-12; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/789ab3c3475145404484f39c428883dcc78557b7; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484954956 failed (same build issue; fixed in C7 #59) | live not performed | none |
-| C6 | draft PR (#53) | criteria C6-1..C6-6; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/7efcae01fa594a564165a69a2d065f86d9c15d03; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40477442184 success | live not performed | none |
-| C7 | draft PR (#59) | criteria C7-1..C7-8 ("offline tests pass"); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/1153dd8f6aae575a8f46788b9bf3432d28e43817; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40486174227 success | live not performed | none |
+| C1 | draft PR (#54) | criteria C1-1..C1-9 (C1-9 pending D2-6); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/8d1ca970b1993b34112f1276b9915eb2219b0b7a; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479067260 success | live not performed | none |
+| C2 | draft PR (#55) | criteria C2-1..C2-7 (C2-7 pending); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/2617b7978363963e5126d8e4ca643f176cecfd5f; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479898486 success | live not performed | none |
+| C3 | draft PR (#56) | criteria C3-1..C3-8 (C3-7/C3-8 pending); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/fb4c216d60b08aef4308a05f25250b5f8adfa925; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40480594570 failed (web build emitted to dist/apps/web because a test imported core source by relative path; fixed in C7 #59) | live not performed | none |
+| C4 | draft PR (#57) | criteria C4-1..C4-11 (C4-7/C4-8/C4-9/C4-11 pending D5); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/b383e12615b5df48866c7f276d1095d7f116850c; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484194423 failed (same build issue; fixed in C7 #59) | live not performed | none |
+| C5 | draft PR (#58) | criteria C5-1..C5-12 (C5-3/C5-6 partial); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/789ab3c3475145404484f39c428883dcc78557b7; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484954956 failed (same build issue; fixed in C7 #59) | live not performed | none |
+| C6 | draft PR (#53) | criteria C6-1..C6-7 (C6-4/C6-7 pending D3); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/7efcae01fa594a564165a69a2d065f86d9c15d03; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40477442184 success | live not performed | none |
+| C7 | draft PR (#59) | criteria C7-1..C7-8 (C7-2/C7-3/C7-7/C7-8 partial); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/1153dd8f6aae575a8f46788b9bf3432d28e43817; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40486174227 success | live not performed | none |
+| C8 | docs | criteria C8-1..C8-9; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/f7a91a15571c179d5cc5bf4a3c86e866576bb7dd; prose checks pass | live not performed | none |
+| C9 | prep only | criteria C9-P1..C9-P10; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/c6829e3c2a1b12de73878b2462d6d3014542bdac; execution blocked | live not performed | none |
+| D1 | this repo | criteria D1-1..D1-5; tested head a23b46295c302113a294713adace48d10f97030a; fake-transport/fixture tests pass | live not performed | none |
+| D2 | this repo | criteria D2-1..D2-6; tested head 9d5dd7fc700c2e76c2f1375bc10dd593b4cb07b1; probe apps/web/e2e/d2-approval.spec.ts; pass with fake transport | live not performed | none |
+| D3 | this repo | criteria D3-1..D3-5; tested head 7af1d4b077a68d4063546fc94553bb73aa271397; fake-repo tests pass | live not performed | none |
+| D4 | this repo | criteria D4-1..D4-6; tested head b1ba5dbd50689fe6aec5716fd509cbc5b3426dfe; inert-stub tests pass | live not performed | none |
+| D5 | this repo | criteria D5-1..D5-5; tested head 6b37061ee2d1726077961e1ac077de20e954a02c; dummy-bundle tests pass | live not performed | none |
+| D6 | this change (docs) | criteria D6-1..D6-5; tested head TBD-head; file checks pass | live not performed | none |
 
 ## Why it matters
 
@@ -66,12 +74,14 @@ I am the only one who acts. The loop ends at me. Image/SAM features are experime
 
 ## Models
 
-| Model | Job | Settings |
+| Model | Job | Mode / settings |
 |---|---|---|
 | meta-models/Muse-Glimmer-30B | redact PII | self-hosted vLLM on Modal (remote GPU); `GLIMMER_MODEL` in [services/bot/src/private/redact.ts] |
-| muse-spark-1.3 | brief | reasoning medium, seed 42, max tokens 16000, strict JSON schema [eval/results/prompt-freeze.md]; `BRIEF_MODEL` in [services/bot/src/brief/muse.ts] |
-| muse-spark-1.3 | Shield classifier | reasoning low [eval/results/prompt-freeze.md] |
-| muse-spark-1.3 | support judge | reasoning medium [eval/results/prompt-freeze.md] |
+| muse-spark-1.3 | brief | Standard mode; reasoning medium, seed 42, max tokens 16000, strict JSON schema [eval/results/prompt-freeze.md]; `BRIEF_MODEL` in [services/bot/src/brief/muse.ts] |
+| muse-spark-1.3 (standalone/historical path only, not the current session path) | Shield classifier | Standard mode; reasoning low [eval/results/prompt-freeze.md] |
+| muse-spark-1.3 | support judge | Standard mode; reasoning medium [eval/results/prompt-freeze.md] |
+
+Model paths, per the official Meta docs: the current session pressure path uses deterministic offline patterns (`apps/web/src/session.ts`), not a model call. The `muse-spark-1.3` Shield classifier is a standalone/historical model path; the live demo is not credited with it. Live verification for every path above: not performed (fake-transport tests only). `muse-spark-1.3` is the Standard-mode ID; the `-contributor` suffix (e.g. `muse-spark-1.3-contributor`) selects Contributor mode. A recursive `json_schema` (a `$ref` cycle) is rejected with HTTP 400; recursive structures must be flattened to fixed depth.
 
 Redact sampling: temperature 1.0, top_p 0.95 [eval/results/prompt-freeze.md]. Yes, that is warm for a redactor. It is on my list.
 
