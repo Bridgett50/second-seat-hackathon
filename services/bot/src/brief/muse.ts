@@ -27,8 +27,9 @@ export const BRIEF_SEED = 42;
 /**
  * Structured pressure label bound to the approved transcript. There is no
  * free-string assessment channel: the client validates each label (known
- * tactic, span quoted verbatim from the approved transcript) and renders
- * the outbound assessment text internally only from validated labels.
+ * keys, known tactic, seg-N id bound to an existing segment, span quoted
+ * verbatim from that segment) and renders the outbound assessment text
+ * internally only from validated labels.
  */
 export interface PressureLabelInput {
   segmentId: string;
@@ -47,10 +48,130 @@ export class UnboundAssessmentError extends Error {
 
 const KNOWN_TACTICS: ReadonlySet<string> = new Set<string>(PRESSURE_TACTICS);
 
+/** Top-level keys accepted on a brief input (gated or source). Anything else is rejected. */
+const KNOWN_INPUT_KEYS: ReadonlySet<string> = new Set<string>([
+  "meetingId",
+  "transcriptText",
+  "framesSidecarText",
+  "fixtureMode",
+  "pressureLabels",
+]);
+
+/** Keys accepted on a structured pressure label. Anything else is rejected. */
+const KNOWN_LABEL_KEYS: ReadonlySet<string> = new Set<string>(["segmentId", "tactic", "span"]);
+
+/**
+ * Strict meeting-id charset: letters, digits, `-`, `_`, `.` only.
+ * No `@`, no spaces, no path separators: the id is interpolated into the
+ * outbound user message, so anything outside this charset is rejected
+ * before any fetch.
+ */
+const MEETING_ID_RE = /^[A-Za-z0-9._-]+$/;
+
+/** Segment ids name a numbered transcript segment: `seg-N`, nothing else. */
+const SEGMENT_ID_RE = /^seg-(\d+)$/;
+
+/** A bound quote must be at least this long: single characters never bind. */
+const MIN_SPAN_LENGTH = 2;
+
+function isWordChar(ch: string): boolean {
+  return /[\p{L}\p{N}_]/u.test(ch);
+}
+
+/**
+ * Split the approved transcript into its numbered segments: one per
+ * non-empty trimmed line (`seg-1`, `seg-2`, ...), mirroring
+ * `labelTranscriptSegments`. A leading `[seg-N]` marker on an already
+ * labelled line is stripped so labelled and raw text segment identically.
+ */
+function transcriptSegments(transcriptText: string): string[] {
+  const segments: string[] = [];
+  for (const line of transcriptText.split("\n")) {
+    const text = line.trim().replace(/^\[seg-\d+\]\s*/, "");
+    if (text === "") continue;
+    segments.push(text);
+  }
+  return segments;
+}
+
+/** True when `span` occurs in `segment` with word boundaries on both sides. */
+function isWordBoundedQuote(segment: string, span: string): boolean {
+  let from = 0;
+  for (;;) {
+    const idx = segment.indexOf(span, from);
+    if (idx === -1) return false;
+    const before = idx === 0 ? "" : (segment[idx - 1] ?? "");
+    const end = idx + span.length;
+    const after = end >= segment.length ? "" : (segment[end] ?? "");
+    if ((before === "" || !isWordChar(before)) && (after === "" || !isWordChar(after))) {
+      return true;
+    }
+    from = idx + 1;
+  }
+}
+
+/**
+ * Reject any key outside `allowed` on a brief input or pressure label.
+ * Throws `UnboundAssessmentError` so the rejection happens before any
+ * fetch and before any dispatch receipt is recorded.
+ */
+function assertNoUnknownKeys(value: object, allowed: ReadonlySet<string>, what: string): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new UnboundAssessmentError(`unbound brief input: unknown ${what} key ${JSON.stringify(key)}`);
+    }
+  }
+}
+
+/**
+ * Legacy free-string assessment keys. They are never rendered or sent
+ * (the outbound input is built explicitly from validated labels only);
+ * they are dropped when the request already carries structured
+ * `pressureLabels` (validated separately), and rejected as unknown keys
+ * otherwise. Anything outside both the known keys and this set always
+ * throws.
+ */
+const LEGACY_STRIPPED_KEYS: ReadonlySet<string> = new Set<string>(["pressureAssessment"]);
+
+/**
+ * Reject unknown top-level keys on a brief input, with the legacy
+ * exemption above: a stale `pressureAssessment` string is dropped only
+ * when structured labels are present to validate in its place. A legacy
+ * field standing alone — or any other unknown key — throws
+ * `UnboundAssessmentError` before any fetch and before any dispatch
+ * receipt is recorded.
+ */
+function assertAllowedTopLevelKeys(input: object, pressureLabels: unknown): void {
+  const unknownKeys = Object.keys(input).filter((key) => !KNOWN_INPUT_KEYS.has(key));
+  if (unknownKeys.length === 0) return;
+  const legacyOnly = unknownKeys.every((key) => LEGACY_STRIPPED_KEYS.has(key));
+  if (legacyOnly && Array.isArray(pressureLabels)) return;
+  throw new UnboundAssessmentError(
+    `unbound brief input: unknown top-level key ${JSON.stringify(unknownKeys[0])}`,
+  );
+}
+
+/**
+ * Validate a meeting id against the strict id charset (letters, digits,
+ * `-`, `_`, `.`; no `@`, no spaces). The id is interpolated into the
+ * outbound user message, so anything else throws `UnboundAssessmentError`
+ * before any fetch and before any dispatch receipt is recorded.
+ */
+function assertValidMeetingId(meetingId: unknown): void {
+  if (typeof meetingId !== "string" || !MEETING_ID_RE.test(meetingId)) {
+    throw new UnboundAssessmentError(
+      `unbound brief input: invalid meetingId ${JSON.stringify(meetingId) ?? "missing"}`,
+    );
+  }
+}
+
 /**
  * Validate structured pressure labels against the approved transcript
- * text: every non-"none" label must name a known tactic and carry a
- * non-empty span that appears verbatim in the approved transcript.
+ * text: every label must carry only known keys and name a known tactic;
+ * every non-"none" label must name a `seg-N` segment id that refers to an
+ * existing transcript segment, and carry a span (minimum length 2,
+ * word-bounded) quoted verbatim from THAT segment — a substring of the
+ * whole transcript is not enough.
  * Throws `UnboundAssessmentError` on the first unbound label, before any
  * fetch and before any dispatch receipt is recorded.
  */
@@ -58,22 +179,41 @@ export function assertBoundPressureLabels(
   labels: readonly PressureLabelInput[] | undefined,
   transcriptText: string,
 ): void {
+  if (typeof transcriptText !== "string") {
+    throw new UnboundAssessmentError("unbound pressure assessment: transcript is not a string");
+  }
+  const segments = transcriptSegments(transcriptText);
   for (const label of labels ?? []) {
     if (typeof label !== "object" || label === null) {
       throw new UnboundAssessmentError("unbound pressure assessment: label is not an object");
     }
-    const { tactic, span } = label as { tactic?: unknown; span?: unknown };
+    assertNoUnknownKeys(label, KNOWN_LABEL_KEYS, "pressure label");
+    const { segmentId, tactic, span } = label as {
+      segmentId?: unknown;
+      tactic?: unknown;
+      span?: unknown;
+    };
     if (typeof tactic !== "string" || !KNOWN_TACTICS.has(tactic)) {
       throw new UnboundAssessmentError(
         `unbound pressure assessment: unknown tactic ${JSON.stringify(tactic) ?? "missing"}`,
       );
     }
     if (tactic === "none") continue;
-    if (typeof span !== "string" || span === "") {
-      throw new UnboundAssessmentError("unbound pressure assessment: span is empty");
+    const match = typeof segmentId === "string" ? SEGMENT_ID_RE.exec(segmentId) : null;
+    const index = match === null ? -1 : Number(match[1]) - 1;
+    if (match === null || !(index >= 0 && index < segments.length)) {
+      throw new UnboundAssessmentError(
+        `unbound pressure assessment: unknown segment ${JSON.stringify(segmentId) ?? "missing"}`,
+      );
     }
-    if (!transcriptText.includes(span)) {
-      throw new UnboundAssessmentError("unbound pressure assessment: span is not in the approved transcript");
+    const segment = segments[index] ?? "";
+    if (typeof span !== "string" || span.length < MIN_SPAN_LENGTH) {
+      throw new UnboundAssessmentError("unbound pressure assessment: span is empty or too short to bind");
+    }
+    if (!segment.includes(span) || !isWordBoundedQuote(segment, span)) {
+      throw new UnboundAssessmentError(
+        "unbound pressure assessment: span is not quoted from its bound segment",
+      );
     }
   }
 }
@@ -113,8 +253,10 @@ export interface BriefGatedInput {
   /**
    * Optional structured pressure labels carried inside the single
    * owner-approved analysis request. Validated against the approved
-   * transcript (known tactic, verbatim span) before any fetch; rendered
-   * internally only from validated labels. No separate classifier call.
+   * transcript (known keys, known tactic, seg-N id bound to an existing
+   * segment, span quoted verbatim from that segment) before any fetch;
+   * rendered internally only from validated labels. No separate classifier
+   * call.
    */
   pressureLabels?: PressureLabelInput[];
 }
@@ -172,9 +314,22 @@ async function loadDeveloperPrompt(): Promise<string> {
 }
 
 export async function buildUserMessage(input: BriefSourceInput): Promise<string> {
-  // Rendered internally only from structured labels (tactic + quoted
-  // span). There is no free-string channel: stray text never reaches the
-  // wire. (MuseClient validates binding first; this builder only renders.)
+  // Strict input binding first: unknown top-level keys (a stale legacy
+  // assessment string is dropped only when structured labels are present),
+  // an off-charset meetingId, and unbound labels all throw before anything
+  // is rendered, so this builder never interpolates raw ids or blindly
+  // renders labels. Rendered internally only from validated labels (tactic
+  // + quoted span from its bound segment). There is no free-string channel:
+  // stray text never reaches the wire.
+  assertAllowedTopLevelKeys(input, input.pressureLabels);
+  assertValidMeetingId(input.meetingId);
+  if (typeof input.transcriptText !== "string" || typeof input.framesSidecarText !== "string") {
+    throw new UnboundAssessmentError("unbound brief input: transcript and frames sidecar must be strings");
+  }
+  if (input.pressureLabels !== undefined && !Array.isArray(input.pressureLabels)) {
+    throw new UnboundAssessmentError("unbound pressure assessment: pressureLabels is not an array");
+  }
+  assertBoundPressureLabels(input.pressureLabels ?? [], input.transcriptText);
   const assessment = renderPressureAssessment(input.pressureLabels);
   return [
     `meetingId: ${input.meetingId}`,
@@ -379,6 +534,16 @@ export class MuseClient {
    * this method never redacts or approves raw text itself.
    */
   async completeBrief(input: BriefGatedInput): Promise<BriefResult> {
+    // Strict pre-fetch input binding: unknown top-level keys (a stale
+    // legacy assessment string is dropped only when structured labels are
+    // present; there is no free-string channel either way) and an
+    // off-charset meetingId throw here, before any fetch and before any
+    // dispatch receipt is recorded.
+    assertAllowedTopLevelKeys(input, input.pressureLabels);
+    assertValidMeetingId(input.meetingId);
+    if (input.pressureLabels !== undefined && !Array.isArray(input.pressureLabels)) {
+      throw new UnboundAssessmentError("unbound pressure assessment: pressureLabels is not an array");
+    }
     const key = apiKey();
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
@@ -393,11 +558,12 @@ export class MuseClient {
     const framesSidecarText = framesSidecarValue === null ? "" : framesSidecarValue.text;
     const gatedValues: readonly GatedText[] =
       framesSidecarValue === null ? [gatedTranscriptValue] : [gatedTranscriptValue, framesSidecarValue];
-    // Bound assessment first: every label must name a known tactic and
-    // quote the approved transcript verbatim. Throws UNBOUND_ASSESSMENT
-    // before any fetch and before any dispatch receipt is recorded. The
-    // input is built explicitly so no free-string channel can reach the
-    // wire.
+    // Bound assessment first: every label must carry only known keys,
+    // name a known tactic, bind a seg-N id to an existing segment, and
+    // quote that segment verbatim (min length, word-bounded). Throws
+    // UNBOUND_ASSESSMENT before any fetch and before any dispatch receipt
+    // is recorded. The input is built explicitly so no free-string channel
+    // can reach the wire.
     const labels = Array.isArray(input.pressureLabels) ? input.pressureLabels : [];
     assertBoundPressureLabels(labels, gatedTranscript);
     const redactedInput: BriefSourceInput = {
