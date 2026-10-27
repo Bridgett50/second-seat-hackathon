@@ -389,8 +389,9 @@ export class GlimmerClient implements Redactor {
   readonly label = `Glimmer: ${GLIMMER_MODEL}`;
   private baseUrl: string;
   private timeoutMs: number | undefined;
+  private readonly fetchImpl: typeof fetch | undefined;
 
-  constructor(baseUrl?: string, opts?: { timeoutMs?: number }) {
+  constructor(baseUrl?: string, opts?: { timeoutMs?: number; fetchImpl?: typeof fetch }) {
     const resolved = baseUrl ?? process.env["GLIMMER_BASE_URL"] ?? "";
     if (resolved === "") throw new Error("glimmer: GLIMMER_BASE_URL is unset");
     if (!/^https?:\/\/[^/]/.test(resolved)) {
@@ -398,6 +399,7 @@ export class GlimmerClient implements Redactor {
     }
     this.baseUrl = resolved.replace(/\/$/, "");
     this.timeoutMs = opts?.timeoutMs;
+    this.fetchImpl = opts?.fetchImpl;
   }
 
   async redactText(text: string): Promise<RedactTextResult> {
@@ -417,7 +419,7 @@ export class GlimmerClient implements Redactor {
 
   async health(): Promise<{ ok: boolean; label: string }> {
     try {
-      const res = await fetch(`${this.baseUrl}/health`, { method: "GET" });
+      const res = await (this.fetchImpl ?? fetch)(`${this.baseUrl}/health`, { method: "GET" });
       return { ok: res.ok, label: this.label };
     } catch {
       return { ok: false, label: this.label };
@@ -479,7 +481,7 @@ export class GlimmerClient implements Redactor {
       };
     }
     const started = Date.now();
-    const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+    const res = await (this.fetchImpl ?? fetch)(`${this.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       signal: AbortSignal.timeout(timeoutMs),

@@ -26,7 +26,7 @@ test("paste -> redact -> review -> approve -> analyze -> completed", async ({
 
   await page.locator("#btn-approve").click();
   await expect(page.locator("#session-state")).toContainText("Approved");
-  await expect(page.locator("#payload-panel")).toContainText("Prepared — not sent");
+  await expect(page.locator("#payload-panel")).toContainText("Prepared (not sent)");
   expect(await page.locator("#payload-text").textContent()).toBe(approvedText);
 
   // Double-click analyze: still a single analysis result.
@@ -35,7 +35,7 @@ test("paste -> redact -> review -> approve -> analyze -> completed", async ({
   await expect(page.locator("#results .result")).toHaveCount(1);
   const href = await page.locator("#results .result .citations a").first().getAttribute("href");
   expect(href).toMatch(/^#seg-/);
-  await expect(page.locator("#payload-panel")).toContainText("Sent to analyzer");
+  await expect(page.locator("#payload-panel")).toContainText("Dispatched to");
   expect(await page.locator("#payload-text").textContent()).toBe(approvedText);
 
   // Changing the transcript clears approvals and results.

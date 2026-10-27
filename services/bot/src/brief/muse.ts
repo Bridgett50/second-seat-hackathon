@@ -36,7 +36,9 @@ export interface BriefSourceInput {
 export interface BriefGatedInput {
   meetingId: string;
   transcriptText: GatedText;
-  framesSidecarText: GatedText;
+  // Empty string means "no frames sidecar"; any non-empty sidecar must be
+  // gate-minted GatedText like the transcript.
+  framesSidecarText: GatedText | "";
   fixtureMode: boolean;
 }
 
@@ -157,10 +159,14 @@ function retryAfterMs(header: string | null, attempt: number): number {
   return Math.min(1000 * 2 ** attempt, 30_000);
 }
 
-async function postChat(body: Record<string, unknown>, key: string): Promise<Response> {
+async function postChat(
+  body: Record<string, unknown>,
+  key: string,
+  fetchImpl?: typeof fetch,
+): Promise<Response> {
   const maxAttempts = 4;
   for (let attempt = 0; ; attempt += 1) {
-    const response = await fetch(BRIEF_API_URL, {
+    const response = await (fetchImpl ?? fetch)(BRIEF_API_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -235,23 +241,51 @@ async function readStreamedChat(response: Response): Promise<{ content: string; 
   return { content: chunks.join(""), usage };
 }
 
+/**
+ * Prefix each non-empty trimmed line of gate-approved text with its
+ * session segment id ("[seg-N] ", numbered like the session segments).
+ * Deterministic transform of the gated text only: nothing else is added.
+ */
+export function labelTranscriptSegments(gatedText: string): string {
+  const lines: string[] = [];
+  let n = 0;
+  for (const line of gatedText.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    n += 1;
+    lines.push(`[seg-${n}] ${trimmed}`);
+  }
+  return lines.join("\n");
+}
+
 export class MuseClient {
   readonly mode = "live" as const;
+  private readonly fetchImpl: typeof fetch | undefined;
+  private readonly labelSegments: boolean;
+
+  constructor(opts?: { fetchImpl?: typeof fetch; labelTranscriptSegments?: boolean }) {
+    this.fetchImpl = opts?.fetchImpl;
+    this.labelSegments = opts?.labelTranscriptSegments ?? false;
+  }
 
   /**
    * Live Spark call. The transcript and frames sidecar must arrive as
    * gate-minted `GatedText` (via `gate.send` after owner review):
-   * plain strings are rejected at runtime. All outbound analysis
-   * goes through the privacy gate; this method never redacts or
-   * approves raw text itself.
+   * plain strings are rejected at runtime (an empty sidecar string means
+   * "no frames"). All outbound analysis goes through the privacy gate;
+   * this method never redacts or approves raw text itself.
    */
   async completeBrief(input: BriefGatedInput): Promise<BriefResult> {
     const key = apiKey();
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
-    const transcriptText = requireLiveGatedText(input.transcriptText).text;
-    const framesSidecarText = requireLiveGatedText(input.framesSidecarText).text;
+    const gatedTranscript = requireLiveGatedText(input.transcriptText).text;
+    // The model can only cite seg-N ids it has seen: send the gated text
+    // with each non-empty line prefixed by its segment id.
+    const transcriptText = this.labelSegments ? labelTranscriptSegments(gatedTranscript) : gatedTranscript;
+    const framesSidecarText =
+      input.framesSidecarText === "" ? "" : requireLiveGatedText(input.framesSidecarText).text;
     await checkCapsPreCall();
     const { logText } = await import("../private/payloadLog.js");
     logText(`${transcriptText}\n${framesSidecarText}`);
@@ -281,6 +315,7 @@ export class MuseClient {
         ],
       },
       key,
+      this.fetchImpl,
     );
     const { content, usage } = await readStreamedChat(response);
     const result: BriefResult = {

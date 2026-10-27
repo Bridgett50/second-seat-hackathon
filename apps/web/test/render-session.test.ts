@@ -84,7 +84,12 @@ describe("renderSessionPage", () => {
         offline: true,
         entries: [{ kind: "commitment", text: "Pay <b>$5</b> today?", segmentIds: ["seg-1"] }],
       },
-      payload: { approvedText: "Pay <b>$5</b> today?", status: "sent" },
+      payload: {
+        approvedText: "Pay <b>$5</b> today?",
+        status: "dispatched",
+        sentAt: "2026-10-27T00:00:00.000Z",
+        adapterLabel: "offline heuristic",
+      },
     });
     expect(page).toContain('href="#seg-1"');
     expect(page).toContain('[seg-1]');
@@ -92,14 +97,33 @@ describe("renderSessionPage", () => {
     expect(page).toContain('id="payload-panel"');
     expect(page).toContain("&lt;b&gt;");
     expect(page).not.toContain("Pay <b>$5</b> today?");
-    expect(page).toContain("Sent to analyzer");
+    expect(page).toContain("Dispatched to offline heuristic at 2026-10-27T00:00:00.000Z");
     expect(
       renderSessionPage({
         ...base,
         state: "approved",
         payload: { approvedText: "x", status: "prepared" },
       }),
-    ).toContain("Prepared — not sent");
+    ).toContain("Prepared (not sent)");
+  });
+
+  it("shows analysis-error without 'No findings' when state is error", () => {
+    const page = renderSessionPage({
+      ...base,
+      state: "error",
+      reason: "boom <b>",
+      result: null,
+    });
+    expect(page).toContain('id="analysis-error"');
+    expect(page).toContain('role="alert"');
+    expect(page).toContain("boom &lt;b&gt;");
+    const resultsDiv = page.slice(
+      page.indexOf('<div id="results">'),
+      page.indexOf("</div></section>"),
+    );
+    expect(resultsDiv).toContain('id="analysis-error"');
+    expect(resultsDiv).not.toContain("No findings");
+    expect(resultsDiv).not.toContain('id="empty-state"');
   });
 
   it("has the transcript input section with the required controls", () => {
