@@ -4,13 +4,14 @@ No third-party imports: this module must never import modal. It is
 imported both by tests and by infra/modal/glimmer_app.py.
 """
 
+import datetime
 import hashlib
 import os
 import re
 
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _MODEL_REV_RE = re.compile(r"^[0-9a-f]{40}$")
-_IMAGE_DIGEST_RE = re.compile(r"@sha256:[0-9a-fA-F]{64}(?![0-9a-fA-F])")
+_IMAGE_DIGEST_RE = re.compile(r"@sha256:[0-9a-fA-F]{64}$")
 
 
 def _check_dataset(dataset):
@@ -70,24 +71,106 @@ def dataset_sha256(path):
     return h.hexdigest()
 
 
-def review_status_ok(review, dataset_sha256):
-    """True only for a completed review attestation bound to the dataset hash."""
+def packaged_source_sha256(repo, dataset):
+    """Hex sha256 over every packaged file for the eval image.
+
+    Covers every file under the local dirs from package_dirs(repo, dataset)
+    plus services/bot/package.json, keyed by sorted remote-relative posix
+    paths with the same framing as dataset_sha256.
+    """
+    pairs = package_dirs(str(repo), dataset)
+    pkg_local = os.path.join(str(repo), "services/bot/package.json")
+    pkg_remote = "/app/services/bot/package.json"
+    seen_locals = {p[0] for p in pairs}
+    if pkg_local not in seen_locals:
+        pairs = list(pairs) + [[pkg_local, pkg_remote]]
+    entries = []
+    for local, remote in pairs:
+        if os.path.isdir(local):
+            for root, _dirs, files in os.walk(local):
+                for name in files:
+                    full = os.path.join(root, name)
+                    rel_local = os.path.relpath(full, local).replace(os.sep, "/")
+                    key = remote.replace(os.sep, "/").rstrip("/").lstrip("/") + "/" + rel_local
+                    with open(full, "rb") as fh:
+                        data = fh.read()
+                    entries.append((key, data))
+        elif os.path.isfile(local):
+            key = str(remote).replace(os.sep, "/").lstrip("/")
+            with open(local, "rb") as fh:
+                data = fh.read()
+            entries.append((key, data))
+        else:
+            raise FileNotFoundError(f"packaged source missing: {local!r}")
+    entries.sort(key=lambda item: item[0])
+    h = hashlib.sha256()
+    for key, data in entries:
+        h.update(key.encode("utf-8") + b"\0" + data + b"\0")
+    return h.hexdigest()
+
+
+def _reviewer_ok(reviewer):
+    return isinstance(reviewer, str) and reviewer.strip() != ""
+
+
+def _reviewed_at_ok(value):
+    if not isinstance(value, str) or value.strip() == "":
+        return False
+    s = value.strip()
+    try:
+        datetime.date.fromisoformat(s)
+        return True
+    except Exception:
+        pass
+    try:
+        iso = s[:-1] + "+00:00" if s.endswith("Z") else s
+        datetime.datetime.fromisoformat(iso)
+        return True
+    except Exception:
+        return False
+
+
+def _review_attestation_ok(review, dataset_sha):
+    """Shared attestation contract for review bindings."""
     if not isinstance(review, dict):
         return False
     if review.get("status") != "reviewed":
         return False
-    reviewer = review.get("reviewer")
-    if not isinstance(reviewer, str) or reviewer == "":
+    if not _reviewer_ok(review.get("reviewer")):
         return False
-    reviewed_at = review.get("reviewed_at")
-    if not isinstance(reviewed_at, str) or reviewed_at == "":
+    if not _reviewed_at_ok(review.get("reviewed_at")):
         return False
-    if review.get("dataset_sha256") != dataset_sha256:
+    if review.get("dataset_sha256") != dataset_sha:
         return False
     return True
 
 
-def check_launch(config, fixtures_root, invoked_dataset=None):
+def _image_ok(image):
+    if not isinstance(image, str):
+        return False
+    m = _IMAGE_DIGEST_RE.search(image)
+    if not m:
+        return False
+    digest = image.rsplit("@sha256:", 1)[1]
+    if digest.lower() == "0" * 64:
+        return False
+    return True
+
+
+def _model_revision_ok(rev):
+    return (
+        isinstance(rev, str)
+        and bool(_MODEL_REV_RE.match(rev))
+        and rev != "0" * 40
+    )
+
+
+def review_status_ok(review, dataset_sha256):
+    """True only for a completed review attestation bound to the dataset hash."""
+    return _review_attestation_ok(review, dataset_sha256)
+
+
+def check_launch(config, fixtures_root, invoked_dataset=None, repo_root=None):
     """Return blocker strings; empty means launch is allowed."""
     blockers = []
     if not isinstance(config, dict):
@@ -126,13 +209,21 @@ def check_launch(config, fixtures_root, invoked_dataset=None):
     ):
         blockers.append(f"source_sha invalid or placeholder: {source_sha!r}")
     image = config.get("image")
-    if not isinstance(image, str) or not _IMAGE_DIGEST_RE.search(image):
+    if not _image_ok(image):
         blockers.append(f"image tag mutable: must pin @sha256 digest, got {image!r}")
     model_revision = config.get("model_revision")
-    if not isinstance(model_revision, str) or not _MODEL_REV_RE.match(model_revision):
+    if not _model_revision_ok(model_revision):
         blockers.append(
             f"model_revision unpinned: must be 40 hex, got {model_revision!r}"
         )
+    if repo_root is not None and isinstance(dataset, str) and dataset != "":
+        try:
+            actual_src = packaged_source_sha256(str(repo_root), dataset)
+        except Exception as exc:
+            blockers.append(f"source identity mismatch: cannot hash packaged source ({exc})")
+        else:
+            if not isinstance(config.get("source_sha256"), str) or config.get("source_sha256") != actual_src:
+                blockers.append("source identity mismatch: frozen source_sha256 does not match packaged source")
     return blockers
 
 
