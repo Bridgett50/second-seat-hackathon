@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toLiveAnalysisResult } from "../src/session.js";
-import { EVIDENCE_BRIEF_JSON_SCHEMA } from "../../../packages/core/src/evidence/schema.js";
+import { EVIDENCE_BRIEF_JSON_SCHEMA } from "@second-seat/core";
 
 const SID = "sess-c3";
 const IDS = new Set(["seg-1", "seg-2"]);
