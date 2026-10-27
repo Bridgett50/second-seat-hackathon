@@ -13,7 +13,7 @@
  */
 import { EVIDENCE_BRIEF_JSON_SCHEMA } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "./costGuard.js";
-import { requireGatedText, type GatedText } from "../private/gate.js";
+import { requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const BRIEF_MODEL = "muse-spark-1.3";
 export const BRIEF_PROMPT_VERSION = "brief-v2";
@@ -113,7 +113,7 @@ export async function buildUserMessage(input: BriefSourceInput): Promise<string>
 }
 
 export async function buildRedactedUserMessage(input: BriefSourceInput): Promise<string> {
-  const { createPrivacyGate } = await import("../private/gate.js");
+  const { createPrivacyGate, GateApprovalError } = await import("../private/gate.js");
   const { logText, setRedactorLabel } = await import("../private/payloadLog.js");
   const { GLIMMER_MODEL, MOCK_LABEL } = await import("../private/redact.js");
   // Live for explicit live input or EVIDENCE_BRIEF_MODE=live: the gate then
@@ -123,6 +123,9 @@ export async function buildRedactedUserMessage(input: BriefSourceInput): Promise
   // live: explicit fixture input stays fixture.)
   const live = !input.fixtureMode || briefMode() === "live";
   const gate = createPrivacyGate({ mode: live ? "live" : "fixture" });
+  if (live) {
+    throw new GateApprovalError("live brief requests require owner review in the web session; auto-approval is disabled");
+  }
   setRedactorLabel(live ? `Glimmer: ${GLIMMER_MODEL}` : MOCK_LABEL);
   const prepared = await gate.prepare(input.transcriptText);
   logText(prepared.redactedText);
@@ -247,8 +250,8 @@ export class MuseClient {
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
-    const transcriptText = requireGatedText(input.transcriptText).text;
-    const framesSidecarText = requireGatedText(input.framesSidecarText).text;
+    const transcriptText = requireLiveGatedText(input.transcriptText).text;
+    const framesSidecarText = requireLiveGatedText(input.framesSidecarText).text;
     await checkCapsPreCall();
     const { logText } = await import("../private/payloadLog.js");
     logText(`${transcriptText}\n${framesSidecarText}`);

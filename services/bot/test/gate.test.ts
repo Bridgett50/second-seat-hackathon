@@ -368,10 +368,27 @@ describe("privacy gate live flow", () => {
 
 describe("gated entry points reject plain strings", () => {
   async function mintGated(text: string): Promise<GatedText> {
-    const gate = createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
-    const prepared = await gate.prepare(text);
-    const token = gate.approve(prepared.runId, prepared.redactedText);
-    return gate.send(prepared.runId, token, async (gated) => gated);
+    const prev = process.env["GLIMMER_BASE_URL"];
+    process.env["GLIMMER_BASE_URL"] = "http://127.0.0.1:9";
+    try {
+      const gate = createPrivacyGate({
+        mode: "live",
+        redactor: {
+          label: "stub",
+          redactText: async (t: string) => ({ maskedText: t, spans: [] }),
+          redactImage: async () => {
+            throw new Error("x");
+          },
+          health: async () => ({ ok: true, label: "stub" }),
+        },
+      });
+      const prepared = await gate.prepare(text);
+      const token = gate.approve(prepared.runId, prepared.redactedText);
+      return gate.send(prepared.runId, token, async (gated) => gated);
+    } finally {
+      if (prev === undefined) delete process.env["GLIMMER_BASE_URL"];
+      else process.env["GLIMMER_BASE_URL"] = prev;
+    }
   }
 
   it("brief client takes GatedText, not string", async () => {

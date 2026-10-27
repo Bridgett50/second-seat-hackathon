@@ -14,7 +14,7 @@
  */
 import type { PressureLabel, PressureTactic } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
-import { requireGatedText, type GatedText } from "../private/gate.js";
+import { requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const PRESSURE_MODEL = "muse-spark-1.3";
 export const PRESSURE_PROMPT_VERSION = "pressure-v1";
@@ -271,7 +271,7 @@ export class SparkPressureClassifier {
     }
     const redacted = lines.map((line) => ({
       segmentId: line.segmentId,
-      text: requireGatedText(line.text).text,
+      text: requireLiveGatedText(line.text).text,
     }));
     await checkCapsPreCall();
     const { logText } = await import("../private/payloadLog.js");

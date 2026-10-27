@@ -30,25 +30,71 @@ export class ResidualPIIError extends Error {
   override name = "ResidualPIIError";
 }
 
+const MINT = Symbol("gate-mint");
+
+interface GateBinding {
+  mode: "live" | "fixture";
+  runId: string;
+  revision: number;
+  textHash: string;
+  expiresAt: number;
+  isCurrent: () => boolean;
+  now: () => number;
+}
+
+const bindings = new WeakMap<GatedText, GateBinding>();
+
 /**
  * Branded text that has completed the full gate flow (redact, review,
  * approve, residual checks). Only constructible inside this module via
- * `GatedText.issue`, which `send` alone calls. Spark-calling functions
- * take this instead of `string`; pass a plain string and they throw.
+ * the module-private `MINT` symbol, which `send` alone holds.
+ * Spark-calling functions take this instead of `string`; pass a plain
+ * string and they throw.
  */
 export class GatedText {
-  private constructor(readonly text: string) {}
+  private _text: string;
 
-  /** @internal Only the privacy gate may mint gated text. */
-  static issue(text: string): GatedText {
-    return new GatedText(text);
+  get text(): string {
+    return this._text;
+  }
+
+  set text(_value: string) {
+    // Tamper-evident: keep the approved text but permanently invalidate the
+    // binding, so any runtime write attempt rejects this value afterwards.
+    // Object.freeze below does not disable this prototype setter.
+    bindings.delete(this);
+  }
+
+  constructor(mint: unknown, text: string) {
+    if (mint !== MINT) {
+      throw new GateApprovalError("refusing to send text that did not come from gate.send: approval required");
+    }
+    this._text = text;
+    Object.freeze(this);
   }
 }
 
-/** Throw unless the value is gate-minted. Plain strings are rejected. */
-export function requireGatedText(value: unknown): GatedText {
-  if (value instanceof GatedText) return value;
+/** Throw unless the value is gate-minted with a current, unexpired binding. Plain strings are rejected. */
+export function requireGatedText(value: unknown, required: "live" | "any" = "any"): GatedText {
+  if (value instanceof GatedText) {
+    const binding = bindings.get(value);
+    if (
+      binding !== undefined &&
+      binding.isCurrent() &&
+      binding.now() <= binding.expiresAt &&
+      sha256Hex(value.text) === binding.textHash
+    ) {
+      if (required === "live" && binding.mode !== "live") {
+        throw new GateApprovalError("fixture-mode approval cannot authorize a live provider request");
+      }
+      return value;
+    }
+  }
   throw new GateApprovalError("refusing to send text that did not come from gate.send: approval required");
+}
+
+export function requireLiveGatedText(v: unknown): GatedText {
+  return requireGatedText(v, "live");
 }
 
 export interface PrivacyGateOptions {
@@ -68,10 +114,11 @@ export interface PreparedRun {
 }
 
 interface StoredRun {
+  revision: number;
   currentText: string;
   spans: TextSpan[];
   rawNames: string[];
-  approval: { token: string; textHash: string; at: number } | null;
+  approval: { token: string; textHash: string; at: number; revision: number } | null;
 }
 
 function sha256Hex(text: string): string {
@@ -181,6 +228,7 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
         ),
       ];
       runs.set(runId, {
+        revision: 0,
         currentText: redacted.maskedText,
         spans: redacted.spans,
         rawNames,
@@ -202,6 +250,7 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
     correct(runId: string, editedText: string): string {
       const run = lookup(runId);
       run.currentText = editedText;
+      run.revision += 1;
       run.approval = null;
       return run.currentText;
     },
@@ -210,7 +259,7 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
       const run = lookup(runId);
       const textHash = sha256Hex(text);
       const token = sha256Hex(`${runId}:${textHash}`);
-      run.approval = { token, textHash, at: now() };
+      run.approval = { token, textHash, at: now(), revision: run.revision };
       return token;
     },
 
@@ -219,6 +268,9 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
       const approval = run.approval;
       if (approval === null || approval.token !== approvalToken) {
         throw new GateApprovalError("missing or mismatched approval: approval required");
+      }
+      if (approval.revision !== run.revision) {
+        throw new GateApprovalError("approval is stale: the text changed after approval");
       }
       if (now() - approval.at > APPROVAL_TTL_MS) {
         throw new GateApprovalError("approval expired: re-approve the current text");
@@ -230,7 +282,28 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
       if (hit !== null) {
         throw new ResidualPIIError(`residual PII detected (${hit}): refusing to send`);
       }
-      return sendFn(GatedText.issue(run.currentText));
+      const gated = new GatedText(MINT, run.currentText);
+      const revision = run.revision;
+      const textHash = sha256Hex(run.currentText);
+      const expiresAt = approval.at + APPROVAL_TTL_MS;
+      bindings.set(gated, {
+        mode,
+        runId,
+        revision,
+        textHash,
+        expiresAt,
+        now,
+        isCurrent: () => {
+          const current = runs.get(runId);
+          return (
+            current !== undefined &&
+            current.revision === revision &&
+            sha256Hex(current.currentText) === textHash &&
+            current.approval === approval
+          );
+        },
+      });
+      return sendFn(gated);
     },
   };
 }
