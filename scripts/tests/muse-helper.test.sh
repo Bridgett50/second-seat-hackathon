@@ -4,7 +4,7 @@
 # sentinel/heldout-sealed/dummy.txt (never real sealed data).
 REPO="$(git rev-parse --show-toplevel)"
 GUARD="$REPO/.muse/guard.sh"
-VERIFY="$REPO/.muse/verify_pr.sh"
+VERIFY="${MUSE_VERIFY_UNDER_TEST:-$REPO/.muse/verify_pr.sh}"
 SENTINEL="sentinel/heldout-sealed/dummy.txt"
 FAIL=0
 
@@ -50,6 +50,7 @@ mkbase() { D="$(mktemp -d)"; gitinit "$D"; printf '%s' "$D"; }
 
 # ---------- H3: real fail-then-pass -> passed true ----------
 R="$(mkbase)"; mkdir -p "$R/src" "$R/.muse"
+printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 printf 'echo 1\n' > "$R/src/a.sh"
 (cd "$R" && git add -A && git commit -qm base)
 BASE="$(git -C "$R" rev-parse HEAD)"
@@ -63,6 +64,7 @@ rm -rf "$R"
 
 # ---------- H4: test passes on base -> passes_on_base ----------
 R="$(mkbase)"; mkdir -p "$R/src" "$R/.muse"
+printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 printf 'echo 1\n' > "$R/src/a.sh"
 (cd "$R" && git add -A && git commit -qm base)
 BASE="$(git -C "$R" rev-parse HEAD)"
@@ -76,6 +78,7 @@ rm -rf "$R"
 
 # ---------- H5: change outside scope -> out_of_scope ----------
 R="$(mkbase)"; mkdir -p "$R/src" "$R/.muse"
+printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 printf 'echo 1\n' > "$R/src/a.sh"
 (cd "$R" && git add -A && git commit -qm base)
 BASE="$(git -C "$R" rev-parse HEAD)"
@@ -90,6 +93,7 @@ rm -rf "$R"
 
 # ---------- H6: deleted test file -> test_deleted ----------
 R="$(mkbase)"; mkdir -p "$R/src" "$R/.muse"
+printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 printf 'echo 1\n' > "$R/src/a.sh"
 printf 'dummy test\n' > "$R/src/a.test.sh"
 (cd "$R" && git add -A && git commit -qm base)
@@ -104,6 +108,7 @@ rm -rf "$R"
 
 # ---------- H7: changed file under sentinel dir -> sealed_path ----------
 R="$(mkbase)"; mkdir -p "$R/src" "$R/.muse"
+printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 printf 'echo 1\n' > "$R/src/a.sh"
 (cd "$R" && git add -A && git commit -qm base)
 BASE="$(git -C "$R" rev-parse HEAD)"
@@ -119,6 +124,7 @@ rm -rf "$R"
 
 # ---------- H8: base failure 'Cannot find module' -> weak_before ----------
 R="$(mkbase)"; mkdir -p "$R/.muse"
+printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 (cd "$R" && git add -A && git commit -qm base --allow-empty 2>/dev/null || true)
 BASE="$(git -C "$R" rev-parse HEAD)"
 printf '#!/bin/sh\nif [ ! -f marker.txt ]; then echo "Error: Cannot find module '"'"'./marker'"'"'" >&2; exit 1; fi\nexit 0\n' > "$R/check.sh"
@@ -133,6 +139,7 @@ rm -rf "$R"
 # ---------- H9: stop blocks twice, then allows ----------
 R="$(mkbase)"
 cp -r "$REPO/scripts" "$R/scripts"; mkdir -p "$R/.muse"; cp "$REPO/.muse/verify_pr.sh" "$R/.muse/verify_pr.sh"
+printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 mkdir -p "$R/.muse"
 printf 'scripts/*\nscripts/tests/*\n.muse/*\n' > "$R/.muse/scope.txt"
 printf '{"base":"HEAD","tests":[{"id":"T9","cmd":"false","files":[]}]}' > "$R/.muse/criteria.json"
@@ -252,6 +259,313 @@ if [ -z "$H11A_WHY" ] && [ -z "$H11B_WHY" ]; then ok H11; else bad H11 "inject:$
 rm -f "$H11ERR" "$H11ERR2"
 rm -rf "$H11D" "$H11BIN" "$H11OUT"
 unset FAKE_OUT
+
+# G1 (Codex prompt A, G1a): checkout-safety tests on dummy repos with a dummy .sealed-paths policy only
+# ---------- G1-0 helpers (dummy sealed-policy repos only) ----------
+g1_rm() {
+  _p="$1"
+  case "$_p" in
+    "$G1ROOT"*) rm -rf "$_p";;
+    *) printf 'refuse rm outside g1root: %s\n' "$_p" >&2; FAIL=1;;
+  esac
+}
+g1_mkshim() {
+  _mode="$1"
+  if [ "$_mode" = "fail" ]; then
+  cat > "$G1BIN/git" <<'SHIMEOF'
+#!/usr/bin/env bash
+_lg="${G1LOG:?}"; _tp="${G1TMPDIR:?}"; _rg="${REAL_GIT:?}"
+printf 'git %s\n' "$*" >> "$_lg"
+case " $* " in
+  *"sparse-checkout"*)
+    for _d in "$_tp"/muse-base-*; do
+      if [ -e "$_d/forbidden-fixtures/sentinel.txt" ]; then
+        printf 'SENTINEL-SEEN git %s\n' "$*" >> "$_lg"
+      fi
+    done
+    exit 3;;
+esac
+"$_rg" "$@"
+_st=$?
+printf 'git %s\n' "$*" >> "$_lg"
+for _d in "$_tp"/muse-base-*; do
+  if [ -e "$_d/forbidden-fixtures/sentinel.txt" ]; then
+    printf 'SENTINEL-SEEN git %s\n' "$*" >> "$_lg"
+  fi
+done
+exit $_st
+SHIMEOF
+  else
+  cat > "$G1BIN/git" <<'SHIMEOF'
+#!/usr/bin/env bash
+_lg="${G1LOG:?}"; _tp="${G1TMPDIR:?}"; _rg="${REAL_GIT:?}"
+"$_rg" "$@"
+_st=$?
+printf 'git %s\n' "$*" >> "$_lg"
+for _d in "$_tp"/muse-base-*; do
+  if [ -e "$_d/forbidden-fixtures/sentinel.txt" ]; then
+    printf 'SENTINEL-SEEN git %s\n' "$*" >> "$_lg"
+  fi
+done
+exit $_st
+SHIMEOF
+  fi
+  chmod +x "$G1BIN/git"
+}
+g1_mkrepo() {
+  mkdir -p "$G1R/src" "$G1R/.muse" "$G1R/forbidden-fixtures/"
+  printf 'sentinel\n' > "$G1R/forbidden-fixtures/sentinel.txt"
+  printf 'echo 1\n' > "$G1R/src/a.sh"
+  if [ "$1" = "escape" ]; then
+    printf '../escape\n' > "$G1R/.sealed-paths"
+  elif [ "$1" = "missing" ]; then
+    rm -f "$G1R/.sealed-paths"
+  else
+    printf 'forbidden-fixtures/\n' > "$G1R/.sealed-paths"
+  fi
+}
+g1_mkcrit() {
+  G1_CRIT="$1" G1_CRITBASE="$2" G1_CRITPREP="$3" python3 - <<'PYEOF'
+import json, os
+m = os.environ["G1MARK"]
+d = {"base": os.environ["G1_CRITBASE"],
+     "tests": [{"id": "G1T",
+                "cmd": 'touch "%s/$(basename "$PWD")-ran"; cp src/a.sh "%s/$(basename "$PWD")-a.sh"; test "$(sh src/a.sh)" = 2' % (m, m),
+                "files": []}]}
+if os.environ.get("G1_CRITPREP"):
+    d["prepare"] = os.environ["G1_CRITPREP"]
+json.dump(d, open(os.environ["G1_CRIT"], "w"))
+PYEOF
+}
+g1_run_verify() {
+  G1_OLD_PATH="$PATH"
+  if [ -n "${TMPDIR+x}" ]; then G1_TMP_WAS=1; G1_TMP_SAVED="$TMPDIR"; else G1_TMP_WAS=0; fi
+  export PATH="$G1BIN:$PATH"
+  export TMPDIR="$G1TMP"
+  export G1TMPDIR="$G1TMP"
+  export G1MARK G1LOG REAL_GIT
+  if G1V="$(cd "$G1R" && bash "$VERIFY")"; then G1ST=0; else G1ST=$?; fi
+  export PATH="$G1_OLD_PATH"
+  if [ "$G1_TMP_WAS" = "1" ]; then export TMPDIR="$G1_TMP_SAVED"; else unset TMPDIR; fi
+}
+g1_no_leftover() {
+  for _d in "$1"/muse-base-*; do
+    if [ -e "$_d" ]; then printf '%s' "$_d"; return 0; fi
+  done
+  return 1
+}
+g1_wt_count() {
+  git -C "$G1R" worktree list 2>/dev/null | wc -l | tr -d ' '
+}
+
+# ---------- G1-1: checkout ordering — excluded file never materializes ----------
+G1ROOT="$(mktemp -d)"
+G1R="$G1ROOT/repo"; G1TMP="$G1ROOT/tmp"; G1MARK="$G1ROOT/mark"; G1BIN="$G1ROOT/bin"; G1LOG="$G1ROOT/git.log"
+mkdir -p "$G1TMP" "$G1MARK" "$G1BIN"; : > "$G1LOG"
+gitinit "$G1R"
+g1_mkrepo valid
+(cd "$G1R" && git add -A && git commit -qm base)
+G1BASE="$(git -C "$G1R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G1R/src/a.sh"
+(cd "$G1R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G1R/.muse/scope.txt"
+export G1MARK
+g1_mkcrit "$G1R/.muse/criteria.json" "$G1BASE" ""
+export REAL_GIT="$(command -v git)"
+g1_mkshim log
+g1_run_verify
+G1WHY=""
+[ "$G1ST" -eq 0 ] || G1WHY="${G1WHY}exit=$G1ST;"
+printf '%s' "$G1V" | grep -q '"passed": true' || G1WHY="${G1WHY}not-passed;"
+grep -q 'SENTINEL-SEEN' "$G1LOG" && G1WHY="${G1WHY}sentinel-seen;"
+grep -q -- '--no-checkout' "$G1LOG" || G1WHY="${G1WHY}no-no-checkout;"
+grep -q 'worktree add' "$G1LOG" || G1WHY="${G1WHY}no-worktree-add;"
+G1BASEHIT="$(grep -l 'echo 1' "$G1MARK"/*-a.sh 2>/dev/null || true)"
+[ -n "$G1BASEHIT" ] || G1WHY="${G1WHY}no-base-content;"
+if [ -z "$G1WHY" ]; then ok G1-1; else bad G1-1 "$G1WHY v=$G1V"; fi
+g1_rm "$G1ROOT"
+
+# ---------- G1-2: sparse-checkout failure stops everything, cleans up ----------
+G1ROOT="$(mktemp -d)"
+G1R="$G1ROOT/repo"; G1TMP="$G1ROOT/tmp"; G1MARK="$G1ROOT/mark"; G1BIN="$G1ROOT/bin"; G1LOG="$G1ROOT/git.log"
+mkdir -p "$G1TMP" "$G1MARK" "$G1BIN"; : > "$G1LOG"
+gitinit "$G1R"
+g1_mkrepo valid
+(cd "$G1R" && git add -A && git commit -qm base)
+G1BASE="$(git -C "$G1R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G1R/src/a.sh"
+(cd "$G1R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G1R/.muse/scope.txt"
+export G1MARK
+g1_mkcrit "$G1R/.muse/criteria.json" "$G1BASE" "touch \"$G1MARK/prepared\""
+export REAL_GIT="$(command -v git)"
+g1_mkshim fail
+g1_run_verify
+G1WHY=""
+[ "$G1ST" -ne 0 ] || G1WHY="${G1WHY}exit-zero;"
+printf '%s' "$G1V" | grep -q 'policy_setup_failed' || G1WHY="${G1WHY}no-policy_setup_failed;"
+[ ! -e "$G1MARK/prepared" ] || G1WHY="${G1WHY}prepared-ran;"
+G1BASEHIT="$(grep -l 'echo 1' "$G1MARK"/*-a.sh 2>/dev/null || true)"
+[ -z "$G1BASEHIT" ] || G1WHY="${G1WHY}base-ran;"
+G1SP_LINE="$(grep -n 'sparse-checkout' "$G1LOG" | head -n 1 | cut -d: -f1)"
+if [ -z "$G1SP_LINE" ]; then
+  G1WHY="${G1WHY}no-sparse-call;"
+elif tail -n +"$((G1SP_LINE + 1))" "$G1LOG" | grep -Eq 'read-tree|checkout'; then
+  G1WHY="${G1WHY}late-materialize;"
+fi
+grep -q 'SENTINEL-SEEN' "$G1LOG" && G1WHY="${G1WHY}sentinel-seen;"
+if g1_no_leftover "$G1TMP"; then G1WHY="${G1WHY}leftover;"; fi
+G1WT_N="$(g1_wt_count)"
+[ "$G1WT_N" = "1" ] || G1WHY="${G1WHY}worktrees=$G1WT_N;"
+if [ -z "$G1WHY" ]; then ok G1-2; else bad G1-2 "$G1WHY v=$G1V"; fi
+g1_rm "$G1ROOT"
+
+# ---------- G1-3: missing / malformed policy refused before any work ----------
+G1ROOT="$(mktemp -d)"
+export REAL_GIT="$(command -v git)"
+G1WHY3=""
+# (a) missing policy
+G1R="$G1ROOT/a"; G1TMP="$G1ROOT/tmp-a"; G1MARK="$G1ROOT/mark-a"; G1BIN="$G1ROOT/bin-a"; G1LOG="$G1ROOT/log-a.log"
+mkdir -p "$G1TMP" "$G1MARK" "$G1BIN"; : > "$G1LOG"
+gitinit "$G1R"
+g1_mkrepo missing
+(cd "$G1R" && git add -A && git commit -qm base)
+G1BASE="$(git -C "$G1R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G1R/src/a.sh"
+(cd "$G1R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G1R/.muse/scope.txt"
+export G1MARK
+g1_mkcrit "$G1R/.muse/criteria.json" "$G1BASE" ""
+g1_mkshim log
+g1_run_verify
+[ "$G1ST" -ne 0 ] || G1WHY3="${G1WHY3}a-exit-zero;"
+printf '%s' "$G1V" | grep -q 'policy_missing' || G1WHY3="${G1WHY3}a-no-policy_missing;"
+[ -z "$(ls -A "$G1MARK" 2>/dev/null)" ] || G1WHY3="${G1WHY3}a-test-ran;"
+grep -q 'worktree add' "$G1LOG" && G1WHY3="${G1WHY3}a-worktree;"
+grep -q 'SENTINEL-SEEN' "$G1LOG" && G1WHY3="${G1WHY3}a-sentinel;"
+# (b) malformed policy
+G1R="$G1ROOT/b"; G1TMP="$G1ROOT/tmp-b"; G1MARK="$G1ROOT/mark-b"; G1BIN="$G1ROOT/bin-b"; G1LOG="$G1ROOT/log-b.log"
+mkdir -p "$G1TMP" "$G1MARK" "$G1BIN"; : > "$G1LOG"
+gitinit "$G1R"
+g1_mkrepo escape
+(cd "$G1R" && git add -A && git commit -qm base)
+G1BASE="$(git -C "$G1R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G1R/src/a.sh"
+(cd "$G1R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G1R/.muse/scope.txt"
+export G1MARK
+g1_mkcrit "$G1R/.muse/criteria.json" "$G1BASE" ""
+g1_mkshim log
+g1_run_verify
+[ "$G1ST" -ne 0 ] || G1WHY3="${G1WHY3}b-exit-zero;"
+printf '%s' "$G1V" | grep -q 'policy_invalid' || G1WHY3="${G1WHY3}b-no-policy_invalid;"
+[ -z "$(ls -A "$G1MARK" 2>/dev/null)" ] || G1WHY3="${G1WHY3}b-test-ran;"
+grep -q 'worktree add' "$G1LOG" && G1WHY3="${G1WHY3}b-worktree;"
+grep -q 'SENTINEL-SEEN' "$G1LOG" && G1WHY3="${G1WHY3}b-sentinel;"
+# (c) positive control: valid policy passes like G1-1
+G1R="$G1ROOT/c"; G1TMP="$G1ROOT/tmp-c"; G1MARK="$G1ROOT/mark-c"; G1BIN="$G1ROOT/bin-c"; G1LOG="$G1ROOT/log-c.log"
+mkdir -p "$G1TMP" "$G1MARK" "$G1BIN"; : > "$G1LOG"
+gitinit "$G1R"
+g1_mkrepo valid
+(cd "$G1R" && git add -A && git commit -qm base)
+G1BASE="$(git -C "$G1R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G1R/src/a.sh"
+(cd "$G1R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G1R/.muse/scope.txt"
+export G1MARK
+g1_mkcrit "$G1R/.muse/criteria.json" "$G1BASE" ""
+g1_mkshim log
+g1_run_verify
+[ "$G1ST" -eq 0 ] || G1WHY3="${G1WHY3}c-exit=$G1ST;"
+printf '%s' "$G1V" | grep -q '"passed": true' || G1WHY3="${G1WHY3}c-not-passed;"
+grep -q 'SENTINEL-SEEN' "$G1LOG" && G1WHY3="${G1WHY3}c-sentinel;"
+grep -q -- '--no-checkout' "$G1LOG" || G1WHY3="${G1WHY3}c-no-no-checkout;"
+G1BASEHIT="$(grep -l 'echo 1' "$G1MARK"/*-a.sh 2>/dev/null || true)"
+[ -n "$G1BASEHIT" ] || G1WHY3="${G1WHY3}c-no-base-content;"
+if [ -z "$G1WHY3" ]; then ok G1-3; else bad G1-3 "$G1WHY3"; fi
+g1_rm "$G1ROOT"
+
+# ---------- G1-4: complete helper path + cleanup on all paths ----------
+G1ROOT="$(mktemp -d)"
+export REAL_GIT="$(command -v git)"
+G1WHY4=""
+G1VOUT_SAVED="__unset__"; [ -n "${VERIFY_OUT+x}" ] && G1VOUT_SAVED="$VERIFY_OUT"
+# run A: pass path with VERIFY_OUT
+G1R="$G1ROOT/rA"; G1TMP="$G1ROOT/tmp-A"; G1MARK="$G1ROOT/mark-A"; G1BIN="$G1ROOT/bin-A"; G1LOG="$G1ROOT/log-A.log"; G1VOUT="$G1ROOT/vout-A"
+mkdir -p "$G1TMP" "$G1MARK" "$G1BIN" "$G1VOUT"; : > "$G1LOG"
+gitinit "$G1R"
+g1_mkrepo valid
+(cd "$G1R" && git add -A && git commit -qm base)
+G1BASE="$(git -C "$G1R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G1R/src/a.sh"
+(cd "$G1R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G1R/.muse/scope.txt"
+export G1MARK
+g1_mkcrit "$G1R/.muse/criteria.json" "$G1BASE" "touch \"$G1MARK/prepared\""
+g1_mkshim log
+export VERIFY_OUT="$G1VOUT"
+g1_run_verify
+if [ "$G1VOUT_SAVED" = "__unset__" ]; then unset VERIFY_OUT; else export VERIFY_OUT="$G1VOUT_SAVED"; fi
+[ "$G1ST" -eq 0 ] || G1WHY4="${G1WHY4}A-exit=$G1ST;"
+grep -q '"passed": true' "$G1VOUT/verify.json" 2>/dev/null || G1WHY4="${G1WHY4}A-not-passed;"
+[ -e "$G1MARK/prepared" ] || G1WHY4="${G1WHY4}A-no-prepared;"
+G1BASEHIT="$(grep -l 'echo 1' "$G1MARK"/*-a.sh 2>/dev/null || true)"
+[ -n "$G1BASEHIT" ] || G1WHY4="${G1WHY4}A-no-base;"
+grep -q 'SENTINEL-SEEN' "$G1LOG" && G1WHY4="${G1WHY4}A-sentinel;"
+if g1_no_leftover "$G1TMP"; then G1WHY4="${G1WHY4}A-leftover;"; fi
+G1WT_N="$(g1_wt_count)"
+[ "$G1WT_N" = "1" ] || G1WHY4="${G1WHY4}A-worktrees=$G1WT_N;"
+# run B: fail-then-pass still exits 0 overall
+G1R="$G1ROOT/rB"; G1TMP="$G1ROOT/tmp-B"; G1MARK="$G1ROOT/mark-B"; G1BIN="$G1ROOT/bin-B"; G1LOG="$G1ROOT/log-B.log"; G1VOUT="$G1ROOT/vout-B"
+mkdir -p "$G1TMP" "$G1MARK" "$G1BIN" "$G1VOUT"; : > "$G1LOG"
+gitinit "$G1R"
+g1_mkrepo valid
+(cd "$G1R" && git add -A && git commit -qm base)
+G1BASE="$(git -C "$G1R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G1R/src/a.sh"
+(cd "$G1R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G1R/.muse/scope.txt"
+export G1MARK
+g1_mkcrit "$G1R/.muse/criteria.json" "$G1BASE" "touch \"$G1MARK/prepared\""
+g1_mkshim log
+export VERIFY_OUT="$G1VOUT"
+g1_run_verify
+if [ "$G1VOUT_SAVED" = "__unset__" ]; then unset VERIFY_OUT; else export VERIFY_OUT="$G1VOUT_SAVED"; fi
+[ "$G1ST" -eq 0 ] || G1WHY4="${G1WHY4}B-exit=$G1ST;"
+grep -q '"passed": true' "$G1VOUT/verify.json" 2>/dev/null || G1WHY4="${G1WHY4}B-not-passed;"
+G1BASEHIT="$(grep -l 'echo 1' "$G1MARK"/*-a.sh 2>/dev/null || true)"
+[ -n "$G1BASEHIT" ] || G1WHY4="${G1WHY4}B-no-base-fail-evidence;"
+grep -q 'SENTINEL-SEEN' "$G1LOG" && G1WHY4="${G1WHY4}B-sentinel;"
+if g1_no_leftover "$G1TMP"; then G1WHY4="${G1WHY4}B-leftover;"; fi
+G1WT_N="$(g1_wt_count)"
+[ "$G1WT_N" = "1" ] || G1WHY4="${G1WHY4}B-worktrees=$G1WT_N;"
+# run C: sparse failure still cleans up
+G1R="$G1ROOT/rC"; G1TMP="$G1ROOT/tmp-C"; G1MARK="$G1ROOT/mark-C"; G1BIN="$G1ROOT/bin-C"; G1LOG="$G1ROOT/log-C.log"; G1VOUT="$G1ROOT/vout-C"
+mkdir -p "$G1TMP" "$G1MARK" "$G1BIN" "$G1VOUT"; : > "$G1LOG"
+gitinit "$G1R"
+g1_mkrepo valid
+(cd "$G1R" && git add -A && git commit -qm base)
+G1BASE="$(git -C "$G1R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G1R/src/a.sh"
+(cd "$G1R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G1R/.muse/scope.txt"
+export G1MARK
+g1_mkcrit "$G1R/.muse/criteria.json" "$G1BASE" "touch \"$G1MARK/prepared\""
+g1_mkshim fail
+export VERIFY_OUT="$G1VOUT"
+g1_run_verify
+if [ "$G1VOUT_SAVED" = "__unset__" ]; then unset VERIFY_OUT; else export VERIFY_OUT="$G1VOUT_SAVED"; fi
+[ "$G1ST" -ne 0 ] || G1WHY4="${G1WHY4}C-exit-zero;"
+printf '%s' "$G1V" | grep -q 'policy_setup_failed' || G1WHY4="${G1WHY4}C-no-policy_setup_failed;"
+[ ! -e "$G1MARK/prepared" ] || G1WHY4="${G1WHY4}C-prepared-ran;"
+G1BASEHIT="$(grep -l 'echo 1' "$G1MARK"/*-a.sh 2>/dev/null || true)"
+[ -z "$G1BASEHIT" ] || G1WHY4="${G1WHY4}C-base-ran;"
+grep -q 'SENTINEL-SEEN' "$G1LOG" && G1WHY4="${G1WHY4}C-sentinel;"
+if g1_no_leftover "$G1TMP"; then G1WHY4="${G1WHY4}C-leftover;"; fi
+G1WT_N="$(g1_wt_count)"
+[ "$G1WT_N" = "1" ] || G1WHY4="${G1WHY4}C-worktrees=$G1WT_N;"
+if [ -z "$G1WHY4" ]; then ok G1-4; else bad G1-4 "$G1WHY4"; fi
+g1_rm "$G1ROOT"
 
 if [ "$FAIL" -ne 0 ]; then printf '%s\n' "SELF-TEST FAILED"; exit 1; fi
 printf '%s\n' "SELF-TEST OK"
