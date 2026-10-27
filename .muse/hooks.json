@@ -1,1 +1,1 @@
-{"hooks":{"PreToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"bash scripts/muse_guard.sh pre"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash scripts/muse_guard.sh stop"}]}]}}
+{"hooks":{"PreToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"bash .muse/guard.sh pre"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash .muse/guard.sh stop"}]}]}}

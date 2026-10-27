@@ -31,7 +31,7 @@ add_problem() {
     "$1" "$2" >> "$PROBLEMS"
 }
 
-# --- sealed regex: same sources as muse_guard.sh (small duplicated block) ---
+# --- sealed regex: same sources as .muse/guard.sh (small duplicated block) ---
 sealed_regex() {
   python3 - <<'EOF'
 import os, re

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# muse-helper.test.sh — self-test for muse_guard.sh / verify_pr.sh.
+# muse-helper.test.sh — self-test for .muse/guard.sh / .muse/verify_pr.sh.
 # No muse/model calls. Runs in mktemp dirs only. Dummy sentinel path:
 # sentinel/heldout-sealed/dummy.txt (never real sealed data).
 REPO="$(git rev-parse --show-toplevel)"
-GUARD="$REPO/scripts/muse_guard.sh"
-VERIFY="$REPO/scripts/verify_pr.sh"
+GUARD="$REPO/.muse/guard.sh"
+VERIFY="$REPO/.muse/verify_pr.sh"
 SENTINEL="sentinel/heldout-sealed/dummy.txt"
 FAIL=0
 
@@ -132,7 +132,7 @@ rm -rf "$R"
 
 # ---------- H9: stop blocks twice, then allows ----------
 R="$(mkbase)"
-cp -r "$REPO/scripts" "$R/scripts"
+cp -r "$REPO/scripts" "$R/scripts"; mkdir -p "$R/.muse"; cp "$REPO/.muse/verify_pr.sh" "$R/.muse/verify_pr.sh"
 mkdir -p "$R/.muse"
 printf 'scripts/*\nscripts/tests/*\n.muse/*\n' > "$R/.muse/scope.txt"
 printf '{"base":"HEAD","tests":[{"id":"T9","cmd":"false","files":[]}]}' > "$R/.muse/criteria.json"
@@ -147,6 +147,111 @@ if printf '%s' "$s1" | grep -q '"block"' && \
    [ -z "$s3" ]; then ok H9; else bad H9 "s1=$s1 s2=$s2 s3=$s3"; fi
 unset TMPDIR
 rm -rf "$R"
+
+# ---------- H10: root pointer layout ----------
+H10_BAD=""
+[ -f "$REPO/.agents/AGENTS.md" ] || H10_BAD="${H10_BAD} missing-agents-rules;"
+if ! grep -q "Failing test first" "$REPO/.agents/AGENTS.md" 2>/dev/null; then H10_BAD="${H10_BAD} rules-text-missing;"; fi
+if ! grep -q ".muse/guard.sh" "$REPO/.muse/hooks.json" 2>/dev/null; then H10_BAD="${H10_BAD} hooks-no-guard;"; fi
+if grep -q "scripts/" "$REPO/.muse/hooks.json" 2>/dev/null; then H10_BAD="${H10_BAD} hooks-refs-scripts;"; fi
+if [ -e "$REPO/scripts/muse_guard.sh" ]; then H10_BAD="${H10_BAD} stray-muse_guard;"; fi
+if [ -e "$REPO/scripts/verify_pr.sh" ]; then H10_BAD="${H10_BAD} stray-verify_pr;"; fi
+if [ ! -f "$REPO/AGENTS.md" ]; then H10_BAD="${H10_BAD} no-root-pointer;"; fi
+if ! grep -q ".agents/AGENTS.md" "$REPO/AGENTS.md" 2>/dev/null; then H10_BAD="${H10_BAD} pointer-no-ref;"; fi
+if grep -q "Failing test first" "$REPO/AGENTS.md" 2>/dev/null; then H10_BAD="${H10_BAD} pointer-copies-rules;"; fi
+if [ -z "$H10_BAD" ]; then ok H10; else bad H10 "$H10_BAD"; fi
+
+# ---------- H12: root pointer resolves ----------
+H12_BAD=""
+H12_TOKS="$(grep -o -E '[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+(:[0-9]+)?|[A-Za-z0-9_.-]*\.(md|json|sh)(:[0-9]+)?' "$REPO/AGENTS.md" 2>/dev/null | sed -E 's/:[0-9]+$//; s/[`.,;:!?)]+$//; s/^[(`]+//' | sort -u)"
+H12_UNRESOLVED=""
+for H12_T in $H12_TOKS; do
+  [ -z "$H12_T" ] && continue
+  if [ ! -e "$REPO/$H12_T" ]; then H12_UNRESOLVED="${H12_UNRESOLVED} $H12_T"; fi
+done
+if [ -n "$H12_UNRESOLVED" ]; then H12_BAD="${H12_BAD} unresolved:$H12_UNRESOLVED;"; fi
+H12_LINES="$(grep -c '[^[:space:]]' "$REPO/AGENTS.md" 2>/dev/null || true)"
+if [ "$H12_LINES" -gt 3 ]; then H12_BAD="${H12_BAD} too-many-lines=$H12_LINES;"; fi
+if ! printf '%s\n' "$H12_TOKS" | grep -qxF ".agents/AGENTS.md"; then H12_BAD="${H12_BAD} no-agents-ref;"; fi
+if [ -z "$H12_BAD" ]; then ok H12; else bad H12 "$H12_BAD"; fi
+
+# ---------- H11: prompt injection ----------
+H11D="$(mktemp -d)"
+H11BIN="$(mktemp -d)"
+H11OUT="$(mktemp -d)"
+export FAKE_OUT="$H11OUT"
+printf '0' > "$H11OUT/count"
+cat > "$H11BIN/muse" <<'FAKEEOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "exec" ]; then
+  shift
+  PFILE=""; LAST=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --prompt-file) PFILE="${2:-}"; shift 2;;
+      --model|--contributor-mode|--reasoning-effort|--max-model-steps|--sandbox-network|--session-id) shift 2;;
+      --disable-approval|--trust-workspace|--json) shift 1;;
+      *) LAST="$1"; shift;;
+    esac
+  done
+  N="$(cat "$FAKE_OUT/count" 2>/dev/null || echo 0)"
+  N=$((N + 1))
+  printf '%s' "$N" > "$FAKE_OUT/count"
+  if [ -n "$PFILE" ] && [ -f "$PFILE" ]; then
+    cat "$PFILE" > "$FAKE_OUT/prompt-$N.txt"
+  else
+    printf '%s' "$LAST" > "$FAKE_OUT/prompt-$N.txt"
+  fi
+  exit 0
+elif [ "${1:-}" = "export" ]; then
+  exit 0
+else
+  exit 0
+fi
+FAKEEOF
+chmod +x "$H11BIN/muse"
+gitinit "$H11D"
+mkdir -p "$H11D/scripts" "$H11D/.agents" "$H11D/.muse"
+cp "$REPO/scripts/muse_pr.sh" "$H11D/scripts/muse_pr.sh"
+chmod +x "$H11D/scripts/muse_pr.sh"
+cp "$REPO/.agents/AGENTS.md" "$H11D/.agents/AGENTS.md"
+cat > "$H11D/.muse/verify_pr.sh" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '{"passed":true,"problems":[]}'
+exit 0
+STUBEOF
+chmod +x "$H11D/.muse/verify_pr.sh"
+printf 'TASK-SENTINEL-H11\n' > "$H11D/task.txt"
+printf '{"base":"HEAD","tests":[]}' > "$H11D/crit.json"
+(cd "$H11D" && git add -A && git commit -qm h11base)
+H11_OLD_PATH="$PATH"
+export PATH="$H11BIN:$PATH"
+H11ERR="$(mktemp)"
+H11A_WHY=""; H11B_WHY=""
+if (cd "$H11D" && bash scripts/muse_pr.sh --task "$H11D/task.txt" --scope "a.txt" --criteria "$H11D/crit.json" --evidence evidence/H11 2>"$H11ERR"); then H11_ST=0; else H11_ST=$?; fi
+if [ "$H11_ST" -ne 0 ]; then H11A_WHY="exit=$H11_ST;"; fi
+if [ ! -f "$H11OUT/prompt-1.txt" ]; then H11A_WHY="${H11A_WHY}no-prompt-1;"; fi
+if [ -z "$H11A_WHY" ]; then
+  if ! grep -q "Failing test first" "$H11OUT/prompt-1.txt"; then H11A_WHY="${H11A_WHY}no-rules;"; fi
+  if ! grep -q "TASK-SENTINEL-H11" "$H11OUT/prompt-1.txt"; then H11A_WHY="${H11A_WHY}no-sentinel;"; fi
+fi
+if [ -z "$H11A_WHY" ]; then
+  R_POS="$(grep -b -o "Failing test first" "$H11OUT/prompt-1.txt" | head -n1 | cut -d: -f1)"
+  S_POS="$(grep -b -o "TASK-SENTINEL-H11" "$H11OUT/prompt-1.txt" | head -n1 | cut -d: -f1)"
+  if [ -z "$R_POS" ] || [ -z "$S_POS" ] || [ "$R_POS" -ge "$S_POS" ]; then H11A_WHY="order R=$R_POS S=$S_POS;"; fi
+fi
+N_BEFORE="$(cat "$H11OUT/count")"
+rm "$H11D/.agents/AGENTS.md"
+H11ERR2="$(mktemp)"
+if (cd "$H11D" && bash scripts/muse_pr.sh --task "$H11D/task.txt" --scope "a.txt" --criteria "$H11D/crit.json" --evidence evidence/H11b 2>"$H11ERR2"); then H11_ST2=0; else H11_ST2=$?; fi
+N_AFTER="$(cat "$H11OUT/count")"
+if [ "$H11_ST2" -ne 2 ]; then H11B_WHY="missing-exit=$H11_ST2;"; fi
+if [ "$N_AFTER" != "$N_BEFORE" ]; then H11B_WHY="${H11B_WHY}muse-called-on-missing;"; fi
+export PATH="$H11_OLD_PATH"
+if [ -z "$H11A_WHY" ] && [ -z "$H11B_WHY" ]; then ok H11; else bad H11 "inject:${H11A_WHY:-ok} missing:${H11B_WHY:-ok} st=${H11_ST:-?}/${H11_ST2:-?}"; fi
+rm -f "$H11ERR" "$H11ERR2"
+rm -rf "$H11D" "$H11BIN" "$H11OUT"
+unset FAKE_OUT
 
 if [ "$FAIL" -ne 0 ]; then printf '%s\n' "SELF-TEST FAILED"; exit 1; fi
 printf '%s\n' "SELF-TEST OK"

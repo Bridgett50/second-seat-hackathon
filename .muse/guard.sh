@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# muse_guard.sh <pre|stop> — Muse Code hook enforcement.
+# .muse/guard.sh <pre|stop> — Muse Code hook enforcement.
 # Bash + python3 stdlib only. Never prints env.
 set -u
 
 MODE="${1:-}"
 
-# --- sealed-path matcher, shared logic with scripts/verify_pr.sh ---
+# --- sealed-path matcher, shared logic with .muse/verify_pr.sh ---
 # Builds a case-insensitive regex from .sealed-paths entries (escaped) plus
 # heldout-sealed, holdout-v1, eval/heldout, \.sealed, (^|/)\.env.
 sealed_regex() {
@@ -199,7 +199,7 @@ except Exception: print("unknown")')"
   case "$n" in ''|*[!0-9]*) n=0;; esac
   if [ "$n" -ge 2 ]; then exit 0; fi
 
-  out="$(cd "$root" && bash scripts/verify_pr.sh 2>/dev/null)"
+  out="$(cd "$root" && bash .muse/verify_pr.sh 2>/dev/null)"
   st=$?
   if [ "$st" -eq 0 ]; then exit 0; fi
   printf '%s' "$((n + 1))" > "$counter"
@@ -217,5 +217,5 @@ print(json.dumps({"decision": "block", "reason": json.dumps(probs)}))'
 case "$MODE" in
   pre) guard_pre;;
   stop) guard_stop;;
-  *) echo "usage: muse_guard.sh <pre|stop>" >&2; exit 2;;
+  *) echo "usage: .muse/guard.sh <pre|stop>" >&2; exit 2;;
 esac
