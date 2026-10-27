@@ -92,6 +92,36 @@ else:
     _MODEL_REVISION = ""
     _LAUNCH_IMAGE = ""
 
+# Frozen function/readiness settings from the canonical config staged at
+# import. The eval Modal function timeout and the readiness work budget come
+# from timeouts.functionTimeoutS / timeouts.workDeadlineS, never from
+# literals. The 840/780 literals below are only the no-config fallback when
+# no launch config was staged at import.
+_FUNCTION_TIMEOUT_S = 840
+_WORK_BUDGET_S = 780
+_FUNCTION_SETTINGS_ERRORS = []
+if _LAUNCH_CONFIG_BYTES is not None:
+    try:
+        _fs, _fs_errs = launch_contract.function_settings(_LAUNCH_CONFIG)
+        _FUNCTION_SETTINGS_ERRORS = list(_fs_errs)
+        _ft = _fs.get("function_timeout_s")
+        _wb = _fs.get("work_budget_s")
+        if (
+            isinstance(_ft, bool)
+            or not isinstance(_ft, (int, float))
+            or not (_ft > 0)
+            or isinstance(_wb, bool)
+            or not isinstance(_wb, (int, float))
+            or not (_wb > 0)
+        ):
+            raise ValueError("frozen timeouts missing or not positive")
+        _FUNCTION_TIMEOUT_S = _ft
+        _WORK_BUDGET_S = _wb
+    except Exception:
+        _FUNCTION_TIMEOUT_S = 840
+        _WORK_BUDGET_S = 780
+        _FUNCTION_SETTINGS_ERRORS = ["function settings unreadable: cannot derive frozen timeouts"]
+
 # Launcher identity at import; main() recomputes it and refuses on drift.
 _LAUNCHER_SHA256 = _read_launcher_identity()
 
@@ -160,7 +190,7 @@ def serve() -> None:
     image=eval_in_container_image,
     gpu="A100-80GB",
     volumes={"/root/.cache/huggingface": volume, "/results": results},
-    timeout=840,
+    timeout=_FUNCTION_TIMEOUT_S,
     max_containers=1,
     retries=0,
 )
@@ -273,9 +303,11 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
             except Exception:
                 return None
 
-        # Model load and the readiness wait run INSIDE the 780 s work
-        # deadline: they consume it.
-        timing = launch_contract.wait_ready(time.monotonic, time.sleep, _probe, func_start)
+        # Model load and the readiness wait run INSIDE the frozen work
+        # budget: they consume it.
+        timing = launch_contract.wait_ready(
+            time.monotonic, time.sleep, _probe, func_start, work_budget_s=_WORK_BUDGET_S
+        )
         if timing["ready"]:
             seconds_to_healthy = time.monotonic() - func_start
             health_status = 200
@@ -397,6 +429,15 @@ def main(dataset: str = "", config: str = "") -> None:
     except Exception as exc:
         projection, projection_errors = None, [f"projection: cannot project launch config ({exc})"]
     blockers = blockers + list(projection_errors)
+    # Frozen function/readiness settings: unsupported dynamic Modal settings
+    # are rejected here, not merely recorded.
+    try:
+        _fs_settings, _fs_errors = launch_contract.function_settings(
+            cfg if isinstance(cfg, dict) else {}
+        )
+    except Exception as exc:
+        _fs_settings, _fs_errors = {}, [f"function settings unavailable: cannot derive frozen timeouts ({exc})"]
+    blockers = blockers + list(_fs_errors)
     launch_cfg = projection if isinstance(projection, dict) else cfg
     blockers = blockers + launch_contract.check_launch(
         launch_cfg, fixtures_root, invoked_dataset=dataset, repo_root=str(_repo)
@@ -450,6 +491,7 @@ def main(dataset: str = "", config: str = "") -> None:
         "launcher_sha256": _LAUNCHER_SHA256,
         "image": _LAUNCH_IMAGE,
         "model_revision": _MODEL_REVISION,
+        "function_settings": _fs_settings,
     }
     print("LAUNCH_RECORD " + json.dumps(_LAST_LAUNCH_RECORD, sort_keys=True))
     call = eval_in_container.spawn(dataset, cfg_sha256)
