@@ -16,6 +16,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+// G3a3: --run-config now refuses placeholder prompt/schema/scorer identities;
+// use the frozen runtime identities (same helper as g2-composition.test.ts).
+// @ts-expect-error untyped helper module
+const { runtimeIdentities: e2RuntimeIdentities } = await import("../scripts/frozen-identities.mjs");
+const E2_IDS = (await e2RuntimeIdentities()) as { prompt: string; schema: string; scorer: string };
+
 const here = dirname(fileURLToPath(import.meta.url));
 const botDir = join(here, "..");
 const repoRoot = join(here, "..", "..", "..");
@@ -46,9 +52,9 @@ function e2RunConfig(): Record<string, unknown> {
       ref: `registry.example/vllm-openai@sha256:${"c".repeat(64)}`,
       digest: `sha256:${"c".repeat(64)}`,
     },
-    prompt: { sha256: "d".repeat(64) },
-    schema: { sha256: "e".repeat(64) },
-    scorer: { sha256: "f".repeat(64) },
+    prompt: { sha256: E2_IDS.prompt },
+    schema: { sha256: E2_IDS.schema },
+    scorer: { sha256: E2_IDS.scorer },
     decoding: { temperature: 0, seed: 42, reasoning: "low" },
     tokenLimits: { maxTokens: MAX_TOKENS_E2, contextTokens: CONTEXT_TOKENS_E2 },
     timeouts: { requestMs: 60000, workDeadlineS: 700, functionTimeoutS: 840 },
