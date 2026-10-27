@@ -20,8 +20,8 @@ Model ids and settings read from source:
 | vision model (SAM_MODEL) | sam-3.1 | services/bot/src/vision/sam.ts |
 | shield reasoning_effort | low | services/bot/src/shield/classify.ts |
 | shield model | muse-spark-1.3 | services/bot/src/shield/classify.ts |
-| redact temperature | 1.0 | services/bot/src/private/redact.ts |
-| redact top_p | 0.95 | services/bot/src/private/redact.ts |
+| redact temperature | 0.0 | services/bot/src/private/redact.ts |
+| redact top_p | NOT FOUND | services/bot/src/private/redact.ts |
 | judge reasoning_effort | medium | services/bot/src/judge/support.ts |
 
 Fixture mode, not production. Re-run `node services/bot/scripts/prompt-freeze.mjs` to refresh.

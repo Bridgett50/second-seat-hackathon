@@ -23,7 +23,7 @@ trustworthy measurement, not a favorable percentage.
 | Runner | `services/bot/scripts/redaction-eval-runner.mjs` (`runEval`: canary-first, concurrency 2, unique run dir, `rescoreRun` for offline rescoring) |
 | Prompt | Inline system prompt in `services/bot/src/private/redact.ts`; no separate redaction prompt file |
 | Response schema | Inline JSON schema (`spans[{start,end,label}]`, `boxes[]`) in the same file |
-| Decoding | `temperature 1.0, top_p 0.95, top_k 64, reasoning_strength low` (never greedy) |
+| Decoding | `temperature 0.0, no top_p/top_k, reasoning_strength low` (E10, draft PR #76; greedy decoding only per the structured-output recipe) |
 | Token cap | `max_tokens 2048` (`GLIMMER_MAX_TOKENS` unset → `GLIMMER_MAX_TOKENS_DEFAULT`) |
 | Work deadline | 780 s (`deadline = func_start + 780`; see timing note) |
 | Function timeout | 840 s (`timeout=840` on the Modal `eval_in_container` function) |
@@ -31,6 +31,8 @@ trustworthy measurement, not a favorable percentage.
 | Canary policy | Case 1 runs first and is scored; if it errors, the eval stops, exits 2, and every remaining case is recorded `not_run` |
 | Retry policy | None (`retries=0`; no rerun cherry-picking — see publish rules) |
 | Architecture | Existing `.spawn()` + Volume architecture (`eval_in_container.spawn(dataset)`, `glimmer-weights` + `glimmer-results` Volumes); scale-to-zero; one unique run dir `/results/<run_id>/` per run, never reused |
+
+Any prepared holdout config must be re-frozen before a launch — re-freeze it after the E10 decoding and inline-prompt change, which alters the frozen prompt hash and decoding row (E10, draft PR #76).
 
 ### Timeouts vs billed allocation time
 
