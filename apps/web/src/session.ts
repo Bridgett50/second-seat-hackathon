@@ -983,6 +983,13 @@ export function createSessionStore(options?: SessionStoreOptions) {
       // later invalidation cannot move the receipt accounting to a new run.
       const sendRunId = s.runId;
       const receiptsBefore = sendRunId === null ? 0 : gate.receipts(sendRunId).length;
+      if (!live) {
+        // Fake-transport receipt panel: record the invocation (t1) at entry
+        // so a state poll during the run shows invoked/pending before the
+        // provider completes. Live mode derives this from gate receipts.
+        s.payload = { approvedText, status: "invoked", sentAt, adapterLabel: analyzerLabel };
+        s.revision += 1;
+      }
       // Live dispatch identity comes from the HTTP-boundary receipts for
       // this analysis (beyond receiptsBefore), never from adapter entry or
       // completion timestamps. Offline transports record no receipts, so
@@ -1195,6 +1202,10 @@ export function createSessionStore(options?: SessionStoreOptions) {
               sentAt,
               adapterLabel: analyzerLabel,
             };
+          } else if (!live) {
+            // The entry-invoked payload above must never read "pending"
+            // after the run settled without dispatching.
+            s.payload = { approvedText, status: "failed", sentAt, adapterLabel: analyzerLabel };
           }
           fail(s, err);
           s.revision += 1;
