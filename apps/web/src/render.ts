@@ -603,6 +603,8 @@ refresh();
 
 export type SessionPageSnapshot = {
   state: string;
+  /** Last server revision rendered; the client script sends it back as expectedRevision. */
+  revision: number;
   reason?: string;
   segments: { id: string; text: string }[];
   redactedText: string;
@@ -758,7 +760,8 @@ ${sessionDraftHtml(snap)}
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script>
 (function(){
-var sessionId=null,pending=false,lastRedacted="",dirty=false,seq=0,editedSince=false;
+var sessionId=null,pending=false,lastRedacted="",lastDraft="",dirty=false,seq=0,editedSince=false;
+var serverRev=${snap.revision ?? 0},serverAssessment=null,invSeq=0;
 var input=document.getElementById("transcript-input"),redacted=document.getElementById("redacted-text");
 var btnRedact=document.getElementById("btn-redact"),btnApprove=document.getElementById("btn-approve"),btnAnalyze=document.getElementById("btn-analyze");
 var stateEl=document.getElementById("session-state"),resultsEl=document.getElementById("results");
@@ -771,10 +774,15 @@ var btnDraftApprove=document.getElementById("btn-draft-approve"),btnDraftReject=
 var LABELS={"input":"Input — paste a transcript to begin.","redaction_pending":"Redaction pending…","review_required":"Review required — check the redacted preview, then approve.","approved":"Approved — ready to analyze.","analysis_pending":"Analysis pending…","completed":"Completed — findings below."};
 function labelFor(s){if(s.state==="blocked")return "Blocked — "+(s.reason||"a policy or approval check refused the request");if(s.state==="error")return s.reason?("Error — "+s.reason):"Error — something went wrong.";return LABELS[s.state]||s.state;}
 function el(tag,attrs,text){var n=document.createElement(tag);for(var k in attrs){n.setAttribute(k,attrs[k]);}if(text!==undefined)n.textContent=text;return n;}
+function revOf(s){return (s&&typeof s.revision==="number")?s.revision:null;}
 function render(s){
+  var rev=revOf(s);
+  if(rev!==null){if(rev<serverRev)return false;serverRev=rev;}
+  if(s.pressure&&typeof s.pressure.assessmentId==="string")serverAssessment=s.pressure.assessmentId;
   stateEl.textContent=labelFor(s);
   if(offlineLabel)offlineLabel.hidden=!s.offline;
-  lastRedacted=s.redactedText||"";if(document.activeElement!==redacted)redacted.value=lastRedacted;
+  var serverPreview=s.redactedText||"";
+  if(redacted.value===lastRedacted||redacted.value===serverPreview){redacted.value=serverPreview;lastRedacted=serverPreview;}
   var canRedact=s.state!=="redaction_pending"&&s.state!=="analysis_pending";
   btnRedact.disabled=pending||!canRedact||!input.value.trim();
   btnApprove.disabled=pending||s.state!=="review_required";
@@ -798,16 +806,18 @@ function render(s){
   var d=s.draft||null;
   if(draftSection)draftSection.hidden=!d;
   if(d){
-    if(document.activeElement!==draftText)draftText.value=d.text||"";
+    var serverDraft=d.text||"";
+    if(draftText.value===lastDraft||draftText.value===serverDraft){draftText.value=serverDraft;lastDraft=serverDraft;}
     draftText.disabled=false;
-    var approvedNow=!!d.approved&&draftText.value===(d.text||"");
-    draftStatus.textContent=d.approved?"Approved — ready to copy.":"Review — approve to copy.";
-    if(document.activeElement===draftText&&draftText.value!==(d.text||"")){draftStatus.textContent="Edited — approve again";approvedNow=false;}
+    var localMatches=draftText.value===serverDraft;
+    var approvedNow=!!d.approved&&localMatches;
+    draftStatus.textContent=!localMatches?"Edited — approve again":(d.approved?"Approved — ready to copy.":"Review — approve to copy.");
     btnDraftApprove.disabled=pending||false;
     btnDraftReject.disabled=pending||false;
-    btnCopy.disabled=pending||!approvedNow||editedSince||!pressureOk(s);
+    var previewClean=redacted.value===lastRedacted;
+    btnCopy.disabled=pending||!approvedNow||editedSince||!pressureOk(s)||!previewClean;
   }else{
-    if(document.activeElement!==draftText)draftText.value="";
+    if(draftText.value===lastDraft){draftText.value="";lastDraft="";}
     draftText.disabled=true;
     draftStatus.textContent="No draft yet — analyze first.";
     btnDraftApprove.disabled=true;btnDraftReject.disabled=true;btnCopy.disabled=true;
@@ -816,8 +826,41 @@ function render(s){
     if(s.superseded){supersededEl.hidden=false;supersededEl.textContent="An earlier approved text was sent to the analyzer before your edit; its result was discarded. "+s.superseded.approvedText;}
     else{supersededEl.hidden=true;supersededEl.textContent="";}
   }
+  return true;
 }
-function call(path,body){return fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(b){return {ok:r.ok,body:b};});});}
+function call(path,body){return fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(b){return {ok:r.ok,status:r.status,body:b};});});}
+function applySnapshot(s){
+  if(!s||typeof s!=="object")return refresh();
+  var rev=revOf(s);
+  if(rev!==null&&rev<serverRev)return refresh();
+  editedSince=false;
+  render(s);
+}
+function applyResult(r){
+  if(!r)return refresh();
+  if(r.ok){applySnapshot(r.body);return;}
+  if(r.body&&r.body.state){applySnapshot(r.body.state);return;}
+  refresh();
+}
+/* Versioned mutation: names the exact revision reviewed. Never overwrites
+   local edits made after the request was issued (see render). Superseding
+   intents (invalidate, draft text) rebase once after a 409; review intents
+   (approvals, pressure) never retry — a stale review must stay rejected. */
+function mut(path,fields,opts){
+  opts=opts||{};
+  if(!sessionId)return Promise.resolve({ok:false,status:0,body:null});
+  var payload={sessionId:sessionId};
+  for(var k in fields){payload[k]=fields[k];}
+  payload.expectedRevision=serverRev;
+  return call(path,payload).then(function(r){
+    if(r.ok){applySnapshot(r.body);return r;}
+    if(r.status===409&&r.body&&r.body.state){
+      applySnapshot(r.body.state);
+      if(opts.rebase&&!opts.retried){opts.retried=true;return mut(path,fields,opts);}
+    }
+    return r;
+  });
+}
 function pressureOk(s){var p=s.pressure||null;if(!p||!p.items||p.items.length===0)return true;return !!p.allReviewed;}
 function pressureLabel(source){if(source==="offline-fixture")return "offline fixture";if(source==="live")return "live check";return "offline pattern check";}
 function syncPressure(s){
@@ -841,8 +884,13 @@ function syncPressure(s){
     if(p.reviewed&&p.reviewed.indexOf(item.id)>=0)box.checked=true;
     (function(id,checkbox){
       checkbox.addEventListener("change",function(){
-        if(!checkbox.checked||!sessionId)return;
-        run(call("/api/session/pressure-review",{sessionId:sessionId,itemId:id}));
+        if(!sessionId)return;
+        if(checkbox.checked){
+          run(mut("/api/session/pressure-review",{itemId:id,assessmentId:serverAssessment},{}));
+        }else{
+          if(btnCopy)btnCopy.disabled=true;
+          run(mut("/api/session/pressure-review",{itemId:id,assessmentId:serverAssessment,reviewed:false},{}));
+        }
       });
     })(item.id,box);
     lab.appendChild(box);lab.appendChild(document.createTextNode(" Reviewed"));
@@ -852,10 +900,11 @@ function syncPressure(s){
 }
 function refresh(){if(!sessionId)return;pending=true;updateButtons();var my=++seq;fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){pending=false;if(my!==seq)return;editedSince=false;render(s);}).catch(function(){pending=false;updateButtons();});}
 function updateButtons(){btnRedact.disabled=true;btnApprove.disabled=true;btnAnalyze.disabled=true;if(btnDraftApprove)btnDraftApprove.disabled=true;if(btnDraftReject)btnDraftReject.disabled=true;if(btnCopy)btnCopy.disabled=true;}
-function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq)return;editedSince=false;if(r.ok)render(r.body);else if(r.body&&r.body.state)render(r.body);else refresh();}).catch(function(){pending=false;if(my!==seq)return;refresh();});}
+function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq)return r;applyResult(r);return r;}).catch(function(){pending=false;if(my!==seq)return;refresh();});}
 function invalidateLocal(scope){
   editedSince=true;
   seq++;
+  invSeq++;
   var po=document.getElementById("pressure");if(po&&po.parentNode)po.parentNode.removeChild(po);
   while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);
   resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));
@@ -869,13 +918,13 @@ function invalidateLocal(scope){
     payloadStatus.textContent="Not prepared — preview edited, approve again";
   }
   if(!sessionId)return;
-  run(call("/api/session/invalidate",{sessionId:sessionId,scope:scope}));
+  run(mut("/api/session/invalidate",{scope:scope},{rebase:true}));
 }
 function clearLocalResults(){while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));}
 var deb=null;
 function clearDraftLocal(){
   if(draftSection)draftSection.hidden=true;
-  if(draftText){draftText.value="";draftText.disabled=true;}
+  if(draftText){draftText.value="";draftText.disabled=true;lastDraft="";}
   if(draftStatus)draftStatus.textContent="No draft yet — analyze first.";
   if(btnDraftApprove)btnDraftApprove.disabled=true;
   if(btnDraftReject)btnDraftReject.disabled=true;
@@ -893,8 +942,19 @@ redacted.addEventListener("input",function(){
   invalidateLocal("preview");
 });
 btnRedact.addEventListener("click",function(){if(btnRedact.disabled||!sessionId)return;if(deb){clearTimeout(deb);deb=null;}dirty=false;pending=true;updateButtons();run(call("/api/session/transcript",{sessionId:sessionId,text:input.value}).then(function(t){if(!t.ok)return t;return call("/api/session/redact",{sessionId:sessionId});}));});
-/* corrections are sent with Approve (avoids blur/click race) */
-btnApprove.addEventListener("click",function(){if(btnApprove.disabled)return;var txt=redacted.value,needs=txt!==lastRedacted;pending=true;updateButtons();run((needs?call("/api/session/correct",{sessionId:sessionId,text:txt}):Promise.resolve({ok:true})).then(function(c){if(!c.ok)return c;return call("/api/session/approve",{sessionId:sessionId});}));});
+/* corrections are sent with Approve (avoids blur/click race); the chained
+   approve is skipped when the preview changed — or was invalidated — after the click */
+btnApprove.addEventListener("click",function(){
+  if(btnApprove.disabled||!sessionId)return;
+  var basis=redacted.value,mark=invSeq;
+  pending=true;updateButtons();
+  if(basis===lastRedacted){run(mut("/api/session/approve",{},{}));return;}
+  run(mut("/api/session/correct",{text:basis},{}).then(function(c){
+    if(!c.ok)return c;
+    if(redacted.value!==basis||invSeq!==mark)return c;
+    return mut("/api/session/approve",{},{});
+  }));
+});
 btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;if(dirty)return;if(redacted.value!==lastRedacted)return;stateEl.textContent=LABELS["analysis_pending"];run(call("/api/session/analyze",{sessionId:sessionId}));});
 var draftDeb=null;
 draftText.addEventListener("input",function(){
@@ -902,10 +962,10 @@ draftText.addEventListener("input",function(){
   draftStatus.textContent="Edited — approve again";
   if(draftDeb)clearTimeout(draftDeb);
   var v=draftText.value;
-  draftDeb=setTimeout(function(){if(!sessionId)return;run(call("/api/session/draft",{sessionId:sessionId,text:v}));},300);
+  draftDeb=setTimeout(function(){if(!sessionId)return;run(mut("/api/session/draft",{text:v},{rebase:true}));},300);
 });
-btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value;pending=true;updateButtons();run(call("/api/session/draft",{sessionId:sessionId,text:t}).then(function(e){if(!e.ok)return e;return call("/api/session/draft/approve",{sessionId:sessionId,text:t});}));});
-btnDraftReject.addEventListener("click",function(){if(btnDraftReject.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}run(call("/api/session/draft/reject",{sessionId:sessionId}));});
+btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value;pending=true;updateButtons();run(mut("/api/session/draft",{text:t},{rebase:true}).then(function(e){if(!e.ok)return e;if(draftText.value!==t)return e;return mut("/api/session/draft/approve",{text:t},{});}));});
+btnDraftReject.addEventListener("click",function(){if(btnDraftReject.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}run(mut("/api/session/draft/reject",{},{}));});
 btnCopy.addEventListener("click",function(){if(btnCopy.disabled)return;var text=draftText.value;function done(){draftNote.textContent="Copied locally. Nothing was sent.";}function fallback(){var t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(t);done();}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){fallback();});}else{fallback();}});
 fetch("/api/session",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}).then(function(r){return r.json();}).then(function(b){sessionId=b.sessionId;refresh();});
 })();
