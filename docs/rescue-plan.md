@@ -1,4 +1,4 @@
-# Codex A1-A9 plan (verbatim from Bridgett, Oct 26 2026 11:43 PM CT; A1-A3 already merged at fd3e772)
+# Codex A1-A9 plan (reconstructed from Bridgett's Oct 26 notes; not the original wording; A1-A3 already merged at fd3e772)
 
 Target flow: Paste text -> redact -> review/correct preview -> approve analysis -> inspect findings and citations -> edit reply -> approve exact draft -> copy.
 Keep offline execution clearly labelled. Live execution remains unverified until an explicitly authorized run produces evidence.
