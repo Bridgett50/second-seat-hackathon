@@ -34,6 +34,7 @@ export function scoreSpans(text, expectedSpans, predictedSpans) {
   const expectedMask = markRanges(n, expected);
 
   let covered = 0;
+  const missed = [];
   for (const s of expected) {
     let all = true;
     for (let i = s.start; i < s.end; i++) {
@@ -43,6 +44,7 @@ export function scoreSpans(text, expectedSpans, predictedSpans) {
       }
     }
     if (all) covered += 1;
+    else missed.push({ start: s.start, end: s.end });
   }
 
   let piiChars = 0;
@@ -63,9 +65,10 @@ export function scoreSpans(text, expectedSpans, predictedSpans) {
   return {
     covered,
     expected: expected.length,
+    missed,
     piiChars,
     piiCharsMasked,
-    charCoverage: piiChars > 0 ? piiCharsMasked / piiChars : 1,
+    charCoverage: piiChars > 0 ? piiCharsMasked / piiChars : null,
     nonPii,
     nonPiiMasked,
     overRedaction: nonPii > 0 ? nonPiiMasked / nonPii : 0,
@@ -154,12 +157,12 @@ export function summarize(cases, plannedCases) {
       wilson95_completed: [legacyLo, legacyHi],
       wilson95_end_to_end: [legacyEndLo, legacyEndHi],
     },
-    recall_completed: { k: spanK, n: spanN },
-    recall_end_to_end: { k: spanK, n: spanEndN },
+    recall_completed: spanN > 0 ? { k: spanK, n: spanN } : null,
+    recall_end_to_end: spanEndN > 0 ? { k: spanK, n: spanEndN } : null,
     wilson95_recall_completed: [spanLo, spanHi],
     wilson95_recall_end_to_end: [spanEndLo, spanEndHi],
     char_coverage: {
-      completed: charTotal > 0 ? charMasked / charTotal : 1,
+      completed: charTotal > 0 ? charMasked / charTotal : null,
       masked: charMasked,
       total: charTotal,
     },
