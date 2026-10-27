@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { hashDraft } from "./draftApproval.js";
 import {
   createPrivacyGate,
+  type GatedText,
   type PrivacyGate,
 } from "@second-seat/bot/dist/src/private/gate.js";
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
@@ -34,8 +35,10 @@ export interface AnalysisResult {
 
 export interface PayloadRecord {
   approvedText: string;
-  status: "prepared" | "sent";
+  /** "prepared" = approved but no transport ran; "dispatched" = a transport actually ran. */
+  status: "prepared" | "dispatched";
   sentAt?: string;
+  adapterLabel?: string;
 }
 
 export interface SupersededRecord {
@@ -66,10 +69,31 @@ export interface DraftRecord {
 
 export type AnalyzerTransport = (approvedText: string) => Promise<unknown>;
 
+/**
+ * Live analyzer (e.g. MuseClient): called with the gate-minted GatedText
+ * from gate.send, never with a plain string. The gate-approved payload is
+ * the sole source of outbound text.
+ */
+export interface LiveBriefAnalyzer {
+  completeBrief(input: {
+    meetingId: string;
+    transcriptText: GatedText;
+    framesSidecarText: GatedText | "";
+    fixtureMode: boolean;
+  }): Promise<{ rawText: unknown }>;
+}
+
+function isLiveAnalyzer(
+  analyzer: AnalyzerTransport | LiveBriefAnalyzer,
+): analyzer is LiveBriefAnalyzer {
+  return typeof (analyzer as LiveBriefAnalyzer).completeBrief === "function";
+}
+
 export interface SessionStoreOptions {
   gate?: PrivacyGate;
   redactor?: { redactText: (t: string) => Promise<unknown> } & Record<string, unknown>;
-  analyzer?: AnalyzerTransport;
+  analyzer?: AnalyzerTransport | LiveBriefAnalyzer;
+  analyzerLabel?: string;
   offline?: boolean;
 }
 
@@ -139,6 +163,78 @@ function toAnalysisResult(value: unknown, offline: boolean): AnalysisResult {
     };
   }
   return { offline, entries: [] };
+}
+
+/**
+ * Strict live-analysis validation against the real EvidenceBrief shape
+ * (EVIDENCE_BRIEF_JSON_SCHEMA): a top-level object with an entries array;
+ * each entry carries string id/text, a category in the schema enum, and a
+ * citations array whose objects each carry a string segmentId. Entries map
+ * to BriefEntry {kind: category, text, segmentIds: citations' segmentIds}.
+ * Anything unexpected throws (the caller records session state "error"):
+ * non-JSON handled before this, plus a missing entries array, an entry
+ * missing id/text strings or a valid category, a citations list whose
+ * objects lack string segmentIds, or a citation id outside the current
+ * approved segments. A valid {entries:[]} passes through.
+ * (Error texts avoid the gate's blocked-state keywords so failures land
+ * in "error", never "blocked".)
+ */
+const EVIDENCE_CATEGORIES: ReadonlySet<string> = new Set([
+  "decision",
+  "action_item",
+  "unresolved_question",
+  "owner_review",
+  "source_conflict",
+]);
+
+export function toLiveAnalysisResult(value: unknown, validIds: Set<string>): AnalysisResult {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !Array.isArray((value as { entries?: unknown }).entries)
+  ) {
+    throw new Error("live analysis: response is not a JSON object with an entries array");
+  }
+  const raw = (value as { entries: unknown[] }).entries;
+  const entries: BriefEntry[] = raw.map((e, i) => {
+    if (typeof e !== "object" || e === null) {
+      throw new Error(`live analysis: entry ${i} is not an object`);
+    }
+    const rec = e as Record<string, unknown>;
+    if (typeof rec["id"] !== "string") {
+      throw new Error(`live analysis: entry ${i} id must be a string`);
+    }
+    if (typeof rec["category"] !== "string" || !EVIDENCE_CATEGORIES.has(rec["category"] as string)) {
+      throw new Error(`live analysis: entry ${i} category must be one of the schema enum values`);
+    }
+    if (typeof rec["text"] !== "string") {
+      throw new Error(`live analysis: entry ${i} text must be a string`);
+    }
+    if (!Array.isArray(rec["citations"])) {
+      throw new Error(`live analysis: entry ${i} citations must be an array`);
+    }
+    const segmentIds = (rec["citations"] as unknown[]).map((c, j) => {
+      if (
+        typeof c !== "object" ||
+        c === null ||
+        typeof (c as Record<string, unknown>)["segmentId"] !== "string"
+      ) {
+        throw new Error(`live analysis: entry ${i} citation ${j} segmentId must be a string`);
+      }
+      return (c as Record<string, unknown>)["segmentId"] as string;
+    });
+    for (const id of segmentIds) {
+      if (!validIds.has(id)) {
+        throw new Error(`live analysis: entry ${i} cites unknown segment ${id}`);
+      }
+    }
+    return {
+      kind: rec["category"] as string,
+      text: rec["text"] as string,
+      segmentIds,
+    };
+  });
+  return { offline: false, entries };
 }
 
 const SESSION_TEST_MODE = process.env.SECOND_SEAT_TEST_MODE === "1";
@@ -212,9 +308,11 @@ export function createSessionStore(options?: SessionStoreOptions) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       redactor: (SESSION_TEST_MODE ? wrapTestRedactor(baseRedactor) : baseRedactor) as any,
     });
-  const analyzer: AnalyzerTransport =
+  const analyzer: AnalyzerTransport | LiveBriefAnalyzer =
     options?.analyzer ??
     (async (approvedText: string) => buildOfflineBrief(approvedText, []));
+  const analyzerLabel =
+    options?.analyzerLabel ?? (isLiveAnalyzer(analyzer) ? "MuseClient" : "offline heuristic");
   const sessions = new Map<string, SessionRecord>();
 
   function lookup(sessionId: string): SessionRecord {
@@ -402,9 +500,24 @@ export function createSessionStore(options?: SessionStoreOptions) {
         try {
           if (!s.runId || !s.approvalToken) throw new Error("approval required");
           if (s.approvalExpired) throw new Error("approval is stale: test hook expired approvals");
-          const raw = await gate.send(s.runId, s.approvalToken, async () => {
+          const live = isLiveAnalyzer(analyzer);
+          const raw = await gate.send(s.runId, s.approvalToken, async (gated) => {
             dispatched = true;
             s.inFlight = { approvedText, sentAt };
+            if (live) {
+              // Gate-approved payload is the sole source of outbound text.
+              const res = await analyzer.completeBrief({
+                meetingId: sessionId,
+                transcriptText: gated,
+                framesSidecarText: "",
+                fixtureMode: false,
+              });
+              const rawText = (res as { rawText?: unknown } | null)?.rawText;
+              if (typeof rawText !== "string") {
+                throw new Error("live analysis: response has no text");
+              }
+              return rawText;
+            }
             return analyzer(approvedText);
           });
           if (s.generation !== gen) {
@@ -413,32 +526,49 @@ export function createSessionStore(options?: SessionStoreOptions) {
             }
             return;
           }
-          // Default analyzer ignores segments; rebuild offline brief with real ids when offline-shaped.
-          let result = toAnalysisResult(raw, offline);
-          if (offline && approvedText.length > 0) {
-            const maybe = raw as { entries?: unknown[] } | null;
-            const looksDefault =
-              !maybe || !Array.isArray(maybe.entries) || maybe.entries.length === 0;
-            if (looksDefault) result = buildOfflineBrief(approvedText, approvedSegments);
-            else {
-              const valid = new Set(approvedSegments.map((g) => g.id));
-              result = {
-                offline: result.offline,
-                entries: result.entries.map((e) => ({
-                  ...e,
-                  segmentIds: e.segmentIds.filter((id) => valid.has(id)),
-                })),
-              };
+          let result: AnalysisResult;
+          if (live) {
+            // Live mode never substitutes the offline heuristic or a
+            // fixture: unparseable or invalid output is an error.
+            if (typeof raw !== "string") {
+              throw new Error("live analysis: response has no text");
             }
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(raw) as unknown;
+            } catch {
+              throw new Error("live analysis: response is not JSON");
+            }
+            result = toLiveAnalysisResult(parsed, new Set(approvedSegments.map((g) => g.id)));
+          } else {
+            // Default analyzer ignores segments; rebuild offline brief with real ids when offline-shaped.
+            result = toAnalysisResult(raw, offline);
+            if (offline && approvedText.length > 0) {
+              const maybe = raw as { entries?: unknown[] } | null;
+              const looksDefault =
+                !maybe || !Array.isArray(maybe.entries) || maybe.entries.length === 0;
+              if (looksDefault) result = buildOfflineBrief(approvedText, approvedSegments);
+              else {
+                const valid = new Set(approvedSegments.map((g) => g.id));
+                result = {
+                  offline: result.offline,
+                  entries: result.entries.map((e) => ({
+                    ...e,
+                    segmentIds: e.segmentIds.filter((id) => valid.has(id)),
+                  })),
+                };
+              }
+            }
+            if (result.entries.length === 0) result = { offline: result.offline, entries: [] };
           }
-          if (result.entries.length === 0) result = { offline: result.offline, entries: [] };
           s.inFlight = null;
           s.result = result;
           s.draft = { text: "", origin: "user", resultGeneration: gen, approvedHash: null };
           s.payload = {
             approvedText,
-            status: "sent",
+            status: "dispatched",
             sentAt: new Date().toISOString(),
+            adapterLabel: analyzerLabel,
           };
           s.state = "completed";
         } catch (err: unknown) {
@@ -447,6 +577,14 @@ export function createSessionStore(options?: SessionStoreOptions) {
               s.superseded = { approvedText, sentAt, status: "sent" };
             }
             return;
+          }
+          if (dispatched) {
+            s.payload = {
+              approvedText,
+              status: "dispatched",
+              sentAt,
+              adapterLabel: analyzerLabel,
+            };
           }
           fail(s, err);
         } finally {

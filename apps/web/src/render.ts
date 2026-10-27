@@ -607,7 +607,7 @@ export type SessionPageSnapshot = {
   redactedText: string;
   approved: boolean;
   result: { offline: boolean; entries: { kind: string; text: string; segmentIds: string[] }[] } | null;
-  payload: { approvedText: string; status: string } | null;
+  payload: { approvedText: string; status: string; sentAt?: string; adapterLabel?: string } | null;
   superseded?: { approvedText: string; sentAt?: string; status?: string } | null;
   offline: boolean;
   draft?: { text: string; origin: string; approved: boolean } | null;
@@ -648,6 +648,10 @@ export function sessionStateLabel(snap: SessionPageSnapshot): string {
 }
 
 function sessionFindingsHtml(snap: SessionPageSnapshot): string {
+  if (snap.state === "error") {
+    const reason = snap.reason ?? "unknown reason";
+    return `<p id="analysis-error" role="alert">Analysis failed: ${esc(reason)}. Results unavailable because the analysis could not be validated.</p>`;
+  }
   if (snap.result === null) {
     return `<p id="empty-state">No findings yet — paste a transcript and run analysis.</p>`;
   }
@@ -674,8 +678,12 @@ function sessionPayloadHtml(snap: SessionPageSnapshot): string {
   if (snap.payload === null) {
     return `<pre id="payload-text"></pre><p id="payload-status">Not prepared yet</p>${sessionSupersededHtml(snap)}`;
   }
-  const status = snap.payload.status === "sent" ? "Sent to analyzer" : "Prepared — not sent";
-  return `<pre id="payload-text">${esc(snap.payload.approvedText)}</pre><p id="payload-status">${status}</p>${sessionSupersededHtml(snap)}`;
+  if (snap.payload.status !== "dispatched") {
+    return `<pre id="payload-text">${esc(snap.payload.approvedText)}</pre><p id="payload-status">Prepared (not sent)</p>${sessionSupersededHtml(snap)}`;
+  }
+  const label = snap.payload.adapterLabel ?? "analyzer";
+  const at = snap.payload.sentAt ?? "unknown time";
+  return `<pre id="payload-text">${esc(snap.payload.approvedText)}</pre><p id="payload-status">Dispatched to ${esc(label)} at ${esc(at)}</p>${sessionSupersededHtml(snap)}`;
 }
 
 export function renderSessionPage(snap: SessionPageSnapshot): string {
@@ -744,7 +752,8 @@ function render(s){
   while(segmentsEl.firstChild)segmentsEl.removeChild(segmentsEl.firstChild);
   (s.segments||[]).forEach(function(g){segmentsEl.appendChild(el("li",{id:g.id},g.text));});
   while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);
-  if(!s.result){resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));}
+  if(s.state==="error"){resultsEl.appendChild(el("p",{id:"analysis-error",role:"alert"},"Analysis failed: "+(s.reason||"unknown reason")+". Results unavailable because the analysis could not be validated."));}
+  else if(!s.result){resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));}
   else if(s.result.entries.length===0){resultsEl.appendChild(el("p",{id:"empty-state"},"No findings in the approved transcript."));}
   else{s.result.entries.forEach(function(e,i){
     var a=el("article",{"class":"result",id:"result-"+i});
@@ -753,7 +762,7 @@ function render(s){
     (e.segmentIds||[]).forEach(function(id){var link=el("a",{href:"#"+id},"["+id+"]");c.appendChild(link);c.appendChild(document.createTextNode(" "));});
     a.appendChild(c);resultsEl.appendChild(a);});}
   if(!s.payload){payloadText.textContent="";payloadStatus.textContent="Not prepared yet";}
-  else{payloadText.textContent=s.payload.approvedText;payloadStatus.textContent=s.payload.status==="sent"?"Sent to analyzer":"Prepared — not sent";}
+  else{payloadText.textContent=s.payload.approvedText;payloadStatus.textContent=s.payload.status==="dispatched"?("Dispatched to "+(s.payload.adapterLabel||"analyzer")+" at "+(s.payload.sentAt||"unknown time")):"Prepared (not sent)";}
   var d=s.draft||null;
   if(draftSection)draftSection.hidden=!d;
   if(d){

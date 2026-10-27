@@ -37,7 +37,7 @@ describe("analysis session", () => {
     expect(s.state).toBe("completed");
     expect(s.result?.offline).toBe(true);
     expect(analyzerCounter.calls).toBe(1);
-    expect(s.payload?.status).toBe("sent");
+    expect(s.payload?.status).toBe("dispatched");
     expect(typeof s.payload?.sentAt).toBe("string");
     const valid = new Set(s.segments.map((g) => g.id));
     expect(s.result!.entries.length).toBeGreaterThan(0);

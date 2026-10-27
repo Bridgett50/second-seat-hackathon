@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { createPrivacyGate, type PrivacyGate } from "@second-seat/bot/dist/src/private/gate.js";
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
 import { buildOfflineBrief, createSessionStore } from "./session.js";
+import { resolveAnalysisConfig } from "./liveConfig.js";
 import { installNetGuard, outboundStats, recordAnalyzerCall } from "./netGuard.js";
 import { loadDemo } from "./loadFixtures.js";
 import { renderBriefPage, renderSessionPage } from "./render.js";
@@ -182,20 +183,31 @@ refresh();
 export function createWebServer(deps?: WebServerDeps) {
   installNetGuard();
   const testMode = process.env.SECOND_SEAT_TEST_MODE === "1";
-  const sessions = testMode
-    ? createSessionStore({
-        offline: true,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        redactor: new MockRedactor() as any,
-        analyzer: async (approvedText: string) => {
-          if (approvedText.includes("[[slow]]")) {
-            await new Promise((r) => setTimeout(r, 1500));
-          }
-          recordAnalyzerCall(approvedText);
-          return buildOfflineBrief(approvedText, []);
-        },
-      })
-    : createSessionStore();
+  const analysisConfig = testMode ? { mode: "offline" as const } : resolveAnalysisConfig(process.env);
+  const sessions =
+    testMode || analysisConfig.mode === "offline"
+      ? testMode
+        ? createSessionStore({
+            offline: true,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            redactor: new MockRedactor() as any,
+            analyzer: async (approvedText: string) => {
+              if (approvedText.includes("[[slow]]")) {
+                await new Promise((r) => setTimeout(r, 1500));
+              }
+              recordAnalyzerCall(approvedText);
+              return buildOfflineBrief(approvedText, []);
+            },
+          })
+        : createSessionStore()
+      : createSessionStore({
+          offline: false,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          redactor: analysisConfig.redactor as any,
+          gate: analysisConfig.gate,
+          analyzer: analysisConfig.analyzer,
+          analyzerLabel: analysisConfig.analyzerLabel,
+        });
   const gate = deps?.gate ?? createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
   const sent: { text: string } = deps?.lastSent ?? { text: "" };
   const sender =
