@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,29 +36,61 @@ function makeSealedDir(): string {
   return dir;
 }
 
+function writeFakePresealed(sumsDigestHex: string): { presealedPath: string; presealedDir: string } {
+  const presealedDir = mkdtempSync(join(tmpdir(), "heldout-presealed-"));
+  const presealedPath = join(presealedDir, "heldout-presealed.sha256");
+  writeFileSync(presealedPath, `${sumsDigestHex}  SHA256SUMS\n`);
+  return { presealedPath, presealedDir };
+}
+
+function makeFakePresealedForDir(sealedDir: string, mismatch: boolean): { presealedPath: string; presealedDir: string } {
+  const sumsPath = join(sealedDir, "SHA256SUMS");
+  const digest = createHash("sha256").update(readFileSync(sumsPath)).digest("hex");
+  const fakeHex = mismatch
+    ? (digest[0] === "0" ? `1${digest.slice(1)}` : `0${digest.slice(1)}`)
+    : digest;
+  return writeFakePresealed(fakeHex);
+}
+
+function cleanupDirs(dirs: string[]): void {
+  for (const dir of dirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 describe("heldout-run.mjs", () => {
   it("exits 2 on seal mismatch (placeholder digest cannot match a made-up dir)", () => {
     const dir = makeSealedDir();
-    const result = runHarness({ HELDOUT_DIR: dir });
-    expect(result.status).toBe(2);
-    expect(result.output).toMatch(/mismatch|not recorded|hash check failed/i);
+    const { presealedPath, presealedDir } = makeFakePresealedForDir(dir, true);
+    try {
+      const result = runHarness({ HELDOUT_DIR: dir, HELDOUT_PRESEALED_PATH: presealedPath });
+      expect(result.status).toBe(2);
+      expect(result.output).toMatch(/mismatch|not recorded|hash check failed/i);
+    } finally {
+      cleanupDirs([dir, presealedDir]);
+    }
   });
 
   it("exits 2 when HELDOUT_DIR is missing", () => {
-    const env = { ...process.env };
-    delete env["HELDOUT_DIR"];
-    let status = 0;
-    let output = "";
+    const { presealedPath, presealedDir } = writeFakePresealed("0".repeat(64));
     try {
-      execFileSync("node", [harness], { encoding: "utf8", env });
-      status = 0;
-    } catch (error) {
-      const err = error as { stdout?: string; stderr?: string; status?: number };
-      status = err.status ?? 1;
-      output = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+      const env = { ...process.env, HELDOUT_PRESEALED_PATH: presealedPath };
+      delete env["HELDOUT_DIR"];
+      let status = 0;
+      let output = "";
+      try {
+        execFileSync("node", [harness], { encoding: "utf8", env });
+        status = 0;
+      } catch (error) {
+        const err = error as { stdout?: string; stderr?: string; status?: number };
+        status = err.status ?? 1;
+        output = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+      }
+      expect(status).toBe(2);
+      expect(output).toMatch(/HELDOUT_DIR/);
+    } finally {
+      cleanupDirs([presealedDir]);
     }
-    expect(status).toBe(2);
-    expect(output).toMatch(/HELDOUT_DIR/);
   });
 
   it("refuses a second run when the run log already exists", () => {
@@ -59,11 +98,19 @@ describe("heldout-run.mjs", () => {
     // writes no log, so a repeat refusal proves the gate ordering is stable
     // and the sealed run was never consumed.
     const refusedLog = join(here, "..", "results", "heldout-run.log");
-    const first = runHarness({ HELDOUT_DIR: makeSealedDir() });
-    expect(first.status).toBe(2);
-    const second = runHarness({ HELDOUT_DIR: makeSealedDir() });
-    expect(second.status).toBe(2);
-    expect(second.output).toMatch(/mismatch|not recorded|hash check failed|already exists/i);
-    expect(existsSync(refusedLog)).toBe(false);
+    const firstDir = makeSealedDir();
+    const firstSeal = makeFakePresealedForDir(firstDir, true);
+    const secondDir = makeSealedDir();
+    const secondSeal = makeFakePresealedForDir(secondDir, true);
+    try {
+      const first = runHarness({ HELDOUT_DIR: firstDir, HELDOUT_PRESEALED_PATH: firstSeal.presealedPath });
+      expect(first.status).toBe(2);
+      const second = runHarness({ HELDOUT_DIR: secondDir, HELDOUT_PRESEALED_PATH: secondSeal.presealedPath });
+      expect(second.status).toBe(2);
+      expect(second.output).toMatch(/mismatch|not recorded|hash check failed|already exists/i);
+      expect(existsSync(refusedLog)).toBe(false);
+    } finally {
+      cleanupDirs([firstDir, firstSeal.presealedDir, secondDir, secondSeal.presealedDir]);
+    }
   });
 });

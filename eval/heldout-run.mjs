@@ -38,7 +38,8 @@ import { fileURLToPath } from "node:url";
 import { verifyHashes } from "./check-hashes.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PRESEALED_PATH = join(here, "heldout-presealed.sha256");
+const PRESEALED_ENV = process.env["HELDOUT_PRESEALED_PATH"] ?? "";
+const PRESEALED_PATH = PRESEALED_ENV !== "" ? PRESEALED_ENV : join(here, "heldout-presealed.sha256");
 const RESULTS_DIR = join(here, "results");
 const RUN_LOG = join(RESULTS_DIR, "heldout-run.log");
 const SCORE_MD = join(RESULTS_DIR, "heldout-score.md");
