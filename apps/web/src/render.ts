@@ -785,7 +785,7 @@ ${sessionDraftHtml(snap)}
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script>
 (function(){
-var sessionId=null,pending=false,lastRedacted="",lastDraft="",dirty=false,seq=0,editedSince=false;
+var sessionId=null,pending=false,lastRedacted="",lastDraft="",dirty=false,seq=0,editedSince=false,draftEdited=false,pollTimer=null;
 var serverRev=${snap.revision ?? 0},serverAssessment=null,invSeq=0;
 var input=document.getElementById("transcript-input"),redacted=document.getElementById("redacted-text");
 var btnRedact=document.getElementById("btn-redact"),btnApprove=document.getElementById("btn-approve"),btnAnalyze=document.getElementById("btn-analyze");
@@ -839,8 +839,9 @@ function render(s){
     if(draftText.value===lastDraft||draftText.value===serverDraft){draftText.value=serverDraft;lastDraft=serverDraft;}
     draftText.disabled=false;
     var localMatches=draftText.value===serverDraft;
-    var approvedNow=!!d.approved&&localMatches;
-    draftStatus.textContent=!localMatches?"Edited — approve again":(d.approved?"Approved — ready to copy.":"Review — approve to copy.");
+    var approvedNow=!!d.approved&&localMatches&&!draftEdited;
+    var draftSyncPending=draftDeb!==null;
+    draftStatus.textContent=!localMatches?"Edited — approve again":(d.approved&&!draftEdited?"Approved — ready to copy.":(draftEdited&&draftSyncPending?"Edited — approve again":"Review — approve to copy."));
     btnDraftApprove.disabled=pending||false;
     btnDraftReject.disabled=pending||false;
     var previewClean=redacted.value===lastRedacted;
@@ -932,9 +933,25 @@ function syncPressure(s){
 }
 function refresh(){if(!sessionId)return;pending=true;updateButtons();var my=++seq;fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){pending=false;if(my!==seq)return;editedSince=false;render(s);}).catch(function(){pending=false;updateButtons();});}
 function updateButtons(){btnRedact.disabled=true;btnApprove.disabled=true;btnAnalyze.disabled=true;if(btnDraftApprove)btnDraftApprove.disabled=true;if(btnDraftReject)btnDraftReject.disabled=true;if(btnCopy)btnCopy.disabled=true;}
-function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq)return r;applyResult(r);return r;}).catch(function(){pending=false;if(my!==seq)return;refresh();});}
+function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq){refresh();return r;}applyResult(r);return r;}).catch(function(){pending=false;if(my!==seq){refresh();return;}refresh();});}
+function stopPoll(){if(pollTimer!==null){clearInterval(pollTimer);pollTimer=null;}}
+function startPoll(){
+  stopPoll();
+  pollTimer=setInterval(function(){
+    if(!sessionId)return;
+    var my=seq;
+    fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){
+      if(my!==seq)return;
+      var rev=revOf(s);
+      if(rev!==null&&rev<serverRev)return;
+      render(s);
+    }).catch(function(){});
+  },250);
+}
 function invalidateLocal(scope){
   editedSince=true;
+  draftEdited=false;
+  stopPoll();
   seq++;
   invSeq++;
   var po=document.getElementById("pressure");if(po&&po.parentNode)po.parentNode.removeChild(po);
@@ -987,17 +1004,20 @@ btnApprove.addEventListener("click",function(){
     return mut("/api/session/approve",{},{});
   }));
 });
-btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;if(dirty)return;if(redacted.value!==lastRedacted)return;stateEl.textContent=LABELS["analysis_pending"];run(call("/api/session/analyze",{sessionId:sessionId}));});
-var draftDeb=null;
+btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;if(dirty)return;if(redacted.value!==lastRedacted)return;stateEl.textContent=LABELS["analysis_pending"];startPoll();run(call("/api/session/analyze",{sessionId:sessionId})).then(function(){stopPoll();});});
+var draftDeb=null,draftGen=0;
 draftText.addEventListener("input",function(){
+  draftGen++;
+  draftEdited=true;
+  seq++;
   btnCopy.disabled=true;
   draftStatus.textContent="Edited — approve again";
   if(draftDeb)clearTimeout(draftDeb);
-  var v=draftText.value;
-  draftDeb=setTimeout(function(){if(!sessionId)return;run(mut("/api/session/draft",{text:v},{rebase:true}));},300);
+  var g=draftGen;
+  draftDeb=setTimeout(function(){draftDeb=null;if(!sessionId)return;if(g!==draftGen)return;run(mut("/api/session/draft",{text:draftText.value},{rebase:true}));},300);
 });
-btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value;pending=true;updateButtons();run(mut("/api/session/draft",{text:t},{rebase:true}).then(function(e){if(!e.ok)return e;if(draftText.value!==t)return e;return mut("/api/session/draft/approve",{text:t},{});}));});
-btnDraftReject.addEventListener("click",function(){if(btnDraftReject.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}run(mut("/api/session/draft/reject",{},{}));});
+btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value,g=draftGen;pending=true;updateButtons();run(mut("/api/session/draft",{text:t},{rebase:true}).then(function(e){if(!e.ok)return e;if(draftText.value!==t||g!==draftGen)return e;draftEdited=false;return mut("/api/session/draft/approve",{text:t},{}).then(function(a){if(!a.ok)return a;if(draftText.value!==t||g!==draftGen)return a;draftEdited=false;return a;});}));});
+btnDraftReject.addEventListener("click",function(){if(btnDraftReject.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}draftGen++;draftEdited=false;run(mut("/api/session/draft/reject",{},{}));});
 btnCopy.addEventListener("click",function(){if(btnCopy.disabled)return;var text=draftText.value;function done(){draftNote.textContent="Copied locally. Nothing was sent.";}function fallback(){var t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(t);done();}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){fallback();});}else{fallback();}});
 fetch("/api/session",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}).then(function(r){return r.json();}).then(function(b){sessionId=b.sessionId;refresh();});
 })();
