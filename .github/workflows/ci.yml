@@ -45,6 +45,7 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm -r test
       - run: pnpm -r build
+      - run: bash scripts/ci/repeat-check.sh test/stub.test.ts test/d1-provenance.test.ts
       - run: bash scripts/ci/clean-build-check.sh
       - run: pnpm --filter @second-seat/web exec playwright install --with-deps chromium
       - run: pnpm --filter @second-seat/web exec playwright test
