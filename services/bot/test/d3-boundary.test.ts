@@ -31,7 +31,7 @@ const sealedEntries = readFileSync(join(repo, ".sealed-paths"), "utf8")
   .filter((l) => l !== "" && !l.startsWith("#"));
 const dirEntries = sealedEntries.filter((e) => e.endsWith("/"));
 // Fake key-like sentinel body, split so the source carries no live pattern.
-const SEN = "s" + "k-D3SENTINEL fake";
+const SEN = "s" + "k-" + "D3SENTINELfakefakefake0000";
 const OLD_PATTERN = "s[k]-|Bearer [A-Za-z0-9]|(MODEL|META)_API_KEY=.+";
 
 function git(args: string[], cwd: string) {
@@ -98,6 +98,23 @@ describe("D3 sealed boundary", () => {
       const old = git(["grep", "-nE", OLD_PATTERN, "--", ".", ":!.github/workflows/ci.yml"], fake);
       expect(old.status).toBe(0);
       expect(old.stdout).toContain("sentinel");
+    } finally {
+      rmSync(fake, { recursive: true, force: true });
+    }
+  });
+
+  it("D3-1c: secret scan passes on variable-name docs but flags value-shaped keys", () => {
+    const fake = makeFake();
+    try {
+      writeFileSync(join(fake, "docs-only.sh"), 'export MODEL_API_KEY="$META_API_KEY"\n');
+      git(["add", "-A"], fake);
+      const pass = spawnSync("bash", ["scripts/ci/secret-scan.sh"], { cwd: fake, encoding: "utf8" });
+      expect(pass.status).toBe(0);
+      expect(pass.stdout).toContain("secret scan ok");
+      writeFileSync(join(fake, "src", "leak.ts"), `export const leaked = "${SEN}";\n`);
+      git(["add", "-A"], fake);
+      const fail = spawnSync("bash", ["scripts/ci/secret-scan.sh"], { cwd: fake, encoding: "utf8" });
+      expect(fail.status).not.toBe(0);
     } finally {
       rmSync(fake, { recursive: true, force: true });
     }

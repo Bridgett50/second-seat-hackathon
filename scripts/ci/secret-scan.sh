@@ -19,7 +19,7 @@ done < .sealed-paths
 excludes+=(":(exclude).github/workflows/ci.yml")
 excludes+=(":(exclude)scripts/ci/secret-scan.sh")
 
-matches=$(git grep -nE 's[k]-|Bearer [A-Za-z0-9]|(MODEL|META)_API_KEY=.+' -- . "${excludes[@]}" || true)
+matches=$(git grep -nE 's[k]-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._~+/-]*[a-z0-9][A-Za-z0-9._~+/-]{19,}|(MODEL|META)_API_KEY=['"'"']?[^'"'"'$[:space:]]{8,}' -- . "${excludes[@]}" || true)
 if [ -n "$matches" ]; then
   echo "secret scan found possible secrets:" >&2
   echo "$matches" >&2
