@@ -4,37 +4,50 @@ Pre-existing: the Second Seat idea and an earlier prototype in a separate repo (
 
 ## What it is
 
-Second Seat is a text-input meeting decision assistant: I paste in meeting text, Glimmer redacts the PII, I review the redacted text, and Spark writes a short brief with citations: what was offered, what was asked, what needs a decision. Pressure items are held for review. I edit a reply and copy it out myself. Second Seat never sends a reply to the vendor. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
+Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, Glimmer redacts the PII locally, I review and correct the redacted text, I approve it, Spark writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. Pressure items are held for review. Second Seat never sends a reply to the vendor. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
+
+## Demo modes: offline, recorded, live
+
+- Offline (default): `SECOND_SEAT_MODE` unset means offline analysis; `SECOND_SEAT_TEST_MODE=1` forces offline even when provider credentials are present, so credentials alone can never enable model calls (`apps/web/src/liveConfig.ts`). Fixture mode is the default. No network. No model calls.
+- Recorded: the demo replays precomputed analysis from logged runs (see Results). The video labels every replay as a replay.
+- Live (not performed): live mode requires `SECOND_SEAT_MODE=live` plus `GLIMMER_BASE_URL` plus `META_API_KEY` (`apps/web/src/liveConfig.ts`). The live adapter path was tested only with fake transports. No live model execution was performed for the new live path.
+
+## Statuses
+
+- Implementation: complete (connected paste-to-copy workflow, PRs A4–A8).
+- Offline verification: passed (unit suites at the commit below; Playwright in CI).
+- Live execution verified: NO — not performed.
+- Partner verification received: pending — none.
 
 ## Why it matters
 
 TARGET figures only: none yet. I have not written down my time-per-call or risk numbers. Until I do, there is nothing here but a TARGET label and me telling you vendors talk fast on purpose.
 
+Founder story: PENDING — not yet supplied. User observations: PENDING — not yet supplied. Video URLs: PENDING — not yet supplied.
+
 ## Agent loop
 
 ```mermaid
 flowchart LR
-    A[ingest transcript/screens] --> B[Glimmer redact]
-    B --> C[Spark brief + Shield]
-    C --> D[SAM on masked frames]
+    A[paste transcript text] --> B[Glimmer redact]
+    B --> C[owner review + approve]
+    C --> D[Spark brief + Shield]
     D --> E[deterministic checks]
-    E --> F[owner decision]
-    F -. Second Seat takes no action .-> A
+    E --> F[owner edits + approves exact draft]
+    F --> G[owner copies]
+    G -. Second Seat takes no action .-> A
 ```
 
-I am the only one who acts. The loop ends at me.
+I am the only one who acts. The loop ends at me. Image/SAM features are experimental, outside this text-only core flow, and off by default (live calls require `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`); they appear in no step above and not in the core video.
 
 ## Models
 
 | Model | Job | Settings |
 |---|---|---|
-| muse-spark-1.3 | brief | reasoning medium, seed 42, max tokens 16000, strict JSON schema [eval/results/prompt-freeze.md] |
+| meta-models/Muse-Glimmer-30B | redact PII | self-hosted vLLM on Modal; `GLIMMER_MODEL` in [services/bot/src/private/redact.ts] |
+| muse-spark-1.3 | brief | reasoning medium, seed 42, max tokens 16000, strict JSON schema [eval/results/prompt-freeze.md]; `BRIEF_MODEL` in [services/bot/src/brief/muse.ts] |
 | muse-spark-1.3 | Shield classifier | reasoning low [eval/results/prompt-freeze.md] |
 | muse-spark-1.3 | support judge | reasoning medium [eval/results/prompt-freeze.md] |
-| sam-3.1 | vision regions (experimental, outside the core flow, off by default) | masked frames only [eval/results/prompt-freeze.md] |
-| Muse Glimmer 30B | redact PII | self-hosted vLLM on Modal; recall 10/10 on n=10 [services/bot/fixtures/glimmer-live-eval-n10.json] |
-
-Image/SAM features (sam-3.1, muse-image-1.0) are experimental, outside the text-only core flow, and off by default (live calls require SECOND_SEAT_EXPERIMENTAL_IMAGES=1). No Muse Image row. The hero-chain fixtures do not show it, so it does not go here. A longer Glimmer run was invalid due to a reply-parsing bug. Fixed. Not yet re-run. (No count given: no committed file states it, so I am not printing one.)
 
 Redact sampling: temperature 1.0, top_p 0.95 [eval/results/prompt-freeze.md]. Yes, that is warm for a redactor. It is on my list.
 
@@ -42,13 +55,13 @@ Redact sampling: temperature 1.0, top_p 0.95 [eval/results/prompt-freeze.md]. Ye
 
 Brief scores. Hero (recorded brief scored against synthetic truth): 9 brief entries against 12 truth entries, 8 citations resolved, 11 truth entry match, 8 category agreement [eval/results/hero-brief-score.json]. Metrics: truth entry match = matched truth entries / total truth entries; citations resolved = brief entries with no citation_not_found and no missing_source / total brief entries. Dev meetings (live): 10/10 validator-clean, recall 13/16, category agreement 9/13, total cost estimated $0.0547 [eval/results/dev-briefs.md]. Per meeting: dev01 recall 4/5 at estimated $0.0212 [eval/results/dev01-brief-score.json], dev02 recall 4/5 at estimated $0.0159 [eval/results/dev02-brief-score.json], dev03 recall 5/6 at estimated $0.0176 [eval/results/dev03-brief-score.json]. dev04 and dev05 were not scored (3-call cap) [eval/results/dev-briefs.md].
 
-Seeded-error suite. Fixture judge (synthetic): caught 9/9, Wilson 95% CI [0.701, 1], false alarms 0/4, CI [0, 0.49] [eval/results/support-score.json]. Live frozen run (recorded): same 9/9 catch and 0/4 false alarms with the same CIs [eval/results/support-score-frozen-live.json], but 2 cases mismatched exact grade (F4, M3) [eval/results/support-table-frozen-live.md]. So it catches everything and quibbles twice. Baseline with the judge off (synthetic) catches 0/9, CI [0, 0.299] [eval/results/support-table.md]. Good. That means the judge is doing the work.
+Seeded-error suite. Fixture judge (synthetic): caught 9/9, Wilson 95% CI [0.701, 1], false alarms 0/4, CI [0, 0.49] [eval/results/support-score.json]. Live frozen run (recorded): same 9/9 catch and 0/4 false alarms with the same CIs [eval/results/support-score-frozen-live.json], but 2 cases mismatched exact grade (F4, M3) [eval/results/support-table-frozen-live.md]. Baseline with the judge off (synthetic) catches 0/9, CI [0, 0.299] [eval/results/support-table.md]. Small samples throughout; the judge results describe these cases only.
 
 Load and prompt freeze (mock). Fixture mode only, localhost, says nothing about production [eval/results/load-fixture.md]. HTTP GET x500 at concurrency 20: 0 failed, p50 106.6ms, p90 116.3ms, max 1245ms [eval/results/load-fixture.json]. Brief CLI x20: 0 failed, p50 1.4ms, p90 4.2ms, max 8.9ms [eval/results/load-fixture.json]. Prompts pinned by sha256 [eval/results/prompt-freeze.md].
 
-Glimmer (live): 10/10 legacy entity disappearance, 12 spans returned for 10 expected entities, no misses [services/bot/fixtures/glimmer-live-eval-n10.json]. Metrics: legacy_entity_disappearance = entities absent from masked text (completed cases vs end-to-end over the planned batch); span coverage requires every character of a span masked; char coverage = masked PII chars / total PII chars; over_redaction_rate = masked non-PII chars / total non-PII chars; request completion = completed/planned requests, completed recall vs end-to-end recall. Rescore of the recorded glimmer-run batch: requests 6/8, legacy entity disappearance 18/29 on completed, 18/39 end-to-end; span coverage / over-redaction not re-scorable (predictions not keyed to cases) [services/bot/fixtures/glimmer-run/rescore.json]. That's the older Oct 26 run. The latest 39-item attempt (Oct 26, 4:21 PM CDT) was incomplete: 6/8 cases completed, 18/29 recall on completed cases, 18/39 on the full batch, so it is not a valid score [services/bot/fixtures/glimmer-run/glimmer-live-eval.json].
+Glimmer redaction, historical run (Oct 26, recorded, incomplete — shown with its limitations, not as a headline score): requests 6/8 completed, legacy entity disappearance 18/29 on completed cases and 18/39 end-to-end over the planned batch, `complete: false`; span coverage and over-redaction are not re-scorable because predictions were not keyed to case files [services/bot/fixtures/glimmer-run/rescore.json] [services/bot/fixtures/glimmer-run/eval-summary.json]. The two failures were a reply-parsing error (invalid JSON) and a length finish with empty output [services/bot/fixtures/glimmer-run/rescore.json]. A separate n=10 run scored 10/10 legacy entity disappearance [services/bot/fixtures/glimmer-live-eval-n10.json]; that is a small smoke test and is not the headline. Metrics: legacy_entity_disappearance = entities absent from masked text (completed cases vs end-to-end over the planned batch); span coverage requires every character of a span masked; char coverage = masked PII chars / total PII chars; over_redaction_rate = masked non-PII chars / total non-PII chars; request completion = completed/planned requests.
 
-Tests: 163 passing (core 62, bot 49, web 28, eval 24) from `pnpm -r test` on Oct 26. CI runs typecheck, unit tests, hash check, secret scan; Playwright (12 tests) is run locally.
+Tests at commit ee23c24 (A8 head): `pnpm -r test` gives core 65, eval 24, bot 147, web 95 (331 total). Playwright: 34 tests (`apps/web/e2e`), and CI runs them (.github/workflows/ci.yml) with `SECOND_SEAT_TEST_MODE=1`.
 
 ## Ground truth
 
@@ -56,7 +69,9 @@ Sealed before generation (synthetic) + AMI human annotations (third party). The 
 
 ## Known gaps
 
-From my failure-modes list [docs/failure-modes.md], short version. If SAM finds nothing, we return a full-frame box flagged for spot-check. If Spark throws 429/5xx, we retry up to 4 times, then throw. No fallback to fixtures. That fallback is not implemented, on purpose for now. If spend hits the $5/day cap or the daily call count, we refuse the call outright. No partial calls. Glimmer redaction carries a 180 s timeout and a 2048 max-tokens default, and a failed eval case counts its entities as misses.
+From my failure-modes list [docs/failure-modes.md], short version. If SAM finds nothing, we return a full-frame box flagged for spot-check. If Spark throws 429/5xx, we retry up to 4 times, then throw. No fallback to fixtures. That fallback is not implemented, on purpose for now. If spend hits the $5/day cap or the daily call count (default 50 calls/day), we refuse the call outright. No partial calls. Glimmer redaction carries a 90 s per-request timeout default (`glimmerTimeoutMs` in [services/bot/src/private/redact.ts]) and a 2048 max-tokens default, and a failed eval case counts its entities as misses. The holdout run budget covers the full Modal allocation: 780 s work deadline and 840 s function timeout, plus container startup, model load, ready wait, and teardown [docs/runbook-holdout-run.md] [infra/modal/glimmer_app.py].
+
+On privacy, what the code does and what is tested: the session flow sends the approved redacted text through the privacy gate, and test mode stays offline even with credentials present [apps/web/src/liveConfig.ts]. That is a code behavior with fake-transport tests, not a guarantee that no raw transcript can ever leave.
 
 ## Built with
 
