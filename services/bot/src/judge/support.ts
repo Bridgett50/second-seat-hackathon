@@ -23,7 +23,7 @@
 
 import { BRIEF_API_URL, BRIEF_MAX_COMPLETION_TOKENS, BRIEF_SEED } from "../brief/muse.js";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
-import { requireLiveGatedText, type GatedText } from "../private/gate.js";
+import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const SUPPORT_MODEL = "muse-spark-1.3";
 export const SUPPORT_PROMPT_VERSION = "support-v1";
@@ -195,17 +195,26 @@ function retryAfterMs(header: string | null, attempt: number): number {
   return Math.min(1000 * 2 ** attempt, 30_000);
 }
 
-async function postChat(body: Record<string, unknown>, key: string): Promise<Response> {
+async function postChat(
+  body: Record<string, unknown>,
+  key: string,
+  gated: readonly GatedText[],
+  transport: "support",
+): Promise<Response> {
   const maxAttempts = 4;
   for (let attempt = 0; ; attempt += 1) {
-    const response = await fetch(BRIEF_API_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({ ...body, stream: true }),
-    });
+    // Every attempt (including retries) revalidates approval at the
+    // transport boundary and records a receipt.
+    const response = await dispatchGuarded(transport, gated, attempt + 1, () =>
+      fetch(BRIEF_API_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({ ...body, stream: true }),
+      }),
+    );
     if (response.status === 400) {
       const text = await response.text();
       throw new Error(`muse-spark request rejected (400, not retried): ${text.slice(0, 500)}`);
@@ -296,8 +305,11 @@ export class SparkSupportJudge {
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
-    const entryText = requireLiveGatedText(input.entryText).text;
-    const citedSpans = input.citedSpans.map((span) => requireLiveGatedText(span).text);
+    const entryTextValue = requireLiveGatedText(input.entryText);
+    const citedSpanValues = input.citedSpans.map((span) => requireLiveGatedText(span));
+    const gatedValues: readonly GatedText[] = [entryTextValue, ...citedSpanValues];
+    const entryText = entryTextValue.text;
+    const citedSpans = citedSpanValues.map((span) => span.text);
     await checkCapsPreCall();
     const userMessage = buildSupportUserMessage({ entryId: input.entryId, entryText, citedSpans });
     checkPerCallTokenCap(
@@ -320,6 +332,8 @@ export class SparkSupportJudge {
         ],
       },
       key,
+      gatedValues,
+      "support",
     );
     const { content, usage } = await readStreamedChat(response);
     const { grade, missingQualifier } = parseGrade(content);
