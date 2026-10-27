@@ -18,6 +18,10 @@
 //                        retry budget (maxAttempts) come from it instead of the
 //                        defaults; the token limit drives the live client via
 //                        GLIMMER_MAX_TOKENS.
+//   --run-config-sha256 <hex>
+//                        sha256 of the --run-config file bytes; must match or
+//                        the run exits 2 before any import or fixture work.
+//                        --cases must equal runConfig.dataset.id.
 //   --dry-run            resolve and print the derived runner/client settings
 //                        as a DRYRUN JSON line, then exit 0 without running
 //                        the eval or touching the network.
@@ -35,6 +39,7 @@
 // summary.json,report.txt}; the raw-response log lives under the run dir.
 // Thin CLI around scripts/redaction-eval-runner.mjs (offline except for the
 // injected live redactor, same as before).
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,12 +58,34 @@ if (__casesVal === undefined || __casesVal === "" || __casesVal.startsWith("--")
 }
 
 // A provided run config is loaded before any import or fixture work so a
-// missing/unparseable file fails fast with a clear error.
+// missing/unparseable file fails fast with a clear error. Its sha256 is
+// bound here too: when --run-config-sha256 is given, the file bytes must
+// hash to it or the run exits 2 before any import or fixture work.
 const runConfigPath = flagValue("--run-config");
+const runConfigSha256 = flagValue("--run-config-sha256");
 let runConfig = null;
+let runConfigBytesSha256 = null;
+if (runConfigSha256 !== undefined && runConfigPath === undefined) {
+  console.error("error: --run-config-sha256 requires --run-config");
+  process.exit(2);
+}
 if (runConfigPath !== undefined) {
+  let raw;
   try {
-    runConfig = JSON.parse(readFileSync(runConfigPath, "utf8"));
+    raw = readFileSync(runConfigPath);
+  } catch (err) {
+    console.error(`error: cannot load --run-config ${JSON.stringify(runConfigPath)}: ${err?.message ?? err}`);
+    process.exit(2);
+  }
+  runConfigBytesSha256 = createHash("sha256").update(raw).digest("hex");
+  if (runConfigSha256 !== undefined && runConfigBytesSha256 !== runConfigSha256) {
+    console.error(
+      `error: --run-config-sha256 mismatch for ${JSON.stringify(runConfigPath)}: file sha256 ${runConfigBytesSha256} != ${runConfigSha256}`,
+    );
+    process.exit(2);
+  }
+  try {
+    runConfig = JSON.parse(raw.toString("utf8"));
   } catch (err) {
     console.error(`error: cannot load --run-config ${JSON.stringify(runConfigPath)}: ${err?.message ?? err}`);
     process.exit(2);
@@ -87,6 +114,13 @@ if (runConfig !== null) {
   // The frozen token limit drives the live client, which reads
   // GLIMMER_MAX_TOKENS per request; the frozen config is authoritative.
   process.env["GLIMMER_MAX_TOKENS"] = String(runnerSettings.maxTokens);
+  // The eval dataset is bound to the frozen config: --cases must name the
+  // configured dataset id.
+  const configuredDataset = runConfig?.dataset?.id;
+  if (__casesVal !== configuredDataset) {
+    console.error(`error: --cases ${JSON.stringify(__casesVal)} != run config dataset.id ${JSON.stringify(configuredDataset)}`);
+    process.exit(2);
+  }
 }
 
 // --dry-run: report the resolved runner/client settings derived from the
@@ -98,6 +132,7 @@ if (cliArgs.includes("--dry-run")) {
       JSON.stringify({
         dryRun: true,
         runConfig: runConfigPath ?? null,
+        configSha256: runConfigBytesSha256,
         concurrency: runnerSettings?.concurrency ?? 2,
         runner: runnerSettings,
         clientOptions,
@@ -144,6 +179,25 @@ const result = await runEval({
 
 console.log(result.report);
 console.log(`run: ${result.runDir}`);
+
+// Bind the run to the frozen config it consumed: the run dir carries the
+// config identity file, and the JSON summary names the config sha too.
+if (runConfig !== null) {
+  writeFileSync(
+    join(result.runDir, "run-config-identity.json"),
+    JSON.stringify(
+      {
+        configSha256: runConfigBytesSha256,
+        datasetId: runConfig?.dataset?.id ?? null,
+        modelRevision: runConfig?.model?.revision ?? null,
+        imageRef: runConfig?.image?.ref ?? null,
+      },
+      null,
+      2,
+    ),
+  );
+  result.output = { ...result.output, runConfigSha256: runConfigBytesSha256 };
+}
 
 const out = process.env["GLIMMER_RESULT_JSON"] ?? "";
 if (out !== "") {

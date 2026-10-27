@@ -194,14 +194,23 @@ function goodConfig(r: string, over: Record<string, unknown> = {}) {
     `out = {"ds": lc.dataset_sha256(ds), "src": lc.packaged_source_sha256(${JSON.stringify(r)}, "dummyx")}`,
   ].join("\n"));
   const cfg = {
-    dataset: "dummyx",
-    dataset_sha256: res.out.ds,
-    source_sha: headSha(r),
-    source_sha256: res.out.src,
-    image: DIGEST,
-    model: "meta-models/Muse-Glimmer-30B",
-    model_revision: REV,
+    configVersion: 1,
+    sourceSha: headSha(r),
+    sourceSha256: res.out.src,
+    dataset: { id: "dummyx", sha256: res.out.ds },
+    model: { name: "meta-models/Muse-Glimmer-30B", revision: REV },
+    image: { ref: DIGEST, digest: `sha256:${"b".repeat(64)}` },
+    prompt: { sha256: "c".repeat(64) },
+    schema: { sha256: "d".repeat(64) },
+    scorer: { sha256: "f".repeat(64) },
+    decoding: { temperature: 0, seed: 1, reasoning: "low" },
+    tokenLimits: { maxTokens: 512 },
+    timeouts: { requestMs: 60000, workDeadlineS: 700, functionTimeoutS: 840 },
+    retry: { maxAttempts: 1 },
+    modal: { allocations: 1, concurrency: 1, maxConcurrency: 2, scoredCanary: true, teardown: true, evidenceDownload: "complete" },
     review: { status: "reviewed", reviewer: "Dummy Reviewer", reviewed_at: "2026-10-27", dataset_sha256: res.out.ds },
+    glimmerDemoRequests: 0,
+    budget: { status: "PROPOSED", modalUsd: 2, sparkUsd: 0.1, totalUsd: 2.1 },
     ...over,
   };
   const p = join(r, `cfg-${Math.random().toString(36).slice(2)}.json`);
@@ -234,7 +243,7 @@ _tmp = tempfile.mkdtemp()
 _orig = pathlib.Path
 ga.Path = lambda p, *a: _orig(_tmp) / str(p).lstrip("/") if str(p).startswith("/results") else _orig(p, *a)
 ga.serve.f()
-ga.eval_in_container.f("dummyx")
+ga.eval_in_container.f("dummyx", ga._LAUNCH_CONFIG_SHA256)
 out = CMDS
 `;
 
@@ -300,7 +309,7 @@ describe("D4 config-bytes binding and run-config mapping", () => {
     const env = { GLIMMER_EVAL_DATASET: "dummyx", GLIMMER_LAUNCH_CONFIG: path };
     const ok = app(r, env, MAIN("dummyx", path));
     expect(ok.out).toBe(null);
-    expect(ok.rec.spawn).toEqual([[["dummyx"], {}]]);
+    expect(ok.rec.spawn).toEqual([[[ "dummyx", shaFile(path) ], {}]]);
     expect(ok.record.config_sha256).toBe(shaFile(path));
     expect(ok.record.launcher_sha256).toBe(launcherSha(r));
     // Same path, same parsed config, different bytes (trailing newline):
@@ -365,7 +374,7 @@ except SystemExit as e:
     const env = { GLIMMER_EVAL_DATASET: "dummyx", GLIMMER_LAUNCH_CONFIG: path };
     const ok = app(r, env, MAIN("dummyx", path));
     expect(ok.out).toBe(null);
-    expect(ok.rec.spawn).toEqual([[["dummyx"], {}]]);
+    expect(ok.rec.spawn).toEqual([[[ "dummyx", shaFile(path) ], {}]]);
     // Config bytes untouched; only the launcher source drifts after import.
     const drifted = app(r, env, `
 with open(${JSON.stringify(join(r, "infra", "modal", "launch_contract.py"))}, "a", encoding="utf-8") as _fh:
@@ -396,7 +405,7 @@ except SystemExit as e:
     expect(mapped.model_revision).toBe(REV_D4);
     expect(mapped.dataset).toBe("dummyx");
     const cfgPath = join(r, "launch-d4.json");
-    writeFileSync(cfgPath, JSON.stringify(mapped));
+    writeFileSync(cfgPath, JSON.stringify(cfg));
 
     // Image construction uses the exact configured immutable digest.
     const env = { GLIMMER_EVAL_DATASET: "dummyx", GLIMMER_LAUNCH_CONFIG: cfgPath };
@@ -418,7 +427,7 @@ except SystemExit as e:
     // recording the consumed config sha and launcher identity.
     const launched = app(r, env, MAIN("dummyx", cfgPath));
     expect(launched.out).toBe(null);
-    expect(launched.rec.spawn).toEqual([[["dummyx"], {}]]);
+    expect(launched.rec.spawn).toEqual([[[ "dummyx", shaFile(cfgPath) ], {}]]);
     expect(launched.record.config_sha256).toBe(shaFile(cfgPath));
     expect(launched.record.launcher_sha256).toBe(launcherSha(r));
 
@@ -509,7 +518,7 @@ except SystemExit as e:
     // Alias path, identical bytes: accepted deliberately.
     const ok = app(r, env, MAIN("dummyx", alias));
     expect(ok.out).toBe(null);
-    expect(ok.rec.spawn).toEqual([[["dummyx"], {}]]);
+    expect(ok.rec.spawn).toEqual([[[ "dummyx", shaFile(path) ], {}]]);
     expect(ok.record.config_sha256).toBe(shaFile(path));
     // Alias replaced by a same-shaped file with different bytes: refused.
     unlinkSync(alias);

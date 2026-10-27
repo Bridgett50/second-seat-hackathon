@@ -13,6 +13,11 @@
 const HEX_40 = /^[0-9a-fA-F]{40}$/;
 const HEX_64 = /^[0-9a-fA-F]{64}$/;
 
+/** Frozen canonical run-config version. The canonical nested RunConfig is
+ * the only frozen input file; the flat launch dict is a bound projection.
+ * `configVersion` is optional, but when present it must equal this. */
+export const RUN_CONFIG_VERSION = 1;
+
 export const RUN_CONFIG_REQUIRED_KEYS: readonly string[] = [
   "sourceSha",
   "dataset",
@@ -71,6 +76,10 @@ export function validateRunConfig(cfg: unknown): string[] {
     if (!(key in cfg)) {
       errors.push(`${key} is missing`);
     }
+  }
+
+  if ("configVersion" in cfg && cfg["configVersion"] !== RUN_CONFIG_VERSION) {
+    errors.push("configVersion: unsupported version");
   }
 
   const sourceSha = cfg["sourceSha"];
