@@ -833,6 +833,8 @@ function render(s){
   else payloadStatus.textContent="Prepared (not dispatched)";}
   syncPressure(s);
   var d=s.draft||null;
+  serverDraftApproved=!!(d&&d.approved);
+  if(serverDraftApproved){draftRejectSent=false;}
   if(draftSection)draftSection.hidden=!d;
   if(d){
     var serverDraft=d.text||"";
@@ -1005,18 +1007,21 @@ btnApprove.addEventListener("click",function(){
   }));
 });
 btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;if(dirty)return;if(redacted.value!==lastRedacted)return;stateEl.textContent=LABELS["analysis_pending"];startPoll();run(call("/api/session/analyze",{sessionId:sessionId})).then(function(){stopPoll();});});
-var draftDeb=null,draftGen=0;
+var draftDeb=null,draftGen=0,serverDraftApproved=false,draftApproveInflight=false,draftRejectSent=false;
 draftText.addEventListener("input",function(){
   draftGen++;
   draftEdited=true;
   seq++;
   btnCopy.disabled=true;
   draftStatus.textContent="Edited — approve again";
+  if(serverDraftApproved||draftApproveInflight){
+    if(!draftRejectSent){draftRejectSent=true;run(mut("/api/session/draft/reject",{},{rebase:true}));}
+  }
   if(draftDeb)clearTimeout(draftDeb);
   var g=draftGen;
   draftDeb=setTimeout(function(){draftDeb=null;if(!sessionId)return;if(g!==draftGen)return;run(mut("/api/session/draft",{text:draftText.value},{rebase:true}));},300);
 });
-btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value,g=draftGen;pending=true;updateButtons();run(mut("/api/session/draft",{text:t},{rebase:true}).then(function(e){if(!e.ok)return e;if(draftText.value!==t||g!==draftGen)return e;draftEdited=false;return mut("/api/session/draft/approve",{text:t},{}).then(function(a){if(!a.ok)return a;if(draftText.value!==t||g!==draftGen)return a;draftEdited=false;return a;});}));});
+btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value,g=draftGen;draftApproveInflight=true;draftRejectSent=false;pending=true;updateButtons();run(mut("/api/session/draft",{text:t},{rebase:true}).then(function(e){if(!e.ok)return e;if(draftText.value!==t||g!==draftGen)return e;draftEdited=false;return mut("/api/session/draft/approve",{text:t},{}).then(function(a){if(!a.ok)return a;if(draftText.value!==t||g!==draftGen)return a;draftEdited=false;return a;});}).then(function(r){draftApproveInflight=false;return r;},function(err){draftApproveInflight=false;throw err;}));});
 btnDraftReject.addEventListener("click",function(){if(btnDraftReject.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}draftGen++;draftEdited=false;run(mut("/api/session/draft/reject",{},{}));});
 btnCopy.addEventListener("click",function(){if(btnCopy.disabled)return;var text=draftText.value;function done(){draftNote.textContent="Copied locally. Nothing was sent.";}function fallback(){var t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(t);done();}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){fallback();});}else{fallback();}});
 fetch("/api/session",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}).then(function(r){return r.json();}).then(function(b){sessionId=b.sessionId;refresh();});
