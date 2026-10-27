@@ -14,7 +14,7 @@
  */
 import type { PressureLabel, PressureTactic } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
-import { PROMPT_CACHE_KEY } from "../promptCache.js";
+import { PROMPT_CACHE_KEYS } from "../promptCache.js";
 import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const PRESSURE_MODEL = "muse-spark-1.3";
@@ -302,7 +302,7 @@ export class SparkPressureClassifier {
     const response = await postChat(
       {
         model: PRESSURE_MODEL,
-        prompt_cache_key: PROMPT_CACHE_KEY,
+        prompt_cache_key: PROMPT_CACHE_KEYS.shield,
         reasoning_effort: "low",
         seed: PRESSURE_SEED,
         max_completion_tokens: PRESSURE_MAX_COMPLETION_TOKENS,

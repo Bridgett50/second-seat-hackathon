@@ -161,6 +161,20 @@ if ! grep -q ".agents/AGENTS.md" "$REPO/AGENTS.md" 2>/dev/null; then H10_BAD="${
 if grep -q "Failing test first" "$REPO/AGENTS.md" 2>/dev/null; then H10_BAD="${H10_BAD} pointer-copies-rules;"; fi
 if [ -z "$H10_BAD" ]; then ok H10; else bad H10 "$H10_BAD"; fi
 
+# ---------- H12: root pointer resolves ----------
+H12_BAD=""
+H12_TOKS="$(grep -o -E '[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+(:[0-9]+)?|[A-Za-z0-9_.-]*\.(md|json|sh)(:[0-9]+)?' "$REPO/AGENTS.md" 2>/dev/null | sed -E 's/:[0-9]+$//; s/[`.,;:!?)]+$//; s/^[(`]+//' | sort -u)"
+H12_UNRESOLVED=""
+for H12_T in $H12_TOKS; do
+  [ -z "$H12_T" ] && continue
+  if [ ! -e "$REPO/$H12_T" ]; then H12_UNRESOLVED="${H12_UNRESOLVED} $H12_T"; fi
+done
+if [ -n "$H12_UNRESOLVED" ]; then H12_BAD="${H12_BAD} unresolved:$H12_UNRESOLVED;"; fi
+H12_LINES="$(grep -c '[^[:space:]]' "$REPO/AGENTS.md" 2>/dev/null || true)"
+if [ "$H12_LINES" -gt 3 ]; then H12_BAD="${H12_BAD} too-many-lines=$H12_LINES;"; fi
+if ! printf '%s\n' "$H12_TOKS" | grep -qxF ".agents/AGENTS.md"; then H12_BAD="${H12_BAD} no-agents-ref;"; fi
+if [ -z "$H12_BAD" ]; then ok H12; else bad H12 "$H12_BAD"; fi
+
 # ---------- H11: prompt injection ----------
 H11D="$(mktemp -d)"
 H11BIN="$(mktemp -d)"
