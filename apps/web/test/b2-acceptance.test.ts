@@ -20,6 +20,21 @@ function sse(content: string): Response {
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
+/** The fake echoes the meeting id the app actually requested (identity check). */
+function sparkUserText(requestBody: string): string {
+  try {
+    const b = JSON.parse(requestBody) as { messages?: { role?: string; content?: string }[] };
+    return (b.messages ?? []).find((m) => m.role === "user")?.content ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function briefBody(requestBody: string): string {
+  const m = /^meetingId: (.+)$/m.exec(sparkUserText(requestBody));
+  return JSON.stringify({ ...BRIEF, meetingId: m ? m[1] : "missing" });
+}
+
 const BRIEF = {
   meetingId: "m",
   model: "muse-spark-1.3",
@@ -102,7 +117,7 @@ describe("B2 session receipts", () => {
     const pending = store.analyze(id);
     await sawFetch;
     store.setTranscript(id, "A different meeting entirely");
-    release(sse(JSON.stringify(BRIEF)));
+    release(sse(JSON.stringify({ ...BRIEF, meetingId: id })));
     const after = await pending;
     expect(fetches).toBe(1);
     expect(after.result).toBeNull();
@@ -120,9 +135,9 @@ describe("B2 session receipts", () => {
 
   it("B2-4 (session) preflight refusal never reports the payload as dispatched", async () => {
     let fetches = 0;
-    const store = liveStore((async () => {
+    const store = liveStore((async (_url: unknown, init?: { body?: unknown }) => {
       fetches += 1;
-      return sse(JSON.stringify(BRIEF));
+      return sse(briefBody(String(init?.body ?? "")));
     }) as typeof fetch);
     const id = store.createSession();
     store.setTranscript(id, "Renewal moves to Friday");
@@ -137,7 +152,8 @@ describe("B2 session receipts", () => {
   });
 
   it("B2-7 (session) completed analysis exposes the transport receipt for the approved payload", async () => {
-    const store = liveStore((async () => sse(JSON.stringify(BRIEF))) as typeof fetch);
+    const store = liveStore((async (_url: unknown, init?: { body?: unknown }) =>
+      sse(briefBody(String(init?.body ?? "")))) as typeof fetch);
     const id = store.createSession();
     store.setTranscript(id, "Renewal moves to Friday");
     await store.redact(id);
