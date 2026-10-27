@@ -77,6 +77,10 @@ export function scoreSpans(text, expectedSpans, predictedSpans) {
 
 // Find every occurrence of each entity string in text; each occurrence is its
 // own annotated span (so a repeated email/name yields one span per occurrence).
+// Spans are non-overlapping: when candidates overlap (e.g. "Zoë" inside
+// "Zoë Callahan" at the same offset), the longest match wins and the shorter
+// nested span is dropped. Non-overlapping repeats (standalone "Zoë" elsewhere)
+// are each kept.
 export function annotateOccurrences(text, entities) {
   const spans = [];
   for (const e of entities ?? []) {
@@ -90,8 +94,21 @@ export function annotateOccurrences(text, entities) {
       if (from > text.length) break;
     }
   }
-  spans.sort((a, b) => a.start - b.start || a.end - b.end);
-  return spans;
+  // Longest match first so it wins any overlap; ties break by earliest start.
+  spans.sort((a, b) => b.end - b.start - (a.end - a.start) || a.start - b.start);
+  const accepted = [];
+  for (const s of spans) {
+    let overlaps = false;
+    for (const a of accepted) {
+      if (s.start < a.end && a.start < s.end) {
+        overlaps = true;
+        break;
+      }
+    }
+    if (!overlaps) accepted.push(s);
+  }
+  accepted.sort((a, b) => a.start - b.start || a.end - b.end);
+  return accepted;
 }
 
 // Every planned case must appear exactly once in the records: no missing,

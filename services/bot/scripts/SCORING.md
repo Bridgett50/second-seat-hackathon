@@ -99,6 +99,21 @@ Applies to `scripts/redaction-eval-lib.mjs` (pure scorers) and
 - The raw log lives under the run dir (`<runDir>/glimmer-raw.jsonl`), opened
   with exclusive create, so repeats cannot append into another run's file.
 
+## Development vs holdout inputs
+
+- `fixtures/pii` and `fixtures/pii-scoring` are DEVELOPMENT sets: iterate on
+  them freely, tune prompts and thresholds against them, and run the eval CLI
+  against them by default (`node scripts/redaction-eval.mjs`, `--cases pii`).
+- `fixtures/holdout-v1` is the frozen holdout: newly authored, fully synthetic
+  transcripts pinned by `MANIFEST.json` (`inference_runs: 0`,
+  `review.status: pending-manual-review`). It is used ONLY when explicitly
+  named (`--cases holdout-v1`), and only under the frozen config in
+  `docs/runbook-holdout-run.md`. Verify it any time with
+  `node scripts/holdout-freeze.mjs` (offline hash + verbatim-annotation check).
+- Never tune prompts, patterns, or thresholds against holdout misses. A valid
+  evaluation may produce a poor result; acceptance depends on trustworthy
+  measurement, not a favorable percentage.
+
 ## Logging boundary
 
 - Raw-response logging writes NOTHING unless `GLIMMER_RAW_DIR` is explicitly
