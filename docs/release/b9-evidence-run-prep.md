@@ -75,7 +75,7 @@ rechecked before authorization; not enforced by the current timeout.
 | Proposed ceiling | $2.10 ($2 Modal + $0.10 Spark) | proposed limit, prices to be rechecked before authorization; not enforced by the current timeout |
 | Actual cost | ____ | to be filled from receipt after an authorized run |
 
-Any prepared holdout config must be re-frozen before launch — re-freeze it after the E10 decoding/prompt change (the frozen prompt hash and decoding row change; E10, draft PR #76).
+Any prepared holdout config must be re-frozen before launch — re-freeze it after the E10 decoding/prompt change (the frozen inline redaction prompt hash and decoding row change; E10, draft PR #76; hashed by the E14 prompt-freeze).
 
 ## 3) Execution checklist (do not run — preparation only)
 

@@ -22,19 +22,20 @@ describe("E14 ledger draft fixes", () => {
     }
   });
 
-  it("E14-2 no stale decoding; each doc says temperature 0.0; README sampling line cites E10/#76 and deploy.md", () => {
+  it("E14-2 no stale decoding; each doc says temperature 0.0; README sampling line cites E10/#76 and vllm.md, never deploy.md:243", () => {
     for (const f of [README, RUNBOOK, B9]) {
       expect(f).not.toContain("temperature 1.0");
       expect(f).not.toContain("top_k 64");
       expect(f).not.toMatch(/never greedy/);
       expect(f).toMatch(/temperature 0(\.0)?/);
     }
+    expect(README).not.toContain("deploy.md:243");
     const line =
       README.split("\n").find(
         (l) =>
           /temperature 0(\.0)?/.test(l) &&
           /E10|#76/.test(l) &&
-          /deploy\.md/.test(l),
+          /vllm\.md/.test(l),
       ) ?? "";
     expect(line).not.toBe("");
     expect(line).toMatch(/temperature 0(\.0)?/);

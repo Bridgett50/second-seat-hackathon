@@ -32,7 +32,7 @@ trustworthy measurement, not a favorable percentage.
 | Retry policy | None (`retries=0`; no rerun cherry-picking — see publish rules) |
 | Architecture | Existing `.spawn()` + Volume architecture (`eval_in_container.spawn(dataset)`, `glimmer-weights` + `glimmer-results` Volumes); scale-to-zero; one unique run dir `/results/<run_id>/` per run, never reused |
 
-Any prepared holdout config must be re-frozen before a launch — re-freeze it after the E10 decoding and inline-prompt change, which alters the frozen prompt hash and decoding row (E10, draft PR #76).
+Any prepared holdout config must be re-frozen before a launch — re-freeze it after the E10 decoding and inline-prompt change, which alters the frozen inline redaction prompt hash and decoding row (E10, draft PR #76; hashed by the E14 prompt-freeze).
 
 ### Timeouts vs billed allocation time
 
