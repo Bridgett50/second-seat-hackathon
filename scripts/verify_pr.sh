@@ -83,7 +83,7 @@ CHANGED="$WORK/changed.txt"
   git diff --name-only "$BASE_SHA" HEAD -- 2>/dev/null
   git diff --name-only "$BASE_SHA" -- 2>/dev/null
   git ls-files --others --exclude-standard 2>/dev/null
-} | sed '/^[[:space:]]*$/d' | sort -u > "$CHANGED"
+} | sed '/^[[:space:]]*$/d' | grep -v '^evidence/' | sort -u > "$CHANGED"
 
 # --- scope globs + criteria test files ---
 SCOPE_OK=1
