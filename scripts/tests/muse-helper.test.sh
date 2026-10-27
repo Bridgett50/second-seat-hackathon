@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# muse-helper.test.sh — self-test for muse_guard.sh / verify_pr.sh.
+# muse-helper.test.sh — self-test for .muse/guard.sh / .muse/verify_pr.sh.
 # No muse/model calls. Runs in mktemp dirs only. Dummy sentinel path:
 # sentinel/heldout-sealed/dummy.txt (never real sealed data).
 REPO="$(git rev-parse --show-toplevel)"
-GUARD="$REPO/scripts/muse_guard.sh"
-VERIFY="$REPO/scripts/verify_pr.sh"
+GUARD="$REPO/.muse/guard.sh"
+VERIFY="$REPO/.muse/verify_pr.sh"
 SENTINEL="sentinel/heldout-sealed/dummy.txt"
 FAIL=0
 
@@ -132,7 +132,7 @@ rm -rf "$R"
 
 # ---------- H9: stop blocks twice, then allows ----------
 R="$(mkbase)"
-cp -r "$REPO/scripts" "$R/scripts"
+cp -r "$REPO/scripts" "$R/scripts"; mkdir -p "$R/.muse"; cp "$REPO/.muse/verify_pr.sh" "$R/.muse/verify_pr.sh"
 mkdir -p "$R/.muse"
 printf 'scripts/*\nscripts/tests/*\n.muse/*\n' > "$R/.muse/scope.txt"
 printf '{"base":"HEAD","tests":[{"id":"T9","cmd":"false","files":[]}]}' > "$R/.muse/criteria.json"

@@ -47,14 +47,14 @@ run_agent() {
 }
 
 run_agent "$TASK" "" "$EVID/session-1.jsonl"
-VERIFY_OUT="$EVID/verify-1" bash scripts/verify_pr.sh >"$EVID/verify-1.json" 2>"$EVID/verify-1.err"
+VERIFY_OUT="$EVID/verify-1" bash .muse/verify_pr.sh >"$EVID/verify-1.json" 2>"$EVID/verify-1.err"
 if [ $? -eq 0 ]; then passed=true; else passed=false; fi
 
 while [ "$passed" = false ] && [ "$attempt" -lt 3 ]; do
   attempt=$((attempt + 1))
   probs="$(python3 -c 'import json; print(json.dumps(json.load(open("'"$EVID/verify-$((attempt - 1)).json"'")).get("problems", [])))' 2>/dev/null || echo '[]')"
   run_agent "" "Fix only these problems, changing nothing else: $probs" "$EVID/session-$attempt.jsonl"
-  VERIFY_OUT="$EVID/verify-$attempt" bash scripts/verify_pr.sh >"$EVID/verify-$attempt.json" 2>"$EVID/verify-$attempt.err"
+  VERIFY_OUT="$EVID/verify-$attempt" bash .muse/verify_pr.sh >"$EVID/verify-$attempt.json" 2>"$EVID/verify-$attempt.err"
   if [ $? -eq 0 ]; then passed=true; fi
 done
 

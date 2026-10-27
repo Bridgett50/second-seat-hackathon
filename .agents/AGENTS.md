@@ -24,6 +24,6 @@ Model: `muse-spark-1.3`, Standard mode. Expected cost ~$3 per PR.
 For each run report: files changed, commands run, fail-then-pass test output,
 and limitations.
 
-The hooks in `.muse/hooks.json` (`scripts/muse_guard.sh`) enforce part of
+The hooks in `.muse/hooks.json` (`.muse/guard.sh`) enforce part of
 this: `pre` blocks sealed-path access and out-of-scope edits; `stop` blocks
-stopping while `scripts/verify_pr.sh` fails (at most twice per session).
+stopping while `.muse/verify_pr.sh` fails (at most twice per session).
