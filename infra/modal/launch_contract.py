@@ -26,13 +26,42 @@ def _check_dataset(dataset):
         raise ValueError(f"dataset selection missing or invalid: {dataset!r}")
 
 
-def eval_command(dataset, out_dir, run_id, run_config_path=None):
+def eval_command(dataset, out_dir, run_id, run_config_path, run_config_sha256):
     """Node eval invocation for a dataset.
 
-    run_config_path is the frozen run config the eval must consume: when
-    given (non-blank) it is threaded as `--run-config <path>` so the eval
-    inherits the frozen token/retry/decoding settings instead of defaults.
-    Omitted (None/blank) preserves the legacy bare command.
+    run_config_path is the frozen canonical run config the eval must
+    consume and run_config_sha256 is the sha256 hex of its exact bytes:
+    both are required (a blank path or sha raises ValueError) and are
+    threaded as `--run-config <path> --run-config-sha256 <hex>` so the
+    eval inherits the frozen token/retry/decoding settings instead of
+    defaults and refuses staged bytes that drifted.
+    """
+    _check_dataset(dataset)
+    if run_config_path is None or str(run_config_path) == "":
+        raise ValueError("run_config_path is required: the frozen run config must be staged")
+    if run_config_sha256 is None or str(run_config_sha256) == "":
+        raise ValueError("run_config_sha256 is required: the frozen run config sha must be bound")
+    return [
+        "node",
+        "scripts/redaction-eval.mjs",
+        "--cases",
+        dataset,
+        "--out-dir",
+        out_dir,
+        "--run-id",
+        run_id,
+        "--run-config",
+        str(run_config_path),
+        "--run-config-sha256",
+        str(run_config_sha256),
+    ]
+
+
+def legacy_eval_command(dataset, out_dir, run_id, run_config_path=None):
+    """Explicit legacy bare eval command (no sha binding).
+
+    Never called by any frozen launch path; kept only for offline tooling
+    that intentionally runs without a frozen config.
     """
     _check_dataset(dataset)
     cmd = [
@@ -48,6 +77,86 @@ def eval_command(dataset, out_dir, run_id, run_config_path=None):
     if run_config_path is not None and str(run_config_path) != "":
         cmd = cmd + ["--run-config", str(run_config_path)]
     return cmd
+
+
+#: Frozen canonical run-config version (mirrors
+#: services/bot/src/release/runConfig.ts RUN_CONFIG_VERSION).
+RUN_CONFIG_VERSION = 1
+
+_LEGACY_FLAT_KEYS = ("model_revision", "dataset_sha256", "source_sha", "source_sha256")
+
+
+def _projection_missing(canonical, path):
+    """Value at dotted path, or None when any hop is missing/None."""
+    current = canonical
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+        if current is None:
+            return None
+    return current
+
+
+def project_launch(canonical):
+    """Project a canonical nested run config to the flat launch dict.
+
+    Returns (flat_dict_or_None, errors_list), mirroring the TypeScript
+    toLaunchConfig mapping exactly: dataset.id->dataset,
+    dataset.sha256->dataset_sha256, sourceSha->source_sha,
+    sourceSha256->source_sha256 when non-empty, image.ref->image,
+    model.name->model, model.revision->model_revision, review copied.
+    Every error is a distinct string starting with "projection:".
+    """
+    if not isinstance(canonical, dict):
+        return None, ["projection: launch config must be an object"]
+    for key in _LEGACY_FLAT_KEYS:
+        if key in canonical:
+            return None, ["projection: legacy flat launch config refused"]
+    for key in ("dataset", "model", "image"):
+        if not isinstance(canonical.get(key), dict):
+            return None, ["projection: legacy flat launch config refused"]
+    version = canonical.get("configVersion")
+    if isinstance(version, bool) or version != RUN_CONFIG_VERSION:
+        return None, ["projection: unsupported configVersion"]
+    for path in (
+        "dataset.id",
+        "dataset.sha256",
+        "sourceSha",
+        "image.ref",
+        "image.digest",
+        "model.name",
+        "model.revision",
+        "review",
+    ):
+        if _projection_missing(canonical, path) is None:
+            return None, [f"projection: missing {path}"]
+    image_ref = canonical["image"]["ref"]
+    image_digest = canonical["image"]["digest"]
+    if (
+        not isinstance(image_ref, str)
+        or not isinstance(image_digest, str)
+        or not image_ref.endswith("@" + image_digest)
+    ):
+        return None, ["projection: image digest mismatch"]
+    flat = {
+        "dataset": canonical["dataset"]["id"],
+        "dataset_sha256": canonical["dataset"]["sha256"],
+        "source_sha": canonical["sourceSha"],
+        "image": image_ref,
+        "model": canonical["model"]["name"],
+        "model_revision": canonical["model"]["revision"],
+        "review": dict(canonical["review"]) if isinstance(canonical["review"], dict) else canonical["review"],
+    }
+    source_sha256 = canonical.get("sourceSha256")
+    if isinstance(source_sha256, str) and source_sha256 != "":
+        flat["source_sha256"] = source_sha256
+    return flat, []
+
+
+def config_sha256(raw_bytes):
+    """Hex sha256 over the exact frozen config bytes."""
+    return hashlib.sha256(bytes(raw_bytes)).hexdigest()
 
 
 _VLLM_MODEL = "meta-models/Muse-Glimmer-30B"

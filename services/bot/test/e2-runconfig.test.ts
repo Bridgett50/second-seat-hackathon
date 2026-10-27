@@ -96,13 +96,15 @@ function launchContract(prog: string) {
 }
 
 describe("E2 frozen run config reaches the launcher", () => {
-  it("E2-1: eval command threads --run-config <path>", () => {
+  it("E2-1: eval command threads --run-config <path> and --run-config-sha256 <hex>", () => {
     const cfgPath = join(mkdtempSync(join(tmpdir(), "e2-")), "run-config.json");
+    const cfgSha = "ab".repeat(32);
     const out = launchContract(
       [
         `cfg_path = ${JSON.stringify(cfgPath)}`,
+        `cfg_sha = ${JSON.stringify(cfgSha)}`,
         "try:",
-        '    cmd = lc.eval_command("dummyx", "/results", "run-e2-1", cfg_path)',
+        '    cmd = lc.eval_command("dummyx", "/results", "run-e2-1", cfg_path, cfg_sha)',
         "except TypeError:",
         "    cmd = None",
         'print("E2OUT " + json.dumps({"cmd": cmd, "argv": None}))',
@@ -119,6 +121,8 @@ describe("E2 frozen run config reaches the launcher", () => {
       "run-e2-1",
       "--run-config",
       cfgPath,
+      "--run-config-sha256",
+      cfgSha,
     ]);
   });
 

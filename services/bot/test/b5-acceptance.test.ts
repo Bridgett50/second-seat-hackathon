@@ -86,7 +86,7 @@ const blockers = (cfg: unknown, root: string, invoked?: string): string[] =>
 describe("B5 launch contract (dummy datasets only)", () => {
   it("B5-1: selecting dummy dataset X packages and invokes X", () => {
     const root = dummyRoot();
-    expect(py(`out = lc.eval_command("dummyx", "/results", "run-1")`)).toEqual([
+    expect(py(`out = lc.eval_command("dummyx", "/results", "run-1", "<config>", "<config_sha256>")`)).toEqual([
       "node",
       "scripts/redaction-eval.mjs",
       "--cases",
@@ -95,6 +95,10 @@ describe("B5 launch contract (dummy datasets only)", () => {
       "/results",
       "--run-id",
       "run-1",
+      "--run-config",
+      "<config>",
+      "--run-config-sha256",
+      "<config_sha256>",
     ]);
     const dirs: Array<[string, string]> = py(`out = lc.package_dirs("/r", "dummyx")`);
     const fixtureDirs = dirs.filter(([l]) => l.includes("/fixtures/"));
@@ -123,7 +127,7 @@ describe("B5 launch contract (dummy datasets only)", () => {
     const root = dummyRoot();
     const raised = py(`
 try:
-    lc.eval_command("", "/results", "run-1")
+    lc.eval_command("", "/results", "run-1", "<config>", "<config_sha256>")
     a = None
 except ValueError as e:
     a = str(e)
@@ -376,7 +380,7 @@ out = [run(200), run(0), run(400)]`);
 
   it("B5-12: documented commands and tested command construction agree", () => {
     const book = readFileSync(RUNBOOK, "utf8");
-    const evalCmd: string[] = py(`out = lc.eval_command("<dataset>", "/results", "<run_id>")`);
+    const evalCmd: string[] = py(`out = lc.eval_command("<dataset>", "/results", "<run_id>", "<config>", "<config_sha256>")`);
     expect(book).toContain("`" + evalCmd.join(" ") + "`");
     expect(book).toMatch(/modal run --detach infra\/modal\/glimmer_app\.py --dataset <dataset> --config <config>/);
     expect(book).toContain("`node services/bot/scripts/rescore-glimmer-run.mjs --run-dir <run_dir>`");
