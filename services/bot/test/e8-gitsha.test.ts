@@ -2,7 +2,6 @@
 // The real infra/modal/glimmer_app.py is exercised against an inert
 // SDK-shaped `modal` stub (injected via sys.modules, never the real SDK).
 // Dummy datasets in tmp git repos only; no Modal, no network, no models.
-// @ts-expect-error untyped helper module (none needed here)
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
