@@ -467,6 +467,19 @@ export async function rescoreRun(runDir, { parseAnswer, readText } = {}) {
 const isMainEntry =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMainEntry) {
+  const argv = process.argv.slice(2);
+  const runDirFlag = argv.indexOf("--run-dir");
+  if (runDirFlag !== -1) {
+    const runDir = argv[runDirFlag + 1];
+    if (runDir === undefined) {
+      console.error("error: --run-dir <dir> required");
+      process.exit(2);
+    }
+    const { parseGlimmerAnswer } = await import("../dist/src/private/redact.js");
+    const re = await rescoreRun(runDir, { parseAnswer: parseGlimmerAnswer });
+    console.log(JSON.stringify({ ok: re.ok, complete: re.complete, truncated: re.truncated, errors: re.errors, mismatches: re.mismatches }));
+    process.exit(re.ok ? 0 : 1);
+  }
   const { parseGlimmerAnswer } = await import("../dist/src/private/redact.js");
   void parseGlimmerAnswer;
   rescoreLegacyGlimmerRun();

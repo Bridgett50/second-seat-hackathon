@@ -3,7 +3,8 @@
 Deploy with `python3 -m modal deploy infra/modal/glimmer_app.py`, stop with
 `python3 -m modal app stop second-seat-glimmer`. Scale-to-zero.
 
-Live eval with `python3 -m modal run --detach infra/modal/glimmer_app.py`
+Live eval with `GLIMMER_EVAL_DATASET=<dataset> python3 -m modal run
+--detach infra/modal/glimmer_app.py --dataset <dataset> --config <config>`
 (ephemeral app, stops when done; build services/bot first).
 """
 
@@ -12,10 +13,13 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
-import urllib.parse
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import launch_contract
 
 import modal
 
@@ -33,17 +37,28 @@ results = modal.Volume.from_name("glimmer-results", create_if_missing=True)
 _here = Path(__file__).resolve()
 _repo = _here.parents[2] if len(_here.parents) > 2 else Path("/")  # driver: container path is shallow
 
-eval_in_container_image = (
-    image.run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
-    .add_local_dir(str(_repo / "services/bot/dist"), "/app/services/bot/dist")
-    .add_local_dir(str(_repo / "services/bot/scripts"), "/app/services/bot/scripts")
-    .add_local_dir(
-        str(_repo / "services/bot/fixtures/pii"), "/app/services/bot/fixtures/pii"
-    )
-    .add_local_file(
+# Dataset baked into the eval image, read at import. When unset the eval
+# image carries no eval fixtures; when set it is built via package_dirs.
+_EVAL_DATASET = os.environ.get("GLIMMER_EVAL_DATASET", "")
+
+_node_base = image.run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
+
+if _EVAL_DATASET:
+    eval_in_container_image = _node_base
+    for _local, _remote in launch_contract.package_dirs(str(_repo), _EVAL_DATASET):
+        eval_in_container_image = eval_in_container_image.add_local_dir(_local, _remote)
+    eval_in_container_image = eval_in_container_image.add_local_file(
         str(_repo / "services/bot/package.json"), "/app/services/bot/package.json"
     )
-)
+else:
+    eval_in_container_image = (
+        _node_base
+        .add_local_dir(str(_repo / "services/bot/dist"), "/app/services/bot/dist")
+        .add_local_dir(str(_repo / "services/bot/scripts"), "/app/services/bot/scripts")
+        .add_local_file(
+            str(_repo / "services/bot/package.json"), "/app/services/bot/package.json"
+        )
+    )
 
 
 @app.function(
@@ -94,9 +109,8 @@ def serve() -> None:
     max_containers=1,
     retries=0,
 )
-def eval_in_container() -> dict:
+def eval_in_container(dataset: str) -> dict:
     func_start = time.monotonic()
-    global_deadline = func_start + 780
     cmd = [
         "vllm",
         "serve",
@@ -131,24 +145,24 @@ def eval_in_container() -> dict:
     eval_stderr = ""
     run_id = None
     try:
-        ready_deadline = min(func_start + 300, global_deadline)
-        while time.monotonic() < ready_deadline:
-            if vllm.poll() is not None:
-                break
+        def _probe():
             try:
                 with urllib.request.urlopen(health_url, timeout=10) as resp:
-                    health_status = resp.status
-                    if resp.status == 200:
-                        seconds_to_healthy = time.monotonic() - func_start
-                        break
+                    return resp.status
             except Exception:
-                pass
-            time.sleep(5)
-        if health_status != 200:
+                return None
+
+        # Model load and the readiness wait run INSIDE the 780 s work
+        # deadline: they consume it.
+        timing = launch_contract.wait_ready(time.monotonic, time.sleep, _probe, func_start)
+        if timing["ready"]:
+            seconds_to_healthy = time.monotonic() - func_start
+            health_status = 200
+        if not timing["ready"]:
             eval_stderr = "vllm not healthy within 300s; skipping eval"
         else:
-            remaining_ms = int((global_deadline - time.monotonic()) * 1000) - 30_000
-            remaining_s = (global_deadline - time.monotonic()) - 5
+            remaining_ms = timing["remaining_ms"]
+            remaining_s = timing["remaining_s"]
             if remaining_ms <= 0 or remaining_s <= 0:
                 eval_stderr = "no time remaining for eval"
             else:
@@ -160,6 +174,7 @@ def eval_in_container() -> dict:
                     + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
                     + f"-{os.getpid()}"
                 )
+                node_cmd = launch_contract.eval_command(dataset, "/results", run_id)
                 env = {
                     **os.environ,
                     "GLIMMER_BASE_URL": base_url,
@@ -167,14 +182,7 @@ def eval_in_container() -> dict:
                 }
                 try:
                     proc = subprocess.run(
-                        [
-                            "node",
-                            "scripts/redaction-eval.mjs",
-                            "--out-dir",
-                            "/results",
-                            "--run-id",
-                            run_id,
-                        ],
+                        node_cmd,
                         cwd="/app/services/bot",
                         env=env,
                         capture_output=True,
@@ -217,40 +225,41 @@ def eval_in_container() -> dict:
 
 
 @app.local_entrypoint()
-def main() -> None:
-    call = eval_in_container.spawn()
+def main(dataset: str = "", config: str = "") -> None:
+    env_dataset = os.environ.get("GLIMMER_EVAL_DATASET", "")
+    cfg = {}
+    if config:
+        with open(config, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    fixtures_root = str(_repo / "services" / "bot" / "fixtures")
+    blockers = launch_contract.check_launch(cfg, fixtures_root, invoked_dataset=dataset)
+    if dataset != env_dataset:
+        blockers = [
+            f"dataset mismatch: invoked {dataset!r} != GLIMMER_EVAL_DATASET {env_dataset!r}"
+        ] + blockers
+    if blockers:
+        for b in blockers:
+            print(f"BLOCKED: {b}")
+        raise SystemExit(2)
+    call = eval_in_container.spawn(dataset)
     print("CALL_ID " + call.object_id)
     return None
 
 
 @app.local_entrypoint()
 def fetch(run_id: str = "") -> None:
+    if not run_id:
+        print("run_id is required", file=sys.stderr)
+        raise SystemExit(2)
     out_dir = (
-        Path(__file__).resolve().parents[2] / "services/bot/fixtures/glimmer-run"
+        Path(__file__).resolve().parents[2] / "services/bot/fixtures/glimmer-run" / run_id
     )
-    if run_id:
-        # Never overwrite the historical flat artifacts: per-run subdirectory.
-        out_dir = out_dir / run_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # NOTE: the live result goes to fixtures/glimmer-run/glimmer-live-eval.json;
-    # services/bot/fixtures/glimmer-live-eval.json must not be overwritten.
-    if run_id:
-        pairs = [
-            (f"{run_id}/glimmer-live-eval.json", "glimmer-live-eval.json"),
-            (f"{run_id}/summary.json", "eval-summary.json"),
-            (f"{run_id}/records.jsonl", "records.jsonl"),
-            (f"{run_id}/glimmer-raw.jsonl", "glimmer-raw.jsonl"),
-        ]
-    else:
-        # Historical flat layout (pre-run-dir results); kept read-only.
-        pairs = [
-            ("glimmer-live-eval.json", "glimmer-live-eval.json"),
-            ("eval-summary.json", "eval-summary.json"),
-            ("raw/glimmer-raw.jsonl", "glimmer-raw.jsonl"),
-        ]
-    for remote, local in pairs:
-        try:
-            data = b"".join(results.read_file(remote))
-        except Exception:
-            continue
-        (out_dir / local).write_bytes(data)
+
+    def list_files(rid):
+        return list(results.listdir(rid, recursive=True))
+
+    def read_file(remote):
+        return b"".join(results.read_file(remote))
+
+    launch_contract.download_run(list_files, read_file, run_id, str(out_dir))
+    print(f"downloaded {run_id} -> {out_dir}")

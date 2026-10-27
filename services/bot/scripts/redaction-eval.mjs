@@ -27,15 +27,25 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runEval } from "./redaction-eval-runner.mjs";
-
-const { liveRedactor } = await import("../dist/src/private/redact.js");
 
 const cliArgs = process.argv.slice(2);
 function flagValue(name) {
   const i = cliArgs.indexOf(name);
   return i !== -1 && cliArgs[i + 1] !== undefined ? cliArgs[i + 1] : undefined;
 }
+// Launch mode (--out-dir/--run-id) requires an explicit dataset selection:
+// never default to dev fixtures. Fail before importing dist or creating
+// anything.
+if(
+  (cliArgs.includes("--out-dir") || cliArgs.includes("--run-id")) &&
+  !cliArgs.includes("--cases") && !cliArgs.includes("--cases-dir")
+) {
+  console.error("error: --cases <dataset> (dataset selection required) for launch mode");
+  process.exit(2);
+}
+
+const { runEval } = await import("./redaction-eval-runner.mjs");
+const { liveRedactor } = await import("../dist/src/private/redact.js");
 let casesDir = "pii";
 const casesDirFlag = flagValue("--cases") ?? flagValue("--cases-dir");
 if (casesDirFlag !== undefined) casesDir = casesDirFlag;
