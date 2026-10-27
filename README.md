@@ -4,29 +4,29 @@ Pre-existing: the Second Seat idea and an earlier prototype in a separate repo (
 
 ## What it is
 
-Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, the redaction step masks PII for my review, I review and correct the redacted text, I approve it, the brief step writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. `#btn-copy` stays disabled until I approve the exact current draft text and finish pressure review of every item; it only writes that text to my clipboard; any edit to the draft or transcript clears the approval. Second Seat sends nothing. Second Seat never sends a reply to the vendor. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
+Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, the redaction step masks PII for my review, I review and correct the redacted text, I approve it, the brief step writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. `#btn-copy` stays disabled until I approve the exact current draft text and finish pressure review of every item; it only writes that text to my clipboard; any edit to the draft or transcript clears the approval. Second Seat never sends a reply or message to the vendor; I copy the approved draft myself. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
 
 ## Demo modes: offline, recorded, live
 
 - Offline (default): `SECOND_SEAT_MODE` unset means offline analysis; `SECOND_SEAT_TEST_MODE=1` forces offline even when provider credentials are present, so credentials alone can never enable model calls (`apps/web/src/liveConfig.ts`). Fixture mode is the default. No network. No model calls. The redaction and brief are produced by deterministic offline code (pattern masking and fixture analysis), not by Glimmer or Spark.
 - Recorded: the demo replays precomputed analysis from logged runs (see Results). The video labels every replay as a replay.
-- Live (not performed): live mode requires `SECOND_SEAT_MODE=live` plus `GLIMMER_BASE_URL` plus `META_API_KEY` (`apps/web/src/liveConfig.ts`). The live adapter path was tested only with fake transports. No live model execution was performed for the new live path. In live mode the approved text is sent to the Glimmer endpoint on Modal (remote GPU).
+- Live (not performed): live mode requires `SECOND_SEAT_MODE=live` plus `GLIMMER_BASE_URL` plus `META_API_KEY` (`apps/web/src/liveConfig.ts`). The live adapter path was tested only with fake transports. No live model execution was performed for the new live path. In live mode, raw pasted meeting text goes to the private Glimmer redactor (self-hosted vLLM on Modal, remote GPU) for redaction. Only the owner-reviewed, approved redacted text goes to Spark (muse-spark-1.3) for analysis. Second Seat never sends a reply or message to the vendor; I copy the approved draft myself.
 
-Offline, pressure is detected by the offline pattern layer (detectPressurePatterns); each item quotes a substring of a cited current segment. In live mode no pressure classifier is wired by default.
+The deterministic pattern layer runs by default in both offline and live modes and surfaces pressure items; each item quotes a substring of a current segment. Each item carries a status of `not_run`, `failed`, `valid_negative`, or `valid_positive`; not run and failed items are shown explicitly and block Copy until resolved. The unresolved term is shown only when it is a verbatim term from the approved text, else the item shows "term not identified". In live mode the structured assessment is carried inside the single Spark analysis request. Every pressure item must be reviewed before Copy.
 
 ## Statuses
 
 | PR | Implementation | Offline verification | Live verification | Partner verification |
 |---|---|---|---|---|
-| A1 | merged (#35) | offline verified | live not performed | none |
-| A2 | merged (#36) | offline verified | live not performed | none |
-| A3 | merged (#37) | offline verified | live not performed | none |
-| A4 | merged (#38) | offline verified | live not performed | none |
-| A5 | merged (#39) | offline verified | live not performed | none |
-| A6 | merged (#40) | offline verified | live not performed | none |
-| A7 | merged (#41) | offline verified | live not performed | none |
-| A8 | merged (#42) | offline verified | live not performed | none |
-| A9 | merged (#43) | offline verified | live not performed | none |
+| A1 | merged (#35) | criteria reconstructed from merged PR #35 (not verbatim); offline tests pass | live not performed | none |
+| A2 | merged (#36) | criteria reconstructed from merged PR #36 (not verbatim); offline tests pass | live not performed | none |
+| A3 | merged (#37) | criteria reconstructed from merged PR #37 (not verbatim); offline tests pass | live not performed | none |
+| A4 | merged (#38) | criteria met on the tested commit; offline tests pass | live not performed | none |
+| A5 | merged (#39) | criteria met on the tested commit; offline tests pass | live not performed | none |
+| A6 | merged (#40) | criteria met on the tested commit; offline tests pass | live not performed | none |
+| A7 | merged (#41) | criteria met on the tested commit; offline tests pass | live not performed | none |
+| A8 | merged (#42) | criteria met on the tested commit; offline tests pass | live not performed | none |
+| A9 | merged (#43) | criteria met on the tested commit; offline tests pass | live not performed | none |
 | B1 | draft PR (#44) | offline tests pass | live not performed | none |
 | B2 | draft PR (#45) | offline tests pass | live not performed | none |
 | B3 | draft PR (#48) | offline tests pass | live not performed | none |
@@ -35,10 +35,17 @@ Offline, pressure is detected by the offline pattern layer (detectPressurePatter
 | B6 | draft PR (#49) | offline tests pass | live not performed | none |
 | B7 | this draft PR (docs) | docs checks pass | live not performed | none |
 | B8 | draft (evidence protocol only; no observations) | no observations | live not performed | none |
+| C1 | draft PR (#54) | criteria C1-1..C1-8; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/8d1ca970b1993b34112f1276b9915eb2219b0b7a; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479067260 success | live not performed | none |
+| C2 | draft PR (#55) | criteria C2-1..C2-6; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/2617b7978363963e5126d8e4ca643f176cecfd5f; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479898486 success | live not performed | none |
+| C3 | draft PR (#56) | criteria C3-1..C3-6; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/fb4c216d60b08aef4308a05f25250b5f8adfa925; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40480594570 failed (web build emitted to dist/apps/web because a test imported core source by relative path; fixed in C7 #59) | live not performed | none |
+| C4 | draft PR (#57) | criteria C4-1..C4-6; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/b383e12615b5df48866c7f276d1095d7f116850c; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484194423 failed (same build issue; fixed in C7 #59) | live not performed | none |
+| C5 | draft PR (#58) | criteria C5-1..C5-12; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/789ab3c3475145404484f39c428883dcc78557b7; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484954956 failed (same build issue; fixed in C7 #59) | live not performed | none |
+| C6 | draft PR (#53) | criteria C6-1..C6-6; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/7efcae01fa594a564165a69a2d065f86d9c15d03; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40477442184 success | live not performed | none |
+| C7 | draft PR (#59) | criteria C7-1..C7-8 ("offline tests pass"); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/1153dd8f6aae575a8f46788b9bf3432d28e43817; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40486174227 success | live not performed | none |
 
 ## Why it matters
 
-TARGET figures only: none yet. I have not written down my time-per-call or risk numbers. Until I do, there is nothing here but a TARGET label and me telling you vendors talk fast on purpose.
+TARGET figures only: none yet. I have not written down my time-per-call or risk numbers. Until I do, there is nothing here but a TARGET label.
 
 Founder story: PENDING — not yet supplied. User observations: PENDING — not yet supplied. Video URLs: PENDING — not yet supplied.
 
@@ -86,7 +93,7 @@ Sealed before generation (synthetic) + AMI human annotations (third party). The 
 
 ## Known gaps
 
-From my failure-modes list [docs/failure-modes.md], short version. If SAM finds nothing, we return a full-frame box flagged for spot-check. If Spark throws 429/5xx, we retry up to 4 times, then throw. No fallback to fixtures. That fallback is not implemented, on purpose for now. If spend estimates reach the $5/day cap or the daily call count (default 50 calls/day), `services/bot/src/brief/costGuard.ts` refuses the call outright. No partial calls. This is based on estimated cost, not a hard billing guarantee — provider billing is not controlled by this code. Glimmer redaction carries a 90 s per-request timeout default (`glimmerTimeoutMs` in [services/bot/src/private/redact.ts]) and a 2048 max-tokens default, and a failed eval case counts its entities as misses. The holdout run budget covers the full Modal allocation: 780 s work deadline and 840 s function timeout, plus container startup, model load, ready wait, and teardown [docs/runbook-holdout-run.md] [infra/modal/glimmer_app.py].
+From my failure-modes list [docs/failure-modes.md], short version. If SAM finds nothing, we return a full-frame box flagged for spot-check. If Spark throws 429/5xx, we retry up to 4 times, then throw. No fallback to fixtures. That fallback is not implemented, on purpose for now. If spend estimates reach the $5/day cap or the daily call count (default 50 calls/day), `services/bot/src/brief/costGuard.ts` refuses the call outright. No partial calls. This is based on estimated cost, not a hard billing guarantee — provider billing is not controlled by this code. Glimmer redaction carries a 90 s per-request timeout default (`glimmerTimeoutMs` in [services/bot/src/private/redact.ts]) and a 2048 max-tokens default, and a failed eval case counts its entities as misses. The 780 s work deadline and 840 s function timeout bound the work; the billed allocation also includes container startup, model load, ready wait and teardown and is not capped by this code [docs/runbook-holdout-run.md] [infra/modal/glimmer_app.py].
 
 On privacy, what the code does and what is tested: the session flow sends the approved redacted text through the privacy gate, and test mode stays offline even with credentials present [apps/web/src/liveConfig.ts]. That is a code behavior with fake-transport tests, not a guarantee that no raw transcript can ever leave.
 
