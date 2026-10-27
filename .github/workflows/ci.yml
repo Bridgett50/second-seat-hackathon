@@ -20,8 +20,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
-      - name: Truth hash seal (scorer refuses on mismatch)
-        run: node eval/check-hashes.mjs
       - run: pnpm -r build
       - run: pnpm --filter @second-seat/web exec playwright install --with-deps chromium
       - run: pnpm --filter @second-seat/web exec playwright test

@@ -1,22 +1,24 @@
-// Holdout freeze check: verifies fixtures/holdout-v1/ against MANIFEST.json.
+// Holdout freeze check: verifies an explicit dataset dir against MANIFEST.json.
 // Offline only: reads local files, never touches the network or any model.
 // Exit 0 when every hash matches and every annotation occurs verbatim;
-// exit 1 with a reason on any mismatch.
+// exit 1 with a reason on any mismatch; exit 2 when --dir is missing.
 //
-// Usage: node scripts/holdout-freeze.mjs [--dir <holdout-dir>]
+// Usage: node scripts/holdout-freeze.mjs --dir <dataset-dir>
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 function flagValue(name) {
   const i = argv.indexOf(name);
   return i !== -1 && argv[i + 1] !== undefined ? argv[i + 1] : undefined;
 }
 
-const dir = flagValue("--dir") ?? join(here, "..", "fixtures", "holdout-v1");
+const dir = flagValue("--dir");
+if (dir === undefined || dir === "") {
+  console.error("holdout-freeze: missing required --dir <dataset-dir>");
+  process.exit(2);
+}
 const failures = [];
 const sha256Hex = (text) => createHash("sha256").update(text, "utf8").digest("hex");
 

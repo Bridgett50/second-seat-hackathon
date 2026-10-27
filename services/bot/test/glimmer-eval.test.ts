@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error untyped helper module
@@ -150,21 +151,25 @@ describe("summarize end-to-end", () => {
 
   it("rescore of the glimmer-run fixture gives 6/8, 18/29 completed, 18/39 end-to-end legacy", () => {
     const script = join(here, "..", "scripts", "rescore-glimmer-run.mjs");
-    const output = execFileSync("node", [script], { encoding: "utf8" });
-    expect(output).toContain("requests: 6/8");
-    expect(output).toContain("legacy completed: 18/29");
-    expect(output).toContain("legacy end-to-end: 18/39");
-    const rescore = JSON.parse(
-      readFileSync(join(here, "..", "fixtures", "glimmer-run", "rescore.json"), "utf8"),
-    ) as {
-      request_completion: { completed: number; planned: number };
-      legacy_entity_disappearance: { completed: { k: number; n: number }; end_to_end: { k: number; n: number } };
-      span_coverage: null;
-    };
-    expect(rescore.request_completion).toEqual({ completed: 6, planned: 8 });
-    expect(rescore.legacy_entity_disappearance.completed).toEqual({ k: 18, n: 29 });
-    expect(rescore.legacy_entity_disappearance.end_to_end).toEqual({ k: 18, n: 39 });
-    expect(rescore.span_coverage).toBeNull();
+    const outDir = mkdtempSync(join(tmpdir(), "glimmer-rescore-"));
+    const outPath = join(outDir, "rescore.json");
+    try {
+      const output = execFileSync("node", [script, "--out", outPath], { encoding: "utf8" });
+      expect(output).toContain("requests: 6/8");
+      expect(output).toContain("legacy completed: 18/29");
+      expect(output).toContain("legacy end-to-end: 18/39");
+      const rescore = JSON.parse(readFileSync(outPath, "utf8")) as {
+        request_completion: { completed: number; planned: number };
+        legacy_entity_disappearance: { completed: { k: number; n: number }; end_to_end: { k: number; n: number } };
+        span_coverage: null;
+      };
+      expect(rescore.request_completion).toEqual({ completed: 6, planned: 8 });
+      expect(rescore.legacy_entity_disappearance.completed).toEqual({ k: 18, n: 29 });
+      expect(rescore.legacy_entity_disappearance.end_to_end).toEqual({ k: 18, n: 39 });
+      expect(rescore.span_coverage).toBeNull();
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });
 
