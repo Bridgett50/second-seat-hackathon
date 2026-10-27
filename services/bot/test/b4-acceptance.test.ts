@@ -196,6 +196,24 @@ describe("B4 replay from immutable evidence", () => {
     });
   });
 
+  it("B4-2: stripping raw_sha256 from an ok record cannot launder changed raw content", async () => {
+    const { runDir } = await validRun("b4-2-strip");
+    const rp = join(runDir, "glimmer-raw.jsonl");
+    const raws = readLines(rp);
+    const i = raws.findIndex((l) => l["case_id"] === "a.txt");
+    raws[i]!["content"] = answer([]);
+    writeLines(rp, raws);
+    const p = join(runDir, "records.jsonl");
+    const recs = readLines(p);
+    const first = { ...recs[0]! };
+    delete first["raw_sha256"];
+    writeLines(p, [first, ...recs.slice(1)]);
+    const re = await replay(runDir);
+    expect(re.ok).toBe(false);
+    expect(re.complete).toBe(false);
+    expect(errorsOf(re)).toMatch(/raw/i);
+  });
+
   describe("B4-3: wrong keys, duplicate and unexpected records are rejected", () => {
     const mutate = async (id: string, f: (lines: Array<Record<string, unknown>>) => Array<Record<string, unknown>>) => {
       const { runDir } = await validRun(id);
@@ -220,7 +238,7 @@ describe("B4 replay from immutable evidence", () => {
       expect(await mutate("b4-3-hash", (l) => [{ ...l[0], input_sha256: "0".repeat(64) }, ...l.slice(1)])).toMatch(/input/i);
     });
     it("duplicate record", async () => {
-      expect(await mutate("b4-3-dup", (l) => [...l, l[0]])).toMatch(/duplicate/i);
+      expect(await mutate("b4-3-dup", (l) => [...l, l[0]!])).toMatch(/duplicate/i);
     });
     it("unexpected record", async () => {
       expect(await mutate("b4-3-unexp", (l) => [...l, { ...l[1], file: "extra.txt", case_id: "extra.txt" }])).toMatch(/unexpected/i);
