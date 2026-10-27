@@ -23,7 +23,7 @@
 
 import { BRIEF_API_URL, BRIEF_MAX_COMPLETION_TOKENS, BRIEF_SEED } from "../brief/muse.js";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
-import { PROMPT_CACHE_KEY } from "../promptCache.js";
+import { PROMPT_CACHE_KEYS } from "../promptCache.js";
 import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const SUPPORT_MODEL = "muse-spark-1.3";
@@ -320,7 +320,7 @@ export class SparkSupportJudge {
     const response = await postChat(
       {
         model: SUPPORT_MODEL,
-        prompt_cache_key: PROMPT_CACHE_KEY,
+        prompt_cache_key: PROMPT_CACHE_KEYS.support,
         reasoning_effort: "medium",
         seed: SUPPORT_SEED,
         max_completion_tokens: SUPPORT_MAX_COMPLETION_TOKENS,

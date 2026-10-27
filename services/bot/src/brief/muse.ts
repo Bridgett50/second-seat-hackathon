@@ -12,7 +12,7 @@
  * - Without an API key, only fixture mode is available.
  */
 import { EVIDENCE_BRIEF_JSON_SCHEMA, PRESSURE_TACTICS } from "@second-seat/core";
-import { PROMPT_CACHE_KEY } from "../promptCache.js";
+import { PROMPT_CACHE_KEYS } from "../promptCache.js";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "./costGuard.js";
 import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
@@ -597,7 +597,7 @@ export class MuseClient {
     const response = await postChat(
       {
         model: BRIEF_MODEL,
-        prompt_cache_key: PROMPT_CACHE_KEY,
+        prompt_cache_key: PROMPT_CACHE_KEYS.brief,
         reasoning_effort: "medium",
         seed: BRIEF_SEED,
         max_completion_tokens: BRIEF_MAX_COMPLETION_TOKENS,

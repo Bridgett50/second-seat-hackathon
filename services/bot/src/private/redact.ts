@@ -646,9 +646,12 @@ export class GlimmerClient implements Redactor {
     // meta-oss-cookbook/muse-glimmer/recipes/structured-output/README.md
     // ("Keep `temperature=0.0`. Extraction is not a creative task.") and
     // meta-oss-cookbook/muse-glimmer/recipes/structured-output/structured_output.py:83
-    // (temperature=0.0, no top_p/top_k); meta-docs/muse-glimmer/deploy.md:243
-    // recommends against greedy for general chat, but extraction follows the
-    // structured-output recipe instead.
+    // (temperature=0.0, no top_p/top_k);
+    // meta-oss-cookbook/muse-glimmer/inference-server/vllm.md:112
+    // ("Don't run this model greedy. Passing "temperature": 0 in a request
+    // overrides the published settings and the recipe explicitly advises
+    // against it.") advises against greedy decoding in general, but extraction
+    // follows the structured-output recipe instead.
     const timeoutMs = this.timeoutMs ?? glimmerTimeoutMs();
     const requestBody: Record<string, unknown> = {
       model: GLIMMER_MODEL,
@@ -656,7 +659,7 @@ export class GlimmerClient implements Redactor {
       temperature: 0.0,
       chat_template_kwargs: { reasoning_strength: "low" },
       messages: [
-        { role: "system", content: `Return JSON only for ${kind}. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth, and input.slice(start,end) must equal the entity text. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found. Only return entities the input actually states; never guess. Use [] when none are stated.` },
+        { role: "system", content: `Return JSON only for ${kind}. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth, and input.slice(start,end) must equal the entity text. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` },
         { role: "user", content: text },
       ],
     };

@@ -218,9 +218,33 @@ async function* outputTextEvents(text: string) {
 }
 
 /**
+ * The official "box" record shape (right/bottom half-open:
+ * right = wire x2 + 1). Structural so both parser call sites share the
+ * toSamBox helper below without importing package types.
+ */
+export interface OfficialBoxRecord {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly confidence?: number;
+}
+
+export function toSamBox(record: OfficialBoxRecord): SamBox {
+  const box: SamBox = {
+    x: record.left,
+    y: record.top,
+    w: record.right - record.left,
+    h: record.bottom - record.top,
+  };
+  if (typeof record.confidence === "number") box.confidence = record.confidence;
+  return box;
+}
+
+/**
  * Parse official SAM wire text with `@meta-sam/parser`: wrap the text as
  * response output-text events, run parseImageStream, and map "box" records
- * (right/bottom half-open) to SamBox, keeping confidence when present.
+ * with toSamBox.
  */
 export async function parseSamOutputOfficial(text: string): Promise<SamBox[]> {
   const parsed = parseImageStream(outputTextEvents(text));
@@ -228,18 +252,57 @@ export async function parseSamOutputOfficial(text: string): Promise<SamBox[]> {
     /* drain the snapshot stream; the result accumulates in finalResult */
   }
   const result = await parsed.finalResult;
-  const out: SamBox[] = [];
-  for (const record of recordsOfKind(result.records, "box")) {
-    const box: SamBox = {
-      x: record.left,
-      y: record.top,
-      w: record.right - record.left,
-      h: record.bottom - record.top,
-    };
-    if (typeof record.confidence === "number") box.confidence = record.confidence;
-    out.push(box);
+  return recordsOfKind(result.records, "box").map(toSamBox);
+}
+
+/** A parsed SSE `data:` payload: any JSON object the official parser accepts. */
+export interface SamStreamEvent {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
+async function* eventStream(events: SamStreamEvent[]): AsyncGenerator<SamStreamEvent, void, void> {
+  for (const event of events) yield event;
+}
+
+/**
+ * Parse a live Responses SSE body into event objects (one per `data:` line;
+ * `[DONE]` and non-JSON lines skipped) for the official parser, which accepts
+ * deltas, `response.output_text.done`, and `response.content_part.done`.
+ */
+export function parseSseEvents(sseText: string): SamStreamEvent[] {
+  const events: SamStreamEvent[] = [];
+  for (const line of sseText.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const payload = trimmed.slice("data:".length).trim();
+    if (payload === "" || payload === "[DONE]") continue;
+    try {
+      const evt = JSON.parse(payload) as unknown;
+      if (typeof evt === "object" && evt !== null) {
+        events.push(evt as SamStreamEvent);
+      }
+    } catch {
+      /* non-JSON keepalive: ignore */
+    }
   }
-  return out;
+  return events;
+}
+
+/**
+ * Parse a live SSE body straight through the official parser (same box
+ * mapping as parseSamOutputOfficial). The live SAM API finalizes the output
+ * text lane with `response.content_part.done`, which delta-only collection
+ * misses. Parser errors propagate to the caller; they are never swallowed
+ * into a full-frame fallback here.
+ */
+export async function parseSamLiveStream(sseText: string): Promise<SamBox[]> {
+  const parsed = parseImageStream(eventStream(parseSseEvents(sseText)));
+  for await (const _ of parsed) {
+    /* drain the snapshot stream; the result accumulates in finalResult */
+  }
+  const result = await parsed.finalResult;
+  return recordsOfKind(result.records, "box").map(toSamBox);
 }
 
 /**
@@ -327,7 +390,7 @@ async function errorSnippet(res: Response): Promise<string> {
   }
 }
 
-async function postResponses(body: Record<string, unknown>, key: string): Promise<unknown> {
+async function postResponses(body: Record<string, unknown>, key: string): Promise<string> {
   const res = await fetch(SAM_API_URL, {
     method: "POST",
     headers: {
@@ -342,8 +405,7 @@ async function postResponses(body: Record<string, unknown>, key: string): Promis
     const snippet = await errorSnippet(res);
     throw new Error(`sam: live call failed with status ${res.status}: ${snippet}`);
   }
-  const sseText = await res.text();
-  return collectOutputTextDeltas(sseText);
+  return res.text();
 }
 
 export class FixtureSamClient implements SamClient {
@@ -353,7 +415,7 @@ export class FixtureSamClient implements SamClient {
   constructor(fixtureRaw?: unknown) {
     this.fixtureRaw =
       fixtureRaw ??
-      "<0f>0<|box;x1=200;y1=140;x2=599;y2=339;w=800;h=400;c=0.87|><|mask;x=0;y=0;data=27,60,~!!!!M!0c[0o91w?q1!pIH4pPRVp2B3'7`e.ioeAf6-k/#Xd8%dX9x(|>\n";
+      "<0f>0<|box;x1=200;y1=140;x2=259;y2=166;w=800;h=400;c=0.87|><|mask;x=0;y=0;data=27,60,~!!!!M!0c[0o91w?q1!pIH4pPRVp2B3'7`e.ioeAf6-k/#Xd8%dX9x(|>\n";
   }
 
   async segmentShared(frame: SamFrame, concept: SamConcept = "slide"): Promise<SamResult> {
@@ -372,9 +434,9 @@ export class LiveSamClient implements SamClient {
     }
     const key = apiKey();
     if (key === null) throw new Error("sam: live mode but no API key (set MODEL_API_KEY)");
-    const raw = await postResponses(buildRequestBody(frame, concept), key);
-    const { boxes, parser } = await parseSamBoxes(raw);
-    return withFallback(boxes, frame, raw, SAM_MODEL, false, parser);
+    const sseText = await postResponses(buildRequestBody(frame, concept), key);
+    const boxes = await parseSamLiveStream(sseText);
+    return withFallback(boxes, frame, sseText, SAM_MODEL, false, "@meta-sam/parser");
   }
 }
 
