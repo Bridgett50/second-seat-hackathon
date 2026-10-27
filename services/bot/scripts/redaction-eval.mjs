@@ -30,8 +30,9 @@
 // exit 2, with explicit not_run records for every remaining case. Remaining
 // cases run with concurrency 2 (or modal.concurrency from --run-config when
 // given), each request timeout =
-// min(90000, remaining budget). Cases not started before the deadline are
-// "not_run". Recall/wilson95 cover completed ("ok") cases only.
+// min(requestMs, remaining budget) where requestMs is timeouts.requestMs
+// from --run-config or the 90000 default. Cases not started before the
+// deadline are "not_run". Recall/wilson95 cover completed ("ok") cases only.
 // Exit 0 only if every case completed without execution failure, else 1
 // (canary failure exits 2).
 //
@@ -169,11 +170,21 @@ if (runnerSettings !== null && clientOptions !== null) {
   );
 }
 
+// The frozen timeouts reach the runner: requestMs comes from the run config,
+// and the deadline is the tighter of GLIMMER_DEADLINE_MS (when positive)
+// and the frozen timeouts.workDeadlineS. Without a config, both keep their
+// historical defaults.
+const envBudgetMs = Number.isInteger(budgetMs) && budgetMs > 0 ? budgetMs : undefined;
 const result = await runEval({
   cases,
   readText: async (c) => readFileSync(join(dir, c.file), "utf8"),
   makeRedactor: () => liveRedactor(),
-  deadlineMs: Number.isInteger(budgetMs) && budgetMs > 0 ? budgetMs : undefined,
+  ...(runConfig === null
+    ? { deadlineMs: envBudgetMs }
+    : {
+        requestMs: runnerSettings.requestMs,
+        deadlineMs: envBudgetMs !== undefined ? Math.min(envBudgetMs, runnerSettings.deadlineMs) : runnerSettings.deadlineMs,
+      }),
   concurrency: runConfig === null ? 2 : concurrencyFromRunConfig(runConfig),
   ...(runId !== undefined ? { runId } : {}),
   outDir,
