@@ -102,6 +102,15 @@ export function buildOkRecord(c, text, spans, maskedText) {
   return { file: c.file, hits, total: (c.entities ?? []).length, status: "ok", misses, span_misses, span };
 }
 
+// Concurrency from a provided run config (services/bot/src/release/runConfig.ts
+// shape): a positive integer modal.concurrency wins, anything else falls back
+// to the historical default of 2.
+export function concurrencyFromRunConfig(runConfig, defaultValue = 2) {
+  const c = runConfig?.modal?.concurrency;
+  if (typeof c === "number" && Number.isInteger(c) && c >= 1) return c;
+  return defaultValue;
+}
+
 // Default run id: UTC timestamp plus randomness, unique per run.
 export function defaultRunId(now = new Date()) {
   const stamp = now.toISOString().replace(/[:.]/g, "-");

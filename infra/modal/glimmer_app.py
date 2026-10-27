@@ -9,6 +9,7 @@ Live eval with `GLIMMER_EVAL_DATASET=<dataset> python3 -m modal run
 """
 
 import datetime
+import hashlib
 import json
 import os
 import signal
@@ -31,18 +32,50 @@ results = modal.Volume.from_name("glimmer-results", create_if_missing=True)
 _here = Path(__file__).resolve()
 _repo = _here.parents[2] if len(_here.parents) > 2 else Path("/")  # driver: container path is shallow
 
-# Launch config baked into the images, read at import. When set, both images
-# are built from the exact configured immutable digest.
+def _sha256_hex(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _read_launcher_identity():
+    """sha256 over glimmer_app.py bytes + launch_contract.py bytes."""
+    try:
+        with open(_here, "rb") as _fh:
+            _app_bytes = _fh.read()
+        with open(_here.parent / "launch_contract.py", "rb") as _fh:
+            _contract_bytes = _fh.read()
+        return _sha256_hex(_app_bytes + _contract_bytes)
+    except Exception:
+        return None
+
+
+# Launch config baked into the images: the raw bytes are read exactly once
+# at import. _LAUNCH_CONFIG is parsed from those same bytes and
+# _LAUNCH_CONFIG_SHA256 identifies them; main() re-reads the file and
+# refuses when the bytes (not just the path) changed since import.
 _LAUNCH_CONFIG_PATH = os.environ.get("GLIMMER_LAUNCH_CONFIG", "")
 _LAUNCH_CONFIG = {}
+_LAUNCH_CONFIG_BYTES = None
+_LAUNCH_CONFIG_SHA256 = None
 if _LAUNCH_CONFIG_PATH:
     try:
-        with open(_LAUNCH_CONFIG_PATH, "r", encoding="utf-8") as _fh:
-            _LAUNCH_CONFIG = json.load(_fh)
+        with open(_LAUNCH_CONFIG_PATH, "rb") as _fh:
+            _LAUNCH_CONFIG_BYTES = _fh.read()
+        _LAUNCH_CONFIG_SHA256 = _sha256_hex(_LAUNCH_CONFIG_BYTES)
+        _parsed = json.loads(_LAUNCH_CONFIG_BYTES.decode("utf-8"))
+        _LAUNCH_CONFIG = _parsed if isinstance(_parsed, dict) else {}
     except Exception:
         _LAUNCH_CONFIG = {}
+        _LAUNCH_CONFIG_BYTES = None
+        _LAUNCH_CONFIG_SHA256 = None
 _MODEL_REVISION = _LAUNCH_CONFIG.get("model_revision", "") if isinstance(_LAUNCH_CONFIG, dict) else ""
 _LAUNCH_IMAGE = _LAUNCH_CONFIG.get("image", "") if isinstance(_LAUNCH_CONFIG, dict) else ""
+
+# Launcher identity at import; main() recomputes it and refuses on drift.
+_LAUNCHER_SHA256 = _read_launcher_identity()
+
+# Latest main() outcome: None until a launch passes every gate (refused
+# attempts reset it to None instead of leaving a stale record).
+_LAST_LAUNCH_RECORD = None
 
 # Dataset baked into the eval image, read at import. When unset the eval
 # image carries no eval fixtures; when set it is built via package_dirs.
@@ -250,12 +283,21 @@ def eval_in_container(dataset: str) -> dict:
 
 @app.local_entrypoint()
 def main(dataset: str = "", config: str = "") -> None:
+    global _LAST_LAUNCH_RECORD
+    _LAST_LAUNCH_RECORD = None
     env_dataset = os.environ.get("GLIMMER_EVAL_DATASET", "")
     env_config = os.environ.get("GLIMMER_LAUNCH_CONFIG", "")
     cfg = {}
+    cfg_sha256 = None
+    config_read_error = None
     if config:
-        with open(config, "r", encoding="utf-8") as fh:
-            cfg = json.load(fh)
+        try:
+            with open(config, "rb") as fh:
+                cfg_bytes = fh.read()
+            cfg_sha256 = _sha256_hex(cfg_bytes)
+            cfg = json.loads(cfg_bytes.decode("utf-8"))
+        except Exception as exc:
+            config_read_error = f"launch config unreadable: {config!r} ({exc})"
     fixtures_root = str(_repo / "services" / "bot" / "fixtures")
     blockers = []
     if not env_config:
@@ -270,6 +312,19 @@ def main(dataset: str = "", config: str = "") -> None:
                 )
         except Exception as exc:
             blockers.append(f"launch config mismatch: cannot compare config paths ({exc})")
+        # Path equality is not enough: the bytes themselves must match what
+        # was loaded at import. An alias path with identical bytes is
+        # accepted; changed bytes are refused with zero spawns.
+        if config_read_error is not None:
+            blockers.append(config_read_error)
+        elif _LAUNCH_CONFIG_SHA256 is None:
+            blockers.append("launch config drift: no launch config was loaded at import")
+        elif cfg_sha256 != _LAUNCH_CONFIG_SHA256:
+            blockers.append("launch config drift: --config bytes changed since import (refusing)")
+    # Launcher drift refuses too: the shipped code must be the imported code.
+    launcher_sha256 = _read_launcher_identity()
+    if launcher_sha256 is None or launcher_sha256 != _LAUNCHER_SHA256:
+        blockers.append("launcher drift: glimmer_app.py/launch_contract.py bytes changed since import (refusing)")
     blockers = blockers + launch_contract.check_launch(
         cfg, fixtures_root, invoked_dataset=dataset, repo_root=str(_repo)
     )
@@ -281,6 +336,15 @@ def main(dataset: str = "", config: str = "") -> None:
         for b in blockers:
             print(f"BLOCKED: {b}")
         raise SystemExit(2)
+    _LAST_LAUNCH_RECORD = {
+        "dataset": dataset,
+        "config": config,
+        "config_sha256": cfg_sha256,
+        "launcher_sha256": _LAUNCHER_SHA256,
+        "image": _LAUNCH_IMAGE,
+        "model_revision": _MODEL_REVISION,
+    }
+    print("LAUNCH_RECORD " + json.dumps(_LAST_LAUNCH_RECORD, sort_keys=True))
     call = eval_in_container.spawn(dataset)
     print("CALL_ID " + call.object_id)
     return None

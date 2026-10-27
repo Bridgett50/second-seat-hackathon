@@ -21,6 +21,7 @@ export const RUN_CONFIG_REQUIRED_KEYS: readonly string[] = [
   "prompt",
   "schema",
   "scorer",
+  "review",
   "decoding",
   "tokenLimits",
   "timeouts",
@@ -32,6 +33,29 @@ export const RUN_CONFIG_REQUIRED_KEYS: readonly string[] = [
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Review date check mirroring launch_contract.py: a non-blank ISO calendar
+ * date (real month/day) or datetime. Garbage like "not-a-date" or an
+ * impossible month fails.
+ */
+function isValidReviewDate(value: unknown): boolean {
+  if (typeof value !== "string" || value.trim() === "") {
+    return false;
+  }
+  const s = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const y = Number(s.slice(0, 4));
+    const m = Number(s.slice(5, 7));
+    const d = Number(s.slice(8, 10));
+    if (m < 1 || m > 12 || d < 1 || d > 31) {
+      return false;
+    }
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  }
+  return !Number.isNaN(Date.parse(s));
 }
 
 /**
@@ -52,6 +76,15 @@ export function validateRunConfig(cfg: unknown): string[] {
   const sourceSha = cfg["sourceSha"];
   if ("sourceSha" in cfg && !(typeof sourceSha === "string" && HEX_40.test(sourceSha))) {
     errors.push("sourceSha must be 40-hex");
+  } else if (typeof sourceSha === "string" && /^0+$/.test(sourceSha)) {
+    errors.push("sourceSha must not be all zeros (placeholder)");
+  }
+
+  if ("sourceSha256" in cfg) {
+    const sourceSha256 = cfg["sourceSha256"];
+    if (!(typeof sourceSha256 === "string" && HEX_64.test(sourceSha256) && !/^0+$/.test(sourceSha256))) {
+      errors.push("sourceSha256 must be 64-hex and not all zeros");
+    }
   }
 
   if ("dataset" in cfg) {
@@ -78,6 +111,8 @@ export function validateRunConfig(cfg: unknown): string[] {
       const revision = model["revision"];
       if (!(typeof revision === "string" && HEX_40.test(revision))) {
         errors.push('model.revision must be 40-hex, not a branch like "main"');
+      } else if (/^0+$/.test(revision)) {
+        errors.push("model.revision must not be all zeros (unpinned placeholder)");
       }
     }
   }
@@ -100,6 +135,14 @@ export function validateRunConfig(cfg: unknown): string[] {
       if (refOk && digestOk && !(ref as string).endsWith(`@${digest as string}`)) {
         errors.push("image.ref must equal image.digest suffix");
       }
+      const refDigest = typeof ref === "string" ? ref.split("@sha256:")[1] : undefined;
+      const bareDigest = typeof digest === "string" ? digest.split("sha256:")[1] : undefined;
+      for (const part of [refDigest, bareDigest]) {
+        if (typeof part === "string" && /^[0-9a-fA-F]{64}$/.test(part) && /^0+$/.test(part)) {
+          errors.push("image digest must not be all zeros (placeholder)");
+          break;
+        }
+      }
     }
   }
 
@@ -113,6 +156,34 @@ export function validateRunConfig(cfg: unknown): string[] {
         if (!(typeof sha === "string" && HEX_64.test(sha))) {
           errors.push(`${key}.sha256 must be 64-hex`);
         }
+      }
+    }
+  }
+
+  if ("review" in cfg) {
+    const review = cfg["review"];
+    if (!isRecord(review)) {
+      errors.push("review must be an object");
+    } else {
+      if (review["status"] !== "reviewed") {
+        errors.push('review.status must be "reviewed"');
+      }
+      const reviewer = review["reviewer"];
+      if (!(typeof reviewer === "string" && reviewer.trim() !== "")) {
+        errors.push("review.reviewer must be a non-blank string");
+      }
+      if (!isValidReviewDate(review["reviewed_at"])) {
+        errors.push("review.reviewed_at must be a valid date");
+      }
+      const reviewSha = review["dataset_sha256"];
+      const datasetSection = cfg["dataset"];
+      const datasetSha = isRecord(datasetSection) ? datasetSection["sha256"] : undefined;
+      if (typeof datasetSha === "string" && HEX_64.test(datasetSha)) {
+        if (reviewSha !== datasetSha) {
+          errors.push("review.dataset_sha256 must match dataset.sha256");
+        }
+      } else if (!(typeof reviewSha === "string" && HEX_64.test(reviewSha))) {
+        errors.push("review.dataset_sha256 must be 64-hex");
       }
     }
   }
@@ -249,4 +320,86 @@ export function validateRunConfig(cfg: unknown): string[] {
 /** Options for the Spark proof client derived from a validated run config. */
 export function sparkProofClientOptions(cfg: { retry: { maxAttempts: number } }): { maxAttempts: number } {
   return { maxAttempts: cfg.retry.maxAttempts };
+}
+
+/** Structural view of a run config consumed by the mapping functions below. */
+export interface RunConfigView {
+  sourceSha: string;
+  sourceSha256?: string;
+  dataset: { id: string; sha256: string };
+  model: { name: string; revision: string };
+  image: { ref: string; digest: string };
+  decoding: { temperature: number; seed: number; reasoning: string };
+  tokenLimits: { maxTokens: number };
+  timeouts: { requestMs: number; workDeadlineS: number; functionTimeoutS: number };
+  retry: { maxAttempts: number };
+  modal: { concurrency: number };
+  review: { status: string; reviewer: string; reviewed_at: string; dataset_sha256: string };
+}
+
+/**
+ * Flat Python launch-contract config, keyed exactly as
+ * infra/modal/launch_contract.py check_launch expects. source_sha256 is
+ * included only when the run config carries the packaged-source identity.
+ */
+export interface LaunchConfig {
+  dataset: string;
+  dataset_sha256: string;
+  source_sha: string;
+  source_sha256?: string;
+  image: string;
+  model: string;
+  model_revision: string;
+  review: { status: string; reviewer: string; reviewed_at: string; dataset_sha256: string };
+}
+
+/** Map a TS run config to the flat Python launch config. */
+export function toLaunchConfig(cfg: RunConfigView): LaunchConfig {
+  const out: LaunchConfig = {
+    dataset: cfg.dataset.id,
+    dataset_sha256: cfg.dataset.sha256,
+    source_sha: cfg.sourceSha,
+    image: cfg.image.ref,
+    model: cfg.model.name,
+    model_revision: cfg.model.revision,
+    review: {
+      status: cfg.review.status,
+      reviewer: cfg.review.reviewer,
+      reviewed_at: cfg.review.reviewed_at,
+      dataset_sha256: cfg.review.dataset_sha256,
+    },
+  };
+  if (typeof cfg.sourceSha256 === "string" && cfg.sourceSha256 !== "") {
+    out.source_sha256 = cfg.sourceSha256;
+  }
+  return out;
+}
+
+/** Runner/request settings derived from a run config. */
+export interface RunnerSettings {
+  concurrency: number;
+  deadlineMs: number;
+  requestMs: number;
+  maxTokens: number;
+  decoding: { temperature: number; seed: number; reasoning: string };
+  maxAttempts: number;
+}
+
+/**
+ * Map a TS run config to runner/request settings: eval worker concurrency,
+ * deadlines, token/decoding settings, and the proof retry budget.
+ */
+export function toRunnerSettings(cfg: RunConfigView): RunnerSettings {
+  return {
+    concurrency: cfg.modal.concurrency,
+    deadlineMs: cfg.timeouts.workDeadlineS * 1000,
+    requestMs: cfg.timeouts.requestMs,
+    maxTokens: cfg.tokenLimits.maxTokens,
+    decoding: {
+      temperature: cfg.decoding.temperature,
+      seed: cfg.decoding.seed,
+      reasoning: cfg.decoding.reasoning,
+    },
+    maxAttempts: cfg.retry.maxAttempts,
+  };
 }

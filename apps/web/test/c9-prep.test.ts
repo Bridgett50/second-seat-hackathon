@@ -51,13 +51,14 @@ function liveStore(calls: Call[], respond: (body: string) => Response, extra: Re
 
 // Obviously fake identities — never real sealed values.
 const dummy = () => ({
-  sourceSha: "0".repeat(40),
+  sourceSha: "a".repeat(40),
   dataset: { id: "dummy-dataset", role: "sealed-holdout", sha256: "a".repeat(64) },
   model: { name: "meta-models/Muse-Glimmer-30B", revision: "1".repeat(40) },
   image: { ref: "registry.example/dummy@sha256:" + "b".repeat(64), digest: "sha256:" + "b".repeat(64) },
   prompt: { sha256: "c".repeat(64) },
   schema: { sha256: "d".repeat(64) },
   scorer: { sha256: "e".repeat(64) },
+  review: { status: "reviewed", reviewer: "Dummy Reviewer", reviewed_at: "2026-10-27", dataset_sha256: "a".repeat(64) },
   decoding: { temperature: 0, seed: 42, reasoning: "medium" },
   tokenLimits: { maxTokens: 2048 },
   timeouts: { requestMs: 90000, workDeadlineS: 780, functionTimeoutS: 840 },
