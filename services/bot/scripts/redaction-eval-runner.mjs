@@ -155,10 +155,24 @@ function ratio(k, n) {
   return n ? (k / n).toFixed(3) : "n/a (no positives)";
 }
 
+// Integrity hash over ALL scoring-relevant receipt data (everything
+// parseAnswer/scoring reads: final content, error metadata, finish reason).
+// Written on every record with a raw receipt and verified on strict replay.
+export function receiptIntegrityHash(receipt) {
+  const content = typeof receipt?.content === "string" ? receipt.content : "";
+  const error = typeof receipt?.error === "string" ? receipt.error : "";
+  const finish = typeof receipt?.finish_reason === "string" ? receipt.finish_reason : "";
+  return sha256Hex(JSON.stringify({ content, error, finish_reason: finish }));
+}
+
 // Printable report lines. Completed-case metrics and full-batch (end-to-end)
 // metrics are labelled separately; null recalls print as "n/a (no positives)".
+// The first line is `complete: true|false` (mirrors summary.complete) and
+// `completion:` uses the full planned denominator so missing planned records
+// keep denominators.
 export function formatReport(records, summary, misses, spanMisses) {
   const lines = [];
+  lines.push(`complete: ${summary.complete}`);
   const { k, n } = summary.recall;
   const [lo, hi] = summary.wilson95;
   lines.push(`recall: ${k}/${n} = ${ratio(k, n)}`);
@@ -176,7 +190,11 @@ export function formatReport(records, summary, misses, spanMisses) {
     else lines.push(`case ${r.file}: not_run`);
   }
   const completed = records.filter((r) => r.status === "ok").length;
-  lines.push(`completion: ${completed}/${records.length}`);
+  const plannedCount =
+    typeof summary?.request_completion?.planned === "number"
+      ? summary.request_completion.planned
+      : records.length;
+  lines.push(`completion: ${completed}/${plannedCount}`);
   lines.push(`execution_failures: ${summary.failures.length}`);
   for (const f of summary.failures) lines.push(` - ${f}`);
   lines.push(`not_run: ${summary.not_run.length}`);
@@ -308,11 +326,23 @@ export async function runEval({
     return undefined;
   };
 
+  const receiptHashOf = (redactor) => {
+    try {
+      const receipt = redactor?.lastReceipt ?? null;
+      if (receipt !== null && typeof receipt === "object" && typeof receipt.content === "string") {
+        return receiptIntegrityHash(receipt);
+      }
+    } catch {
+      /* no raw evidence */
+    }
+    return undefined;
+  };
+
   // Durable save: append one JSON line per finished case and fsync before
   // proceeding, so an interrupted run stays readable and honestly incomplete.
-  // File records carry run_id, case_id (=file), input_sha256, and raw_sha256
-  // when the redactor produced a raw receipt; in-memory records keep the
-  // legacy shape so summary/report output is unchanged.
+  // File records carry run_id, case_id (=file), input_sha256, raw_sha256,
+  // and receipt_sha256 when the redactor produced a raw receipt; in-memory
+  // records keep the legacy shape so summary/report output is unchanged.
   const persist = (rec, redactor) => {
     if (recordsFd === null) return;
     const base = toRecord(rec);
@@ -324,6 +354,8 @@ export async function runEval({
     };
     const rawSha = redactor !== undefined ? rawShaOf(redactor) : undefined;
     if (rawSha !== undefined) extra.raw_sha256 = rawSha;
+    const receiptHash = redactor !== undefined ? receiptHashOf(redactor) : undefined;
+    if (receiptHash !== undefined) extra.receipt_sha256 = receiptHash;
     writeSync(recordsFd, `${JSON.stringify({ ...base, ...extra })}\n`);
     fsyncSync(recordsFd);
   };

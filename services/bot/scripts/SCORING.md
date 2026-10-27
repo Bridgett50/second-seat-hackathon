@@ -78,12 +78,37 @@ Applies to `scripts/redaction-eval-lib.mjs` (pure scorers) and
 - `all_attempted` is true when no case is `not_run` (every case got a response,
   even if some errored); `all_valid` (like `complete`) requires every case
   `ok`.
-- `rescoreRun(runDir)` (in `rescore-glimmer-run.mjs`) recomputes the summary
-  and report from the saved `records.jsonl` plus the case files, with no
-  redactor and no network. It ignores a truncated trailing partial line,
-  synthesizes `not_run` records for missing cases, and reproduces the saved
-  `summary.json`/`report.txt` exactly for complete runs. Interrupted runs (no
-  `summary.json`) rescore as `complete: false`.
+- `rescoreRun(runDir)` (in `rescore-glimmer-run.mjs`) is the strict default:
+  read-only replay from `manifest.json`, `inputs/`, `glimmer-raw.jsonl`, and
+  `records.jsonl`, with `parseAnswer` defaulting to `parseGlimmerAnswer`. It
+  never trusts saved hits/spans/totals. `rescoreLegacyRecords(runDir)` is the
+  explicitly named trust-saved-records path. Strict replay ignores a
+  truncated trailing partial line (`truncated: true`), keeps full planned
+  denominators when records are missing, and reproduces the saved
+  `summary.json`/`report.txt` exactly for unchanged complete runs.
+  Interrupted runs rescore as `complete: false`.
+- Strict replay status (`status` on the result; CLI exit codes in parentheses):
+  `integrity_failure` (1, any error: hash mismatch, bad status, duplicate /
+  unexpected / wrong-identity / unparseable receipt, missing evidence),
+  `incomplete` (3, no errors but not complete: truncated tail, `error` or
+  `not_run` cases), `mismatch` (4, complete but the saved `summary.json` or
+  `report.txt` differs), `complete_match` (0, complete and matching). Exit 2
+  is usage error (no args, unknown args, missing `--run-dir` value, or a
+  non-directory). Exit zero therefore always means complete AND matching,
+  never just complete. The CLI accepts ONLY `--run-dir <existing dir>` for
+  strict replay (one JSON line:
+  `{run_id, status, ok, complete, truncated, errors, mismatches}`); the
+  historical writer needs the explicit `--legacy-glimmer-run` flag.
+- `complete`, `output.complete`, and `summary.complete` always agree (a torn
+  tail forces all three false with `all_valid: false`). The printable report
+  starts with a `complete: true|false` line and `completion: <ok>/<planned>`
+  uses the full planned count.
+- Every file record with a raw receipt carries `receipt_sha256`
+  (`receiptIntegrityHash`: sha256 over the receipt `content`, `error`, and
+  `finish_reason` — all scoring-relevant receipt data), plus the legacy
+  `raw_sha256` over `content`. Strict replay verifies both, plus the
+  `input_sha256` / `annotation_sha256` hashes. Raw receipts with duplicate
+  keys, unplanned cases, a wrong `run_id`, or unparseable lines are errors.
 
 ## Raw-response receipts
 
