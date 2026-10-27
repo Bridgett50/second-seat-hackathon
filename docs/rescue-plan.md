@@ -13,6 +13,43 @@ Working rules
 - Do not expand images, audio, meeting integrations, dashboards, or provider comparisons.
 - Update existing draft PR #24 after the implemented workflow is stable.
 
+PR A1 — Harden span masking and validation (reconstructed from merged PR #35; original plan wording not available)
+Scope: redaction span handling, masking validation, PII labels.
+Changes:
+- Merge overlapping, nested, and duplicate spans before masking.
+- maskText rejects out-of-range, empty, and non-integer spans.
+- Validator rejects offsets that split a surrogate pair.
+- Use the canonical date_of_birth label.
+- Empty span list returns needsReview with piiFree false.
+Acceptance tests:
+- Overlapping, nested, and duplicate spans merge into one masked range.
+- maskText rejects out-of-range, empty, and non-integer spans.
+- Validator rejects surrogate-splitting offsets.
+- Empty span list gives needsReview with piiFree false.
+
+PR A2 — Gate live text through approval (reconstructed from merged PR #36; original plan wording not available)
+Scope: live entry points, approval gate, GatedText.
+Changes:
+- Every live entry point uses requireLiveGatedText.
+- GatedText is unmintable outside the gate and frozen.
+- GatedText is bound to run, revision, text hash, and expiry.
+- Post-approval mutation is refused.
+Acceptance tests:
+- Every live entry point requires requireLiveGatedText.
+- GatedText minted outside the gate is rejected.
+- Post-approval mutation is refused.
+
+PR A3 — Invalidate approval on edit and guard late generation (reconstructed from merged PR #37; original plan wording not available)
+Scope: session approval state, server generation guard, analysis dispatch.
+Changes:
+- Edits and clears invalidate approval synchronously.
+- The server generation guard discards late redaction and analysis.
+- Analysis dispatched before a recorded edit is marked superseded.
+Acceptance tests:
+- Editing or clearing the draft invalidates approval synchronously.
+- The server generation guard discards late redaction and analysis.
+- Analysis dispatched before a recorded edit is marked superseded.
+
 PR A4 — Connect session findings to the editable draft
 Scope: session state, rendering, draft approval, and browser tests.
 Changes:
