@@ -154,7 +154,7 @@ describe("summarize end-to-end", () => {
     const outDir = mkdtempSync(join(tmpdir(), "glimmer-rescore-"));
     const outPath = join(outDir, "rescore.json");
     try {
-      const output = execFileSync("node", [script, "--out", outPath], { encoding: "utf8" });
+      const output = execFileSync("node", [script, "--legacy-glimmer-run", "--out", outPath], { encoding: "utf8" });
       expect(output).toContain("requests: 6/8");
       expect(output).toContain("legacy completed: 18/29");
       expect(output).toContain("legacy end-to-end: 18/39");

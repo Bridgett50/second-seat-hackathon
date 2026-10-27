@@ -6,7 +6,7 @@ import { checkRecordIntegrity } from "../scripts/redaction-eval-lib.mjs";
 // @ts-expect-error untyped helper module
 import { runEval, sha256Hex } from "../scripts/redaction-eval-runner.mjs";
 // @ts-expect-error untyped helper module
-import { rescoreRun } from "../scripts/rescore-glimmer-run.mjs";
+import { rescoreLegacyRecords, rescoreRun } from "../scripts/rescore-glimmer-run.mjs";
 import { GlimmerClient } from "../src/private/redact.js";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -160,17 +160,17 @@ describe("terminal status per planned case", () => {
     const readText = async (c: { file: string; entities: string[] }) =>
       (c.file === "a.txt" ? "alpha 111" : "beta 222");
 
-    const missing = await rescoreRun(mk(["a.txt"]), { readText });
+    const missing = await rescoreLegacyRecords(mk(["a.txt"]), { readText });
     expect(missing.complete).toBe(false);
     expect(missing.integrity.ok).toBe(false);
     expect(missing.integrity.reason).toMatch(/missing: b\.txt/);
     expect(missing.records.find((r: { file: string }) => r.file === "b.txt")?.status).toBe("not_run");
 
-    const dup = await rescoreRun(mk(["a.txt", "b.txt", "b.txt"]), { readText });
+    const dup = await rescoreLegacyRecords(mk(["a.txt", "b.txt", "b.txt"]), { readText });
     expect(dup.complete).toBe(false);
     expect(dup.integrity.reason).toMatch(/duplicate: b\.txt/);
 
-    const extra = await rescoreRun(mk(["a.txt", "b.txt", "zzz.txt"]), { readText });
+    const extra = await rescoreLegacyRecords(mk(["a.txt", "b.txt", "zzz.txt"]), { readText });
     expect(extra.complete).toBe(false);
     expect(extra.integrity.reason).toMatch(/unexpected: zzz\.txt/);
 
@@ -227,7 +227,7 @@ describe("interrupted runs stay readable and honestly incomplete", () => {
     writeFileSync(join(runDir, "records.jsonl"), `${full}\n{"file": "b.txt", "hits": 0, "tot`);
     // No summary.json: the run never finished.
 
-    const r = await rescoreRun(runDir, {
+    const r = await rescoreLegacyRecords(runDir, {
       readText: async (c: { file: string }) => (c.file === "a.txt" ? "alpha 111" : "beta 222"),
     });
     expect(r.truncated).toBe(true);
