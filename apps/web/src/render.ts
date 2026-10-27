@@ -606,7 +606,7 @@ export type SessionPageSnapshot = {
   segments: { id: string; text: string }[];
   redactedText: string;
   approved: boolean;
-  result: { offline: boolean; entries: { kind: string; text: string; segmentIds: string[] }[] } | null;
+  result: { offline: boolean; entries: { kind: string; text: string; segmentIds: string[]; flags?: string[] }[] } | null;
   payload: { approvedText: string; status: string; sentAt?: string; adapterLabel?: string } | null;
   superseded?: { approvedText: string; sentAt?: string; status?: string } | null;
   offline: boolean;
@@ -662,6 +662,7 @@ function sessionFindingsHtml(snap: SessionPageSnapshot): string {
     .map(
       (e, i) =>
         `<article class="result" id="result-${i}"><p>${esc(e.text)}</p>` +
+        (e.flags && e.flags.length > 0 ? `<p class="flags">flags: ${e.flags.map(esc).join(", ")}</p>` : "") +
         `<p class="citations">${e.segmentIds.map((id) => `<a href="#${esc(id)}">[${esc(id)}]</a>`).join(" ")}</p></article>`,
     )
     .join("\n");
@@ -758,6 +759,7 @@ function render(s){
   else{s.result.entries.forEach(function(e,i){
     var a=el("article",{"class":"result",id:"result-"+i});
     a.appendChild(el("p",{},e.text));
+    if(e.flags&&e.flags.length){a.appendChild(el("p",{"class":"flags"},"flags: "+e.flags.join(", ")));}
     var c=el("p",{"class":"citations"});
     (e.segmentIds||[]).forEach(function(id){var link=el("a",{href:"#"+id},"["+id+"]");c.appendChild(link);c.appendChild(document.createTextNode(" "));});
     a.appendChild(c);resultsEl.appendChild(a);});}
