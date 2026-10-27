@@ -7,7 +7,8 @@
 //   GLIMMER_RUN_ID        run id (default: timestamp + randomness).
 //
 // Flags:
-//   --cases-dir <name>   fixtures/<name> input set (default: pii).
+//   --cases <name>       fixtures/<name> input set (default: pii).
+//                        (--cases-dir is kept as an alias.)
 //   --out-dir <dir>      parent dir for the unique run dir.
 //   --run-id <id>        run id; an existing <out-dir>/<id> is refused.
 //
@@ -36,8 +37,12 @@ function flagValue(name) {
   return i !== -1 && cliArgs[i + 1] !== undefined ? cliArgs[i + 1] : undefined;
 }
 let casesDir = "pii";
-const casesDirFlag = flagValue("--cases-dir");
+const casesDirFlag = flagValue("--cases") ?? flagValue("--cases-dir");
 if (casesDirFlag !== undefined) casesDir = casesDirFlag;
+if (casesDir.includes("/") || casesDir.includes("\\") || casesDir.includes("..")) {
+  console.error(`refusing cases dir outside fixtures/: ${JSON.stringify(casesDir)}`);
+  process.exit(2);
+}
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", casesDir);
 const cases = JSON.parse(readFileSync(join(dir, "cases.json"), "utf8"));
 

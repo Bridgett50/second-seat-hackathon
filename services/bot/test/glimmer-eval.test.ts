@@ -84,6 +84,33 @@ describe("scoreSpans", () => {
     expect(spans).toHaveLength(6);
   });
 
+  it("nested same-offset matches keep only the longest span, standalone repeats kept", () => {
+    // Regression: holdout-04 listed both [1,4] ("Zoë") and [1,13] ("Zoë Callahan")
+    // because "Zoë" is a substring of "Zoë Callahan" at the same offset; the old
+    // count double-counted the expected span. The standalone "Zoë" later in the
+    // text is a genuinely separate occurrence and must remain.
+    const text = "“Zoë Callahan” met Zoë";
+    const spans = annotateOccurrences(text, ["Zoë Callahan", "Zoë"]);
+    expect(spans).toHaveLength(2);
+    expect(spans[0]).toEqual({ start: 1, end: 1 + "Zoë Callahan".length });
+    expect(spans[1]).toEqual({ start: text.lastIndexOf("Zoë"), end: text.lastIndexOf("Zoë") + "Zoë".length });
+    // No two returned spans may overlap.
+    for (let i = 0; i < spans.length; i++) {
+      for (let j = i + 1; j < spans.length; j++) {
+        expect(spans[i].start < spans[j].end && spans[j].start < spans[i].end).toBe(false);
+      }
+    }
+  });
+
+  it("nested Ingrid / Ingrid Sørensen keeps only the longest overlapping span", () => {
+    // Regression: holdout-07 listed [7,13] ("Ingrid") and [7,22] ("Ingrid Sørensen").
+    const text = "Vendor Ingrid Sørensen called; Ingrid confirmed";
+    const spans = annotateOccurrences(text, ["Ingrid Sørensen", "Ingrid"]);
+    expect(spans).toHaveLength(2);
+    expect(text.slice(spans[0].start, spans[0].end)).toBe("Ingrid Sørensen");
+    expect(text.slice(spans[1].start, spans[1].end)).toBe("Ingrid");
+  });
+
   it("clean negative controls have 0 expected and still measure over-redaction", () => {
     for (const file of ["clean-01.txt", "clean-02.txt"]) {
       const text = readFileSync(join(here, "..", "fixtures", "pii-scoring", file), "utf8");
