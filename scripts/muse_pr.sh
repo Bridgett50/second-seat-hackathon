@@ -23,6 +23,10 @@ fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+if [ ! -f .agents/AGENTS.md ]; then
+  echo "missing .agents/AGENTS.md" >&2
+  exit 2
+fi
 mkdir -p .muse "$EVID"
 
 printf '%s\n' $SCOPE > .muse/scope.txt
@@ -46,14 +50,22 @@ run_agent() {
   fi
 }
 
-run_agent "$TASK" "" "$EVID/session-1.jsonl"
+FIRST_PROMPT="$(mktemp)"
+cat .agents/AGENTS.md > "$FIRST_PROMPT"
+printf '\n---\n' >> "$FIRST_PROMPT"
+cat "$TASK" >> "$FIRST_PROMPT"
+
+run_agent "$FIRST_PROMPT" "" "$EVID/session-1.jsonl"
+rm -f "$FIRST_PROMPT"
 VERIFY_OUT="$EVID/verify-1" bash .muse/verify_pr.sh >"$EVID/verify-1.json" 2>"$EVID/verify-1.err"
 if [ $? -eq 0 ]; then passed=true; else passed=false; fi
 
 while [ "$passed" = false ] && [ "$attempt" -lt 3 ]; do
   attempt=$((attempt + 1))
   probs="$(python3 -c 'import json; print(json.dumps(json.load(open("'"$EVID/verify-$((attempt - 1)).json"'")).get("problems", [])))' 2>/dev/null || echo '[]')"
-  run_agent "" "Fix only these problems, changing nothing else: $probs" "$EVID/session-$attempt.jsonl"
+  retry_text="Fix only these problems, changing nothing else: $probs"
+  combined="$(cat .agents/AGENTS.md; printf '\n---\n%s' "$retry_text")"
+  run_agent "" "$combined" "$EVID/session-$attempt.jsonl"
   VERIFY_OUT="$EVID/verify-$attempt" bash .muse/verify_pr.sh >"$EVID/verify-$attempt.json" 2>"$EVID/verify-$attempt.err"
   if [ $? -eq 0 ]; then passed=true; fi
 done
