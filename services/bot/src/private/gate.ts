@@ -184,6 +184,7 @@ export interface PrivacyGate {
   correct(runId: string, editedText: string): string;
   approve(runId: string, text: string): string;
   send<T>(runId: string, approvalToken: string, sendFn: (gated: GatedText) => Promise<T>): Promise<T>;
+  revoke(runId: string): void;
 }
 
 export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
@@ -304,6 +305,13 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
         },
       });
       return sendFn(gated);
+    },
+
+    revoke(runId: string): void {
+      const run = runs.get(runId);
+      if (run === undefined) return;
+      run.approval = null;
+      run.revision += 1;
     },
   };
 }

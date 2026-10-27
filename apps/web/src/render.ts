@@ -728,7 +728,7 @@ ${sessionDraftHtml(snap)}
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script>
 (function(){
-var sessionId=null,pending=false,lastRedacted="",dirty=false,seq=0;
+var sessionId=null,pending=false,lastRedacted="",dirty=false,seq=0,editedSince=false;
 var input=document.getElementById("transcript-input"),redacted=document.getElementById("redacted-text");
 var btnRedact=document.getElementById("btn-redact"),btnApprove=document.getElementById("btn-approve"),btnAnalyze=document.getElementById("btn-analyze");
 var stateEl=document.getElementById("session-state"),resultsEl=document.getElementById("results");
@@ -761,7 +761,7 @@ function render(s){
     var c=el("p",{"class":"citations"});
     (e.segmentIds||[]).forEach(function(id){var link=el("a",{href:"#"+id},"["+id+"]");c.appendChild(link);c.appendChild(document.createTextNode(" "));});
     a.appendChild(c);resultsEl.appendChild(a);});}
-  if(!s.payload){payloadText.textContent="";payloadStatus.textContent="Not prepared yet";}
+  if(!s.payload){payloadText.textContent="";payloadStatus.textContent=(lastRedacted&&redacted.value!==lastRedacted)?"Not prepared — preview edited, approve again":"Not prepared yet";}
   else{payloadText.textContent=s.payload.approvedText;payloadStatus.textContent=s.payload.status==="dispatched"?("Dispatched to "+(s.payload.adapterLabel||"analyzer")+" at "+(s.payload.sentAt||"unknown time")):"Prepared (not sent)";}
   var d=s.draft||null;
   if(draftSection)draftSection.hidden=!d;
@@ -773,7 +773,7 @@ function render(s){
     if(document.activeElement===draftText&&draftText.value!==(d.text||"")){draftStatus.textContent="Edited — approve again";approvedNow=false;}
     btnDraftApprove.disabled=pending||false;
     btnDraftReject.disabled=pending||false;
-    btnCopy.disabled=pending||!approvedNow;
+    btnCopy.disabled=pending||!approvedNow||editedSince;
   }else{
     if(document.activeElement!==draftText)draftText.value="";
     draftText.disabled=true;
@@ -786,9 +786,26 @@ function render(s){
   }
 }
 function call(path,body){return fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(b){return {ok:r.ok,body:b};});});}
-function refresh(){if(!sessionId)return;pending=true;updateButtons();var my=++seq;fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){pending=false;if(my!==seq)return;render(s);}).catch(function(){pending=false;updateButtons();});}
+function refresh(){if(!sessionId)return;pending=true;updateButtons();var my=++seq;fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){pending=false;if(my!==seq)return;editedSince=false;render(s);}).catch(function(){pending=false;updateButtons();});}
 function updateButtons(){btnRedact.disabled=true;btnApprove.disabled=true;btnAnalyze.disabled=true;if(btnDraftApprove)btnDraftApprove.disabled=true;if(btnDraftReject)btnDraftReject.disabled=true;if(btnCopy)btnCopy.disabled=true;}
-function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq)return;if(r.ok)render(r.body);else if(r.body&&r.body.state)render(r.body);else refresh();}).catch(function(){pending=false;if(my!==seq)return;refresh();});}
+function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq)return;editedSince=false;if(r.ok)render(r.body);else if(r.body&&r.body.state)render(r.body);else refresh();}).catch(function(){pending=false;if(my!==seq)return;refresh();});}
+function invalidateLocal(scope){
+  editedSince=true;
+  seq++;
+  while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);
+  resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));
+  clearDraftLocal();
+  btnAnalyze.disabled=true;
+  if(scope==="transcript"){
+    btnApprove.disabled=true;
+    redacted.value="";
+    payloadText.textContent="";payloadStatus.textContent="Not prepared yet";
+  }else{
+    payloadStatus.textContent="Not prepared — preview edited, approve again";
+  }
+  if(!sessionId)return;
+  run(call("/api/session/invalidate",{sessionId:sessionId,scope:scope}));
+}
 function clearLocalResults(){while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));}
 var deb=null;
 function clearDraftLocal(){
@@ -801,18 +818,14 @@ function clearDraftLocal(){
 }
 input.addEventListener("input",function(){
   dirty=true;
-  btnApprove.disabled=true;btnAnalyze.disabled=true;
+  invalidateLocal("transcript");
   btnRedact.disabled=pending||!input.value.trim();
-  redacted.value="";
-  clearLocalResults();
-  clearDraftLocal();
-  payloadText.textContent="";payloadStatus.textContent="Not prepared yet";
   if(deb)clearTimeout(deb);
   var v=input.value;
   deb=setTimeout(function(){if(!sessionId)return;dirty=false;run(call("/api/session/transcript",{sessionId:sessionId,text:v}));},300);
 });
 redacted.addEventListener("input",function(){
-  if(redacted.value!==lastRedacted){btnAnalyze.disabled=true;payloadStatus.textContent="Not prepared — preview edited, approve again";}
+  invalidateLocal("preview");
 });
 btnRedact.addEventListener("click",function(){if(btnRedact.disabled||!sessionId)return;if(deb){clearTimeout(deb);deb=null;}dirty=false;pending=true;updateButtons();run(call("/api/session/transcript",{sessionId:sessionId,text:input.value}).then(function(t){if(!t.ok)return t;return call("/api/session/redact",{sessionId:sessionId});}));});
 /* corrections are sent with Approve (avoids blur/click race) */

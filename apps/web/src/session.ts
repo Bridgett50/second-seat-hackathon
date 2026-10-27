@@ -347,6 +347,23 @@ export function createSessionStore(options?: SessionStoreOptions) {
     return snap;
   }
 
+  function invalidateContent(s: SessionRecord): void {
+    s.generation += 1;
+    if (s.runId) gate.revoke(s.runId);
+    s.approvalToken = null;
+    s.approved = false;
+    s.approvedText = "";
+    s.result = null;
+    s.payload = null;
+    s.draft = null;
+    if (s.inFlight) {
+      s.superseded = { ...s.inFlight, status: "sent" };
+      s.inFlight = null;
+    }
+    s.analyzePending = null;
+    delete s.reason;
+  }
+
   function fail(s: SessionRecord, err: unknown): void {
     const msg = err instanceof Error ? err.message : "failed";
     const name = err instanceof Error ? err.name : "";
@@ -391,27 +408,15 @@ export function createSessionStore(options?: SessionStoreOptions) {
 
     setTranscript(sessionId: string, text: string): SessionSnapshot {
       const s = lookup(sessionId);
+      invalidateContent(s);
       const lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
       s.segments = lines.map((line, i) => ({ id: `seg-${i + 1}`, text: line }));
       s.rawText = text;
-      s.generation += 1;
       s.runId = null;
       s.approvalExpired = false;
-      s.approvalToken = null;
       s.redactedText = "";
-      s.approved = false;
-      s.approvedText = "";
-      s.result = null;
-      s.payload = null;
-      s.draft = null;
-      if (s.inFlight) {
-        s.superseded = { ...s.inFlight, status: "sent" };
-        s.inFlight = null;
-      }
       s.redactPending = null;
-      s.analyzePending = null;
       s.state = "input";
-      delete s.reason;
       return snapshot(s);
     },
 
@@ -446,20 +451,26 @@ export function createSessionStore(options?: SessionStoreOptions) {
     correct(sessionId: string, text: string): SessionSnapshot {
       const s = lookup(sessionId);
       if (!s.runId) throw new Error("no redaction to correct: redact first");
-      s.generation += 1;
-      s.redactedText = gate.correct(s.runId, text);
-      s.approved = false;
-      s.approvalToken = null;
-      s.approvedText = "";
-      s.payload = null;
-      s.draft = null;
-      if (s.inFlight) {
-        s.superseded = { ...s.inFlight, status: "sent" };
-        s.inFlight = null;
+      const runId = s.runId;
+      invalidateContent(s);
+      s.runId = runId;
+      s.redactedText = gate.correct(runId, text);
+      s.state = "review_required";
+      return snapshot(s);
+    },
+
+    invalidate(sessionId: string, scope: "transcript" | "preview" = "preview"): SessionSnapshot {
+      const s = lookup(sessionId);
+      invalidateContent(s);
+      if (scope === "transcript") {
+        s.runId = null;
+        s.redactedText = "";
+        s.segments = [];
+        s.redactPending = null;
+        s.state = "input";
+      } else {
+        s.state = s.runId ? "review_required" : "input";
       }
-      if (s.state !== "blocked" && s.state !== "error") s.state = "review_required";
-      else s.state = "review_required";
-      delete s.reason;
       return snapshot(s);
     },
 
@@ -488,6 +499,24 @@ export function createSessionStore(options?: SessionStoreOptions) {
     analyze(sessionId: string): Promise<SessionSnapshot> {
       const s = lookup(sessionId);
       if (s.analyzePending) return s.analyzePending.then(() => snapshot(s));
+      if (!s.approvalToken || (s.state !== "approved" && s.state !== "completed")) {
+        s.state = "analysis_pending";
+        delete s.reason;
+        const gen = s.generation;
+        let p!: Promise<void>;
+        p = (async () => {
+          try {
+            throw new Error("approval required");
+          } catch (err: unknown) {
+            if (s.generation !== gen) return;
+            fail(s, err);
+          } finally {
+            if (s.analyzePending === p) s.analyzePending = null;
+          }
+        })();
+        s.analyzePending = p;
+        return p.then(() => snapshot(s));
+      }
       s.state = "analysis_pending";
       delete s.reason;
       const gen = s.generation;
@@ -597,14 +626,15 @@ export function createSessionStore(options?: SessionStoreOptions) {
 
     editDraft(sessionId: string, text: string): SessionSnapshot {
       const s = lookup(sessionId);
-      if (!s.result) throw new Error("no completed result: analyze first");
+      if (s.state !== "completed" || !s.result) throw new Error("no completed result: analyze first");
       s.draft = { text, origin: "user", resultGeneration: s.generation, approvedHash: null };
       return snapshot(s);
     },
 
     approveDraft(sessionId: string, text: string): SessionSnapshot {
       const s = lookup(sessionId);
-      if (!s.result || !s.draft) throw new Error("no completed result: analyze first");
+      if (s.state !== "completed" || !s.result || !s.draft) throw new Error("no completed result: analyze first");
+      if (s.draft.resultGeneration !== s.generation) throw new Error("no completed result: analyze first");
       if (text.length === 0) throw new Error("cannot approve an empty draft");
       if (text !== s.draft.text) throw new Error("draft changed; review again");
       s.draft.approvedHash = hashDraft(text);

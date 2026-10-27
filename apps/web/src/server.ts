@@ -47,6 +47,7 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/session/draft": new Set(["sessionId", "text"]),
   "/api/session/draft/approve": new Set(["sessionId", "text"]),
   "/api/session/draft/reject": new Set(["sessionId"]),
+  "/api/session/invalidate": new Set(["sessionId", "scope"]),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -474,6 +475,24 @@ export function createWebServer(deps?: WebServerDeps) {
               const msg = err instanceof Error ? err.message : "approve failed";
               const status = msg === "draft changed; review again" ? 409 : 400;
               json(res, status, { error: msg });
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/invalidate") {
+            const sessionId = body?.["sessionId"];
+            const scope = body?.["scope"] ?? "preview";
+            if (typeof sessionId !== "string") {
+              json(res, 400, { error: 'field "sessionId" must be a string' });
+              return;
+            }
+            if (scope !== "transcript" && scope !== "preview") {
+              json(res, 400, { error: 'field "scope" must be "transcript" or "preview"' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.invalidate(sessionId, scope));
+            } catch (err: unknown) {
+              json(res, 404, { error: err instanceof Error ? err.message : "unknown session" });
             }
             return;
           }

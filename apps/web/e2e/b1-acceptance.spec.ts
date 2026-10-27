@@ -13,8 +13,13 @@ async function state(page: Page, id: string) {
   const res = await page.request.get(`/api/session/state?sessionId=${encodeURIComponent(id)}`);
   return res.json();
 }
+/** Sentinel: a page-side fetch round trip so already-delivered responses' handlers have run. */
+async function settle(page: Page) {
+  await page.evaluate(() => fetch("/api/test/outbound").then((r) => r.json()).then(() => undefined));
+}
 async function open(page: Page): Promise<string> {
-  await page.clock.install();
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:00.001Z")); // timers fire only via runFor
   const resp = page.waitForResponse((r) => r.url().endsWith("/api/session") && r.request().method() === "POST");
   await page.goto("/session");
   const id = (await (await resp).json()).sessionId as string;
@@ -80,7 +85,6 @@ test.describe.serial("B1 acceptance (browser)", () => {
     await expect(page.locator("#btn-copy")).toBeDisabled();
     await expect(page.locator("#empty-state")).toBeVisible();
     await page.locator("#btn-analyze").click({ force: true });
-    await page.locator("#btn-copy").click({ force: true });
     await inv;
     const s = await state(page, id);
     expect([s.approved, s.result, s.draft]).toEqual([false, null, null]);
@@ -118,12 +122,18 @@ test.describe.serial("B1 acceptance (browser)", () => {
     const h = hold(page, "**/api/session/draft/approve");
     await page.locator("#btn-draft-approve").click();
     await h.ready;
+    // Server processes the approval NOW (pre-edit); only delivery to the page is held.
+    const served = await h.held[0]!.fetch();
+    const servedBody = await served.json();
+    expect(servedBody.draft?.approved).toBe(true);
     const inv = page.waitForResponse((r) => r.url().includes("/api/session/invalidate"));
     await page.locator("#transcript-input").fill("A new meeting text");
     await inv;
+    await expect(page.locator("#session-state")).toContainText("Input"); // page has rendered the invalidation
     const late = page.waitForResponse((r) => r.url().includes("/api/session/draft/approve"));
-    await h.held[0]!.continue();
+    await h.held[0]!.fulfill({ response: served, json: servedBody });
     await late;
+    await settle(page);
     await expect(page.locator("#btn-copy")).toBeDisabled();
     await expect(page.locator("#btn-analyze")).toBeDisabled();
     await expect(page.locator("#draft-status")).not.toContainText("Approved");
@@ -140,12 +150,17 @@ test.describe.serial("B1 acceptance (browser)", () => {
     const h = hold(page, "**/api/session/analyze");
     await page.locator("#btn-analyze").click();
     await h.ready;
+    const served = await h.held[0]!.fetch();
+    const servedBody = await served.json();
+    expect(servedBody.result?.entries?.length).toBeGreaterThan(0);
     const inv = page.waitForResponse((r) => r.url().includes("/api/session/invalidate"));
     await page.locator("#redacted-text").fill("Preview B text");
     await inv;
+    await expect(page.locator("#session-state")).toContainText("Review required");
     const late = page.waitForResponse((r) => r.url().includes("/api/session/analyze"));
-    await h.held[0]!.continue();
+    await h.held[0]!.fulfill({ response: served, json: servedBody });
     await late;
+    await settle(page);
     await expect(page.locator("#results .result")).toHaveCount(0);
     await expect(page.locator("#btn-copy")).toBeDisabled();
     const s = await state(page, id);
