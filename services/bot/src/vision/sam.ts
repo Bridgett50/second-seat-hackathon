@@ -9,12 +9,18 @@
  *   default (requires SECOND_SEAT_EXPERIMENTAL_IMAGES=1).
  * - Only the 04a-masked image is ever sent. If masking fails, the frame is
  *   dropped: an unmasked frame is never sent.
- * - Parse with `@meta-sam/parser` when installable, else a small local
+ * - String model output parses with the official `@meta-sam/parser` via
+ *   parseImageStream/recordsOfKind; legacy fixture objects use a small local
  *   parser (x2/y2 inclusive, mask_encoding "one_bit").
+ * - Confidence comes from request metadata.include_confidence (see
+ *   meta-docs/sam/segmenting.md "Confidence scores") and surfaces as
+ *   SamBox.confidence when the model returns it.
  * - Every returned box is clamped/verified inside the frame; zero matches ->
  *   full-frame box + flag `region_spotcheck_failed`.
  * - Without an API key, only fixture mode is available. Never prints the key.
  */
+
+import { parseImageStream, recordsOfKind } from "@meta-sam/parser";
 
 export const SAM_MODEL = "sam-3.1";
 export const SAM_API_URL = "https://api.meta.ai/v1/responses";
@@ -37,6 +43,8 @@ export interface SamBox {
   y: number;
   w: number;
   h: number;
+  /** Detection confidence (0..1) when the model returned it. */
+  confidence?: number;
 }
 
 export interface SamResult {
@@ -46,6 +54,8 @@ export interface SamResult {
   raw: unknown;
   model: string;
   fixture: boolean;
+  /** Which parser produced `boxes`. */
+  parser: "@meta-sam/parser" | "local";
 }
 
 export interface SamClient {
@@ -93,7 +103,9 @@ function clampBox(b: SamBox, frame: SamFrame): SamBox | null {
   const w = xEnd - x;
   const h = yEnd - y;
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
-  return { x, y, w, h };
+  const out: SamBox = { x, y, w, h };
+  if (typeof b.confidence === "number") out.confidence = b.confidence;
+  return out;
 }
 
 /** Clamp every box inside the frame; drop degenerate ones. */
@@ -198,26 +210,49 @@ export function parseSamBoxesLocal(raw: unknown): SamBox[] {
   return out;
 }
 
+async function* outputTextEvents(text: string) {
+  const lane = { item_id: "sam-official", output_index: 0, content_index: 0 } as const;
+  yield { type: "response.output_text.delta", ...lane, delta: text };
+  yield { type: "response.output_text.done", ...lane, text };
+  yield { type: "response.completed" };
+}
+
 /**
- * Parse with `@meta-sam/parser` when installable, else the local parser.
- * The external parser wins when present; any failure falls back locally.
+ * Parse official SAM wire text with `@meta-sam/parser`: wrap the text as
+ * response output-text events, run parseImageStream, and map "box" records
+ * (right/bottom half-open) to SamBox, keeping confidence when present.
  */
-export async function parseSamBoxes(raw: unknown): Promise<SamBox[]> {
-  try {
-    const mod = (await import("@meta-sam/parser")) as {
-      parseBoxes?: (raw: unknown) => SamBox[];
-      parse?: (raw: unknown) => SamBox[];
-      default?: { parseBoxes?: (raw: unknown) => SamBox[] };
-    };
-    const fn = mod.parseBoxes ?? mod.parse ?? mod.default?.parseBoxes;
-    if (typeof fn === "function") {
-      const boxes = fn(raw);
-      if (Array.isArray(boxes)) return boxes;
-    }
-  } catch {
-    /* package not installed: use the local parser */
+export async function parseSamOutputOfficial(text: string): Promise<SamBox[]> {
+  const parsed = parseImageStream(outputTextEvents(text));
+  for await (const _ of parsed) {
+    /* drain the snapshot stream; the result accumulates in finalResult */
   }
-  return parseSamBoxesLocal(raw);
+  const result = await parsed.finalResult;
+  const out: SamBox[] = [];
+  for (const record of recordsOfKind(result.records, "box")) {
+    const box: SamBox = {
+      x: record.left,
+      y: record.top,
+      w: record.right - record.left,
+      h: record.bottom - record.top,
+    };
+    if (typeof record.confidence === "number") box.confidence = record.confidence;
+    out.push(box);
+  }
+  return out;
+}
+
+/**
+ * A string raw (official wire text) goes through the official parser; a
+ * non-string legacy fixture object goes to the local parser.
+ */
+export async function parseSamBoxes(
+  raw: unknown,
+): Promise<{ boxes: SamBox[]; parser: "@meta-sam/parser" | "local" }> {
+  if (typeof raw === "string") {
+    return { boxes: await parseSamOutputOfficial(raw), parser: "@meta-sam/parser" };
+  }
+  return { boxes: parseSamBoxesLocal(raw), parser: "local" };
 }
 
 /** Zero matches -> full-frame citation + `region_spotcheck_failed`. */
@@ -227,6 +262,7 @@ export function withFallback(
   raw: unknown,
   model: string,
   fixture: boolean,
+  parser: "@meta-sam/parser" | "local" = "local",
 ): SamResult {
   const kept = clampBoxes(boxes, frame);
   if (kept.length === 0) {
@@ -236,16 +272,17 @@ export function withFallback(
       raw,
       model,
       fixture,
+      parser,
     };
   }
-  return { boxes: kept, flags: [], raw, model, fixture };
+  return { boxes: kept, flags: [], raw, model, fixture, parser };
 }
 
 export function buildRequestBody(frame: SamFrame, concept: SamConcept): Record<string, unknown> {
   return {
     model: SAM_MODEL,
     stream: true,
-    metadata: { mask_encoding: "one_bit" },
+    metadata: { mask_encoding: "one_bit", include_confidence: "true" },
     input: [
       {
         type: "message",
@@ -316,16 +353,13 @@ export class FixtureSamClient implements SamClient {
   constructor(fixtureRaw?: unknown) {
     this.fixtureRaw =
       fixtureRaw ??
-      ({
-        mask_encoding: "one_bit",
-        boxes: [{ x1: 200, y1: 140, x2: 599, y2: 339 }],
-      } as unknown);
+      "<0f>0<|box;x1=200;y1=140;x2=599;y2=339;w=800;h=400;c=0.87|><|mask;x=0;y=0;data=27,60,~!!!!M!0c[0o91w?q1!pIH4pPRVp2B3'7`e.ioeAf6-k/#Xd8%dX9x(|>\n";
   }
 
   async segmentShared(frame: SamFrame, concept: SamConcept = "slide"): Promise<SamResult> {
     void concept;
-    const boxes = await parseSamBoxes(this.fixtureRaw);
-    return withFallback(boxes, frame, this.fixtureRaw, SAM_MODEL, true);
+    const { boxes, parser } = await parseSamBoxes(this.fixtureRaw);
+    return withFallback(boxes, frame, this.fixtureRaw, SAM_MODEL, true, parser);
   }
 }
 
@@ -339,8 +373,8 @@ export class LiveSamClient implements SamClient {
     const key = apiKey();
     if (key === null) throw new Error("sam: live mode but no API key (set MODEL_API_KEY)");
     const raw = await postResponses(buildRequestBody(frame, concept), key);
-    const boxes = await parseSamBoxes(raw);
-    return withFallback(boxes, frame, raw, SAM_MODEL, false);
+    const { boxes, parser } = await parseSamBoxes(raw);
+    return withFallback(boxes, frame, raw, SAM_MODEL, false, parser);
   }
 }
 
