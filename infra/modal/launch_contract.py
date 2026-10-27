@@ -25,10 +25,16 @@ def _check_dataset(dataset):
         raise ValueError(f"dataset selection missing or invalid: {dataset!r}")
 
 
-def eval_command(dataset, out_dir, run_id):
-    """Node eval invocation for a dataset."""
+def eval_command(dataset, out_dir, run_id, run_config_path=None):
+    """Node eval invocation for a dataset.
+
+    run_config_path is the frozen run config the eval must consume: when
+    given (non-blank) it is threaded as `--run-config <path>` so the eval
+    inherits the frozen token/retry/decoding settings instead of defaults.
+    Omitted (None/blank) preserves the legacy bare command.
+    """
     _check_dataset(dataset)
-    return [
+    cmd = [
         "node",
         "scripts/redaction-eval.mjs",
         "--cases",
@@ -37,6 +43,89 @@ def eval_command(dataset, out_dir, run_id):
         out_dir,
         "--run-id",
         run_id,
+    ]
+    if run_config_path is not None and str(run_config_path) != "":
+        cmd = cmd + ["--run-config", str(run_config_path)]
+    return cmd
+
+
+_VLLM_MODEL = "meta-models/Muse-Glimmer-30B"
+_VLLM_DEFAULT_MAX_MODEL_LEN = 16384
+
+
+def _run_config_model_name(run_config):
+    if isinstance(run_config, dict):
+        model = run_config.get("model")
+        if isinstance(model, dict):
+            name = model.get("name")
+            if isinstance(name, str) and name != "":
+                return name
+        elif isinstance(model, str) and model != "":
+            return model
+    return _VLLM_MODEL
+
+
+def _run_config_revision(run_config):
+    if isinstance(run_config, dict):
+        model = run_config.get("model")
+        if isinstance(model, dict):
+            revision = model.get("revision")
+            if isinstance(revision, str) and revision != "":
+                return revision
+        flat = run_config.get("model_revision")
+        if isinstance(flat, str) and flat != "":
+            return flat
+    return ""
+
+
+def _run_config_max_model_len(run_config):
+    if isinstance(run_config, dict):
+        limits = run_config.get("tokenLimits")
+        if isinstance(limits, dict):
+            maximum = limits.get("maxTokens")
+            if isinstance(maximum, bool):
+                pass
+            elif isinstance(maximum, int) and maximum > 0:
+                return maximum
+    return _VLLM_DEFAULT_MAX_MODEL_LEN
+
+
+def vllm_argv(run_config, host="127.0.0.1", port=8000):
+    """Pure vLLM serve argv derived from a parsed run config.
+
+    --revision comes from the run config (nested model.revision, or the
+    flat launch-contract model_revision); --max-model-len comes from the
+    run config tokenLimits.maxTokens, defaulting to the historical 16384
+    when the config carries no token limit. Every other flag is the fixed
+    Glimmer serve shape.
+    """
+    model = _run_config_model_name(run_config)
+    revision = _run_config_revision(run_config)
+    max_len = _run_config_max_model_len(run_config)
+    return [
+        "vllm",
+        "serve",
+        model,
+        "--revision",
+        revision,
+        "--served-model-name",
+        model,
+        "--tensor-parallel-size",
+        "1",
+        "--dtype",
+        "bfloat16",
+        "--max-model-len",
+        str(max_len),
+        "--gpu-memory-utilization",
+        "0.92",
+        "--reasoning-parser",
+        "muse_glimmer",
+        "--generation-config",
+        "auto",
+        "--host",
+        str(host),
+        "--port",
+        str(port),
     ]
 
 
