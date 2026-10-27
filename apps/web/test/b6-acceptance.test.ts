@@ -69,8 +69,21 @@ function pressureOf(s: unknown): Pressure {
 
 // Store API extension expected by B6 (typed loosely so this file compiles pre-change).
 type B6Store = ReturnType<typeof createSessionStore> & {
-  reviewPressure(sessionId: string, itemId: string): unknown;
+  reviewPressure(
+    sessionId: string,
+    itemId: string,
+    opts?: { expectedRevision?: number; assessmentId?: string },
+  ): unknown;
 };
+
+function reviewOpts(store: ReturnType<typeof createSessionStore>, id: string) {
+  const s = store.getState(id) as unknown as {
+    revision: number;
+    pressure: { assessmentId: string } | null;
+  };
+  if (!s.pressure) throw new Error("test setup has no pressure assessment");
+  return { expectedRevision: s.revision, assessmentId: s.pressure.assessmentId };
+}
 
 describe("B6 pressure evidence in /session", () => {
   it("B6-1: assessment appears with quote + citation from the current approved transcript", async () => {
@@ -135,7 +148,7 @@ describe("B6 pressure evidence in /session", () => {
   it("B6-5: editing the meeting invalidates pressure-review state and draft approval", async () => {
     const { store, id } = await analyzed([[SCARCITY], [SCARCITY]]);
     const st = store as B6Store;
-    st.reviewPressure(id, "p1");
+    st.reviewPressure(id, "p1", reviewOpts(store, id));
     store.editDraft(id, "Thanks, we will review terms internally.");
     const ok = store.approveDraft(id, "Thanks, we will review terms internally.");
     expect(ok.draft?.approved).toBe(true);
@@ -152,7 +165,7 @@ describe("B6 pressure evidence in /session", () => {
     expect(p.reviewed).toEqual([]);
     expect(p.allReviewed).toBe(false);
     // Invalidating the preview also drops review state.
-    st.reviewPressure(id, "p1");
+    st.reviewPressure(id, "p1", reviewOpts(store, id));
     store.invalidate(id, "preview");
     expect((store.getState(id) as { pressure?: unknown }).pressure ?? null).toBeNull();
   });
@@ -166,7 +179,7 @@ describe("B6 pressure evidence in /session", () => {
     expect(pre.draft?.approved).toBe(false);
     expect(renderSessionPage(pre)).toMatch(/<button type="button" id="btn-copy" disabled/);
     expect(() => st.reviewPressure(id, "p-unknown")).toThrow();
-    const reviewed = st.reviewPressure(id, "p1");
+    const reviewed = st.reviewPressure(id, "p1", reviewOpts(store, id));
     expect(pressureOf(reviewed).allReviewed).toBe(true);
     const post = store.approveDraft(id, draft);
     expect(post.draft?.approved).toBe(true);

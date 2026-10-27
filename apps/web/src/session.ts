@@ -49,8 +49,15 @@ export interface SupersededRecord {
   status: "sent";
 }
 
+export interface MutationOpts {
+  expectedRevision?: number;
+  assessmentId?: string;
+}
+
 export interface SessionSnapshot {
   state: SessionStatus;
+  /** Strictly increasing server-side revision; every content/approval mutation bumps it. */
+  revision: number;
   reason?: string;
   segments: Segment[];
   redactedText: string;
@@ -123,6 +130,8 @@ export interface PressureItem {
 }
 
 export interface PressureAssessment {
+  /** Unique per completed analysis, even for identical text. */
+  assessmentId: string;
   items: PressureItem[];
   rejected: number;
   reviewed: string[];
@@ -233,7 +242,26 @@ function verifyPressureLabels(
       rejected += 1;
     }
   }
-  return { items, rejected, reviewed: [], allReviewed: items.length === 0, source, offline };
+  return { assessmentId: randomUUID(), items, rejected, reviewed: [], allReviewed: items.length === 0, source, offline };
+}
+
+/** Thrown (by name) when a mutation names a stale revision or assessment. Changes nothing. */
+function staleRevision(): Error {
+  const err = new Error("stale revision: state changed since review");
+  err.name = "StaleRevisionError";
+  return err;
+}
+
+function checkRevision(s: SessionRecord, opts?: MutationOpts): void {
+  if (opts?.expectedRevision !== undefined && opts.expectedRevision !== s.revision) {
+    throw staleRevision();
+  }
+}
+
+function checkAssessment(s: SessionRecord, opts?: MutationOpts): void {
+  if (!s.pressure || opts?.assessmentId === undefined || opts.assessmentId !== s.pressure.assessmentId) {
+    throw staleRevision();
+  }
 }
 
 interface SessionRecord {
@@ -254,6 +282,8 @@ interface SessionRecord {
   draft: DraftRecord | null;
   inFlight: { approvedText: string; sentAt: string } | null;
   generation: number;
+  /** Strictly increasing on every server-side content/approval change. */
+  revision: number;
   state: SessionStatus;
   reason?: string;
   approvalExpired: boolean;
@@ -606,6 +636,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
     }
     const snap: SessionSnapshot = {
       state: s.state,
+      revision: s.revision,
       segments: s.segments,
       redactedText: s.redactedText,
       approved: s.approved,
@@ -634,6 +665,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
 
   function invalidateContent(s: SessionRecord): void {
     s.generation += 1;
+    s.revision += 1;
     if (s.runId) gate.revoke(s.runId);
     s.approvalToken = null;
     s.approved = false;
@@ -686,6 +718,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
         draft: null,
         inFlight: null,
         generation: 0,
+        revision: 0,
         state: "input",
         approvalExpired: false,
         redactPending: null,
@@ -727,9 +760,11 @@ export function createSessionStore(options?: SessionStoreOptions) {
           s.approved = false;
           s.approvalToken = null;
           s.state = "review_required";
+          s.revision += 1;
         } catch (err: unknown) {
           if (s.generation !== gen) return;
           fail(s, err);
+          s.revision += 1;
         } finally {
           if (s.redactPending === p) s.redactPending = null;
         }
@@ -738,8 +773,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
       return p.then(() => snapshot(s));
     },
 
-    correct(sessionId: string, text: string): SessionSnapshot {
+    correct(sessionId: string, text: string, opts?: MutationOpts): SessionSnapshot {
       const s = lookup(sessionId);
+      checkRevision(s, opts);
       if (!s.runId) throw new Error("no redaction to correct: redact first");
       const runId = s.runId;
       invalidateContent(s);
@@ -749,8 +785,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
       return snapshot(s);
     },
 
-    invalidate(sessionId: string, scope: "transcript" | "preview" = "preview"): SessionSnapshot {
+    invalidate(sessionId: string, scope: "transcript" | "preview" = "preview", opts?: MutationOpts): SessionSnapshot {
       const s = lookup(sessionId);
+      checkRevision(s, opts);
       invalidateContent(s);
       if (scope === "transcript") {
         s.runId = null;
@@ -764,8 +801,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
       return snapshot(s);
     },
 
-    approve(sessionId: string): SessionSnapshot {
+    approve(sessionId: string, opts?: MutationOpts): SessionSnapshot {
       const s = lookup(sessionId);
+      checkRevision(s, opts);
       if (!s.runId) throw new Error("no redaction to approve: redact first");
       try {
         const token = gate.approve(s.runId, s.redactedText);
@@ -783,6 +821,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       } catch (err: unknown) {
         fail(s, err);
       }
+      s.revision += 1;
       return snapshot(s);
     },
 
@@ -801,6 +840,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
           } catch (err: unknown) {
             if (s.generation !== gen) return;
             fail(s, err);
+            s.revision += 1;
           } finally {
             if (s.analyzePending === p) s.analyzePending = null;
           }
@@ -861,6 +901,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
           if (s.generation !== gen) {
             if (dispatched) {
               s.superseded = { approvedText, sentAt, status: "sent" };
+              s.revision += 1;
             }
             return;
           }
@@ -916,6 +957,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
             if (s.generation !== gen) {
               if (dispatched) {
                 s.superseded = { approvedText, sentAt, status: "sent" };
+                s.revision += 1;
               }
               return;
             }
@@ -934,6 +976,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
             );
           } else {
             pressure = {
+              assessmentId: randomUUID(),
               items: [],
               rejected: 0,
               reviewed: [],
@@ -953,11 +996,13 @@ export function createSessionStore(options?: SessionStoreOptions) {
             adapterLabel: analyzerLabel,
           };
           s.state = "completed";
+          s.revision += 1;
         } catch (err: unknown) {
           if (live) refreshDispatched();
           if (s.generation !== gen) {
             if (dispatched) {
               s.superseded = { approvedText, sentAt, status: "sent" };
+              s.revision += 1;
             }
             return;
           }
@@ -970,6 +1015,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
             };
           }
           fail(s, err);
+          s.revision += 1;
         } finally {
           if (s.analyzePending === p) s.analyzePending = null;
         }
@@ -978,32 +1024,40 @@ export function createSessionStore(options?: SessionStoreOptions) {
       return p.then(() => snapshot(s));
     },
 
-    editDraft(sessionId: string, text: string): SessionSnapshot {
+    editDraft(sessionId: string, text: string, opts?: MutationOpts): SessionSnapshot {
       const s = lookup(sessionId);
+      checkRevision(s, opts);
       if (s.state !== "completed" || !s.result) throw new Error("no completed result: analyze first");
       s.draft = { text, origin: "user", resultGeneration: s.generation, approvedHash: null };
+      s.revision += 1;
       return snapshot(s);
     },
 
-    approveDraft(sessionId: string, text: string): SessionSnapshot {
+    approveDraft(sessionId: string, text: string, opts?: MutationOpts): SessionSnapshot {
       const s = lookup(sessionId);
+      checkRevision(s, opts);
       if (s.state !== "completed" || !s.result || !s.draft) throw new Error("no completed result: analyze first");
       if (s.draft.resultGeneration !== s.generation) throw new Error("no completed result: analyze first");
       if (text.length === 0) throw new Error("cannot approve an empty draft");
       if (text !== s.draft.text) throw new Error("draft changed; review again");
       s.draft.approvedHash = hashDraft(text);
+      s.revision += 1;
       return snapshot(s);
     },
 
-    rejectDraft(sessionId: string): SessionSnapshot {
+    rejectDraft(sessionId: string, opts?: MutationOpts): SessionSnapshot {
       const s = lookup(sessionId);
+      checkRevision(s, opts);
       if (s.draft) s.draft.approvedHash = null;
+      s.revision += 1;
       return snapshot(s);
     },
 
-    reviewPressure(sessionId: string, itemId: string): SessionSnapshot {
+    reviewPressure(sessionId: string, itemId: string, opts?: MutationOpts): SessionSnapshot {
       const s = lookup(sessionId);
       if (!s.pressure) throw new Error("no current pressure assessment: analyze first");
+      checkAssessment(s, opts);
+      checkRevision(s, opts);
       if (!s.pressure.items.some((i) => i.id === itemId)) {
         throw new Error(`unknown pressure item: ${itemId}`);
       }
@@ -1015,6 +1069,24 @@ export function createSessionStore(options?: SessionStoreOptions) {
           allReviewed: s.pressure.items.every((i) => reviewed.includes(i.id)),
         };
       }
+      s.revision += 1;
+      return snapshot(s);
+    },
+
+    unreviewPressure(sessionId: string, itemId: string, opts?: MutationOpts): SessionSnapshot {
+      const s = lookup(sessionId);
+      if (!s.pressure) throw new Error("no current pressure assessment: analyze first");
+      checkAssessment(s, opts);
+      checkRevision(s, opts);
+      if (!s.pressure.items.some((i) => i.id === itemId)) {
+        throw new Error(`unknown pressure item: ${itemId}`);
+      }
+      s.pressure = {
+        ...s.pressure,
+        reviewed: s.pressure.reviewed.filter((id) => id !== itemId),
+        allReviewed: false,
+      };
+      s.revision += 1;
       return snapshot(s);
     },
 
