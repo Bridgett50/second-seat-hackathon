@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GlimmerClient } from "../src/private/redact.js";
+import { GlimmerClient, parseGlimmerAnswer } from "../src/private/redact.js";
 
 function mockChat(content = '{"spans":[],"boxes":[]}') {
   const body = {
@@ -40,7 +40,7 @@ describe("E10 redact temperature", () => {
     expect(body).not.toHaveProperty("top_k");
   });
 
-  it("E10-3: system message states never guess and empty list when none stated", async () => {
+  it("E10-3: every JSON literal the prompt tells the model to return passes the real validator", async () => {
     mockChat();
     await new GlimmerClient("http://localhost:9").redactText("hello");
     const body = JSON.parse((fetch as any).mock.calls[0][1].body);
@@ -48,6 +48,57 @@ describe("E10 redact temperature", () => {
       (m) => m.role === "system",
     )?.content as string;
     expect(system).toContain("never guess");
-    expect(system).toContain("Use [] when none are stated");
+    // Collect each JSON literal the prompt instructs the model to return:
+    // a case-insensitive whole word "return" or "use", whitespace, then "{" or "[".
+    const literals: unknown[] = [];
+    const re = /\b(?:return|use)\b\s*([{\[])/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(system)) !== null) {
+      const start = m.index + m[0].length - 1;
+      const open = system[start] as string;
+      const close = open === "{" ? "}" : "]";
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      let end = -1;
+      for (let i = start; i < system.length; i += 1) {
+        const ch = system[i] as string;
+        if (inString) {
+          if (escaped) {
+            escaped = false;
+          } else if (ch === "\\") {
+            escaped = true;
+          } else if (ch === '"') {
+            inString = false;
+          }
+          continue;
+        }
+        if (ch === '"') {
+          inString = true;
+        } else if (ch === "{" || ch === "[") {
+          depth += 1;
+        } else if (ch === "}" || ch === "]") {
+          depth -= 1;
+          if (depth === 0) {
+            void close;
+            end = i;
+            break;
+          }
+        }
+      }
+      expect(end).toBeGreaterThan(start);
+      literals.push(JSON.parse(system.slice(start, end + 1)));
+    }
+    expect(literals.length).toBeGreaterThanOrEqual(2);
+    for (const literal of literals) {
+      const hasSpans =
+        typeof literal === "object" &&
+        literal !== null &&
+        !Array.isArray(literal) &&
+        Array.isArray((literal as { spans?: unknown }).spans) &&
+        ((literal as { spans: unknown[] }).spans.length > 0);
+      const inputText = hasSpans ? "Call Ana at 555-0100" : "";
+      expect(() => parseGlimmerAnswer(inputText, JSON.stringify(literal), "stop")).not.toThrow();
+    }
   });
 });
