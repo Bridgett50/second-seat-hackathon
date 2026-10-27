@@ -130,4 +130,62 @@ describe("analysis session", () => {
     expect(s.reason).toBeTypeOf("string");
     expect(analyzerCounter.calls).toBe(0);
   });
+
+  it("late redaction resolving after setTranscript writes nothing", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const store = createSessionStore({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      redactor: {
+        label: "deferred-fake",
+        async redactText(text: string) {
+          await gate;
+          return { maskedText: text, spans: [] };
+        },
+      } as any,
+    });
+    const id = store.createSession();
+    store.setTranscript(id, "Alice was here");
+    const p = store.redact(id);
+    store.setTranscript(id, "Bob");
+    release();
+    const s = await p;
+    expect(s.state).toBe("input");
+    expect(s.redactedText).toBe("");
+    expect(s.segments.map((g) => g.text)).toEqual(["Bob"]);
+  });
+
+  it("late analysis resolving after setTranscript records superseded", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const seen: string[] = [];
+    const store = createSessionStore({
+      analyzer: async (text: string) => {
+        seen.push(text);
+        await gate;
+        return buildOfflineBrief(text, []);
+      },
+    });
+    const id = store.createSession();
+    store.setTranscript(id, "When will you deliver it?\nPay $9 tomorrow");
+    await store.redact(id);
+    store.approve(id);
+    const approvedText = store.getState(id).payload?.approvedText ?? "";
+    expect(approvedText.length).toBeGreaterThan(0);
+    const p = store.analyze(id);
+    await delay(10);
+    store.setTranscript(id, "Bob");
+    release();
+    const s = await p;
+    expect(seen).toHaveLength(1);
+    expect(s.state).toBe("input");
+    expect(s.result).toBeNull();
+    expect(s.payload).toBeNull();
+    expect(s.superseded?.approvedText).toBe(approvedText);
+    expect(s.superseded?.status).toBe("sent");
+  });
 });
