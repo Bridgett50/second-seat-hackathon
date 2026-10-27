@@ -441,6 +441,7 @@ except SystemExit as e:
       deadlineMs: 700000,
       requestMs: 60000,
       maxTokens: 512,
+      contextTokens: 16384,
       decoding: { temperature: 0.7, seed: 7, reasoning: "high" },
       maxAttempts: 1,
     });
