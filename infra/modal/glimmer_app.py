@@ -25,23 +25,43 @@ import modal
 
 app = modal.App("second-seat-glimmer")
 
-image = (
-    modal.Image.from_registry("vllm/vllm-openai:muse-glimmer")
-    .dockerfile_commands(["RUN ln -sf \"$(command -v python3)\" /usr/local/bin/python"])
-    .entrypoint([])
-)
-
 volume = modal.Volume.from_name("glimmer-weights", create_if_missing=True)
 results = modal.Volume.from_name("glimmer-results", create_if_missing=True)
 
 _here = Path(__file__).resolve()
 _repo = _here.parents[2] if len(_here.parents) > 2 else Path("/")  # driver: container path is shallow
 
+# Launch config baked into the images, read at import. When set, both images
+# are built from the exact configured immutable digest.
+_LAUNCH_CONFIG_PATH = os.environ.get("GLIMMER_LAUNCH_CONFIG", "")
+_LAUNCH_CONFIG = {}
+if _LAUNCH_CONFIG_PATH:
+    try:
+        with open(_LAUNCH_CONFIG_PATH, "r", encoding="utf-8") as _fh:
+            _LAUNCH_CONFIG = json.load(_fh)
+    except Exception:
+        _LAUNCH_CONFIG = {}
+_MODEL_REVISION = _LAUNCH_CONFIG.get("model_revision", "") if isinstance(_LAUNCH_CONFIG, dict) else ""
+_LAUNCH_IMAGE = _LAUNCH_CONFIG.get("image", "") if isinstance(_LAUNCH_CONFIG, dict) else ""
+
 # Dataset baked into the eval image, read at import. When unset the eval
 # image carries no eval fixtures; when set it is built via package_dirs.
 _EVAL_DATASET = os.environ.get("GLIMMER_EVAL_DATASET", "")
 
-_node_base = image.run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
+if _LAUNCH_IMAGE:
+    image = (
+        modal.Image.from_registry(_LAUNCH_IMAGE)
+        .dockerfile_commands(["RUN ln -sf \"$(command -v python3)\" /usr/local/bin/python"])
+        .entrypoint([])
+    )
+    _node_base = modal.Image.from_registry(_LAUNCH_IMAGE).run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
+else:
+    image = (
+        modal.Image.from_registry("vllm/vllm-openai:muse-glimmer")
+        .dockerfile_commands(["RUN ln -sf \"$(command -v python3)\" /usr/local/bin/python"])
+        .entrypoint([])
+    )
+    _node_base = image.run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
 
 if _EVAL_DATASET:
     eval_in_container_image = _node_base
@@ -76,6 +96,8 @@ def serve() -> None:
         "vllm",
         "serve",
         "meta-models/Muse-Glimmer-30B",
+        "--revision",
+        _MODEL_REVISION,
         "--served-model-name",
         "meta-models/Muse-Glimmer-30B",
         "--tensor-parallel-size",
@@ -115,6 +137,8 @@ def eval_in_container(dataset: str) -> dict:
         "vllm",
         "serve",
         "meta-models/Muse-Glimmer-30B",
+        "--revision",
+        _MODEL_REVISION,
         "--served-model-name",
         "meta-models/Muse-Glimmer-30B",
         "--tensor-parallel-size",
@@ -227,12 +251,28 @@ def eval_in_container(dataset: str) -> dict:
 @app.local_entrypoint()
 def main(dataset: str = "", config: str = "") -> None:
     env_dataset = os.environ.get("GLIMMER_EVAL_DATASET", "")
+    env_config = os.environ.get("GLIMMER_LAUNCH_CONFIG", "")
     cfg = {}
     if config:
         with open(config, "r", encoding="utf-8") as fh:
             cfg = json.load(fh)
     fixtures_root = str(_repo / "services" / "bot" / "fixtures")
-    blockers = launch_contract.check_launch(cfg, fixtures_root, invoked_dataset=dataset)
+    blockers = []
+    if not env_config:
+        blockers.append("launch config missing: GLIMMER_LAUNCH_CONFIG is unset")
+    elif not config:
+        blockers.append("launch config missing: --config is empty")
+    else:
+        try:
+            if os.path.realpath(env_config) != os.path.realpath(config):
+                blockers.append(
+                    f"launch config mismatch: GLIMMER_LAUNCH_CONFIG {env_config!r} != --config {config!r}"
+                )
+        except Exception as exc:
+            blockers.append(f"launch config mismatch: cannot compare config paths ({exc})")
+    blockers = blockers + launch_contract.check_launch(
+        cfg, fixtures_root, invoked_dataset=dataset, repo_root=str(_repo)
+    )
     if dataset != env_dataset:
         blockers = [
             f"dataset mismatch: invoked {dataset!r} != GLIMMER_EVAL_DATASET {env_dataset!r}"
@@ -256,7 +296,21 @@ def fetch(run_id: str = "") -> None:
     )
 
     def list_files(rid):
-        return list(results.listdir(rid, recursive=True))
+        out = []
+        for entry in results.listdir(rid, recursive=True):
+            typ = getattr(entry, "type", None)
+            tname = getattr(typ, "name", None)
+            tvalue = getattr(typ, "value", typ)
+            if tname == "DIRECTORY" or tvalue == 2:
+                continue
+            full = getattr(entry, "path", None)
+            if not isinstance(full, str):
+                continue
+            prefix = f"{rid}/"
+            if not full.startswith(prefix):
+                continue
+            out.append(full[len(prefix):])
+        return out
 
     def read_file(remote):
         return b"".join(results.read_file(remote))
