@@ -78,7 +78,7 @@ afterEach(async () => {
 });
 
 describe("E12 prompt_cache_key", () => {
-  it("brief, shield and support posts all carry the same stable cache key", async () => {
+  it("brief, shield and support use distinct stable per-family cache keys", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "e12-cache-key-"));
     process.env["MUSE_STATE_FILE"] = join(stateDir, "state.json");
     process.env["MUSE_COST_LOG_FILE"] = join(stateDir, "cost.jsonl");
@@ -92,12 +92,23 @@ describe("E12 prompt_cache_key", () => {
       });
       await new SparkPressureClassifier().classify([{ segmentId: "s1", text: gated }]);
       await new SparkSupportJudge().gradeSupport({ entryId: "e", entryText: gated, citedSpans: [gated] });
-      expect(bodies).toHaveLength(3);
+      const gated2 = await mintLive("approved meeting notes about the follow-up");
+      await new MuseClient().completeBrief({
+        meetingId: "m2",
+        transcriptText: gated2,
+        framesSidecarText: "",
+        fixtureMode: false,
+      });
+      expect(bodies).toHaveLength(4);
       for (const body of bodies) {
-        expect(body["prompt_cache_key"]).toBe("second-seat");
+        expect(typeof body["prompt_cache_key"]).toBe("string");
+        expect((body["prompt_cache_key"] as string).length).toBeGreaterThan(0);
       }
-      expect(bodies[0]!["prompt_cache_key"]).toBe(bodies[1]!["prompt_cache_key"]);
-      expect(bodies[1]!["prompt_cache_key"]).toBe(bodies[2]!["prompt_cache_key"]);
+      const [briefKey, shieldKey, supportKey, briefKey2] = bodies.map(
+        (b) => b["prompt_cache_key"],
+      );
+      expect(new Set([briefKey, shieldKey, supportKey]).size).toBe(3);
+      expect(briefKey2).toBe(briefKey);
     } finally {
       await rm(stateDir, { recursive: true, force: true });
     }
