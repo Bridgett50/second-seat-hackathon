@@ -155,6 +155,53 @@ export function normalizeGlimmerLabel(label: string): string {
   return label.toLowerCase();
 }
 
+/** Frozen inline system message for the Glimmer redaction call (kind "text").
+ * fetchBody sends exactly GLIMMER_SYSTEM_PROMPT for text requests; image
+ * requests send the same string with only the "for text." kind marker
+ * swapped. */
+export const GLIMMER_SYSTEM_MESSAGE = { role: "system", content: `Return JSON only for text. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth, and input.slice(start,end) must equal the entity text. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` };
+
+/** Frozen inline system prompt string: the exact message content fetchBody
+ * sends for kind "text". */
+export const GLIMMER_SYSTEM_PROMPT: string = GLIMMER_SYSTEM_MESSAGE.content;
+
+/** Frozen response-format schema object for the Glimmer redaction call.
+ * fetchBody sends it as response_format.json_schema unchanged. */
+export const GLIMMER_RESPONSE_SCHEMA: { name: string; schema: unknown } = {
+  name: "glimmer_redaction",
+  schema: {
+    type: "object",
+    properties: {
+      spans: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            start: { type: "integer" },
+            end: { type: "integer" },
+            label: { type: "string", enum: ALLOWED_LABELS },
+          },
+          required: ["start", "end", "label"],
+        },
+      },
+      boxes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            x: { type: "integer" },
+            y: { type: "integer" },
+            w: { type: "integer" },
+            h: { type: "integer" },
+            label: { type: "string" },
+          },
+          required: ["x", "y", "w", "h", "label"],
+        },
+      },
+    },
+  },
+};
+
 export interface ValidatedSpan extends TextSpan {
   /** Raw label as the model returned it, before aliasing. */
   originalLabel: string;
@@ -735,7 +782,13 @@ export class GlimmerClient implements Redactor {
       envSeed !== undefined ||
       envReasoning !== undefined;
     const messages = [
-      { role: "system", content: `Return JSON only for ${kind}. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth, and input.slice(start,end) must equal the entity text. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` },
+      {
+        role: "system",
+        content:
+          kind === "text"
+            ? GLIMMER_SYSTEM_PROMPT
+            : GLIMMER_SYSTEM_PROMPT.replace("for text.", `for ${kind}.`),
+      },
       { role: "user", content: text },
     ];
     // Extraction defaults: temperature 0.0, reasoning "low", no seed. The
@@ -757,40 +810,7 @@ export class GlimmerClient implements Redactor {
     if ((process.env["GLIMMER_JSON_SCHEMA"] ?? "") === "1") {
       requestBody["response_format"] = {
         type: "json_schema",
-        json_schema: {
-          name: "glimmer_redaction",
-          schema: {
-            type: "object",
-            properties: {
-              spans: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    start: { type: "integer" },
-                    end: { type: "integer" },
-                    label: { type: "string", enum: ALLOWED_LABELS },
-                  },
-                  required: ["start", "end", "label"],
-                },
-              },
-              boxes: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    x: { type: "integer" },
-                    y: { type: "integer" },
-                    w: { type: "integer" },
-                    h: { type: "integer" },
-                    label: { type: "string" },
-                  },
-                  required: ["x", "y", "w", "h", "label"],
-                },
-              },
-            },
-          },
-        },
+        json_schema: GLIMMER_RESPONSE_SCHEMA,
       };
     }
     const started = Date.now();

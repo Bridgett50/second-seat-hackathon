@@ -588,6 +588,44 @@ def download_run(list_files, read_file, run_id, out_dir):
     return done
 
 
+def function_settings(canonical):
+    """Frozen Modal function/readiness settings from a canonical nested config.
+
+    Returns (settings, errors): settings is
+    {"function_timeout_s": timeouts.functionTimeoutS,
+     "work_budget_s": timeouts.workDeadlineS} and errors holds one
+    "unsupported: modal.<key>=<v>" string for each dynamic Modal setting
+    this host cannot honor (allocations != 1, teardown not true,
+    evidenceDownload != "complete", scoredCanary not true).
+    """
+    errors = []
+    timeouts = canonical.get("timeouts") if isinstance(canonical, dict) else None
+    timeouts = timeouts if isinstance(timeouts, dict) else {}
+    settings = {
+        "function_timeout_s": timeouts.get("functionTimeoutS"),
+        "work_budget_s": timeouts.get("workDeadlineS"),
+    }
+    modal = canonical.get("modal") if isinstance(canonical, dict) else None
+    modal = modal if isinstance(modal, dict) else {}
+    if modal.get("allocations") != 1:
+        errors.append(
+            f"unsupported: modal.allocations={modal.get('allocations')!r} (only allocations=1 is supported)"
+        )
+    if modal.get("teardown") is not True:
+        errors.append(
+            f"unsupported: modal.teardown={modal.get('teardown')!r} (only teardown=true is supported)"
+        )
+    if modal.get("evidenceDownload") != "complete":
+        errors.append(
+            f"unsupported: modal.evidenceDownload={modal.get('evidenceDownload')!r} (only evidenceDownload=\"complete\" is supported)"
+        )
+    if modal.get("scoredCanary") is not True:
+        errors.append(
+            f"unsupported: modal.scoredCanary={modal.get('scoredCanary')!r} (only scoredCanary=true is supported)"
+        )
+    return settings, errors
+
+
 def wait_ready(now, sleep, probe, func_start, work_budget_s=780, ready_cap_s=300, poll_s=5):
     """Poll probe() until ready or until the in-budget ready cap.
 

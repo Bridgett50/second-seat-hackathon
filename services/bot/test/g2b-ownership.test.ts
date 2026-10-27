@@ -35,6 +35,12 @@ const REV = "9f".repeat(20);
 const TEXT = "Call Ana at 555-0100";
 const FIXED_RUN = "run-20261027T120000-424242";
 
+// Frozen runtime prompt/schema/scorer identities for dummy configs that run
+// the CLI with --run-config (placeholder shas would now refuse).
+// @ts-expect-error untyped helper module
+const { runtimeIdentities: g2bRuntimeIdentities } = await import("../scripts/frozen-identities.mjs");
+const G2B_IDS = (await g2bRuntimeIdentities()) as { prompt: string; schema: string; scorer: string };
+
 const STUB = String.raw`
 import sys, types, enum, json
 class FileEntryType(enum.IntEnum):
@@ -140,7 +146,7 @@ function canonicalConfig(r: string): { path: string; sha: string } {
     dataset: { id: "dummyx", sha256: hashed.ds },
     model: { name: "meta-models/Muse-Glimmer-30B", revision: REV },
     image: { ref: DIGEST, digest: `sha256:${"7".repeat(64)}` },
-    prompt: { sha256: "c".repeat(64) }, schema: { sha256: "d".repeat(64) }, scorer: { sha256: "f".repeat(64) },
+    prompt: { sha256: G2B_IDS.prompt }, schema: { sha256: G2B_IDS.schema }, scorer: { sha256: G2B_IDS.scorer },
     decoding: { temperature: 0, seed: 1, reasoning: "low" }, tokenLimits: { maxTokens: 256 },
     timeouts: { requestMs: 10000, workDeadlineS: 120, functionTimeoutS: 180 }, retry: { maxAttempts: 1 },
     modal: { allocations: 1, concurrency: 1, maxConcurrency: 2, scoredCanary: true, teardown: true, evidenceDownload: "complete" },
@@ -155,7 +161,7 @@ function canonicalConfig(r: string): { path: string; sha: string } {
 function makeBotTree(): string {
   const tree = mkdtempSync(join(tmpdir(), "g2b-tree-"));
   mkdirSync(join(tree, "scripts"), { recursive: true });
-  for (const f of ["redaction-eval.mjs", "redaction-eval-runner.mjs", "redaction-eval-lib.mjs", "rescore-glimmer-run.mjs"])
+  for (const f of ["redaction-eval.mjs", "redaction-eval-runner.mjs", "redaction-eval-lib.mjs", "frozen-identities.mjs", "rescore-glimmer-run.mjs"])
     copyFileSync(join(botDir, "scripts", f), join(tree, "scripts", f));
   symlinkSync(join(botDir, "dist"), join(tree, "dist"));
   symlinkSync(join(botDir, "node_modules"), join(tree, "node_modules"));
