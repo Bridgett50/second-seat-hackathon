@@ -9,12 +9,44 @@
 // Span scoring and over-redaction use entities + names (c.names, falling back
 // to c.extra_entities). The legacy entity-disappearance metric uses ONLY
 // c.entities so the historical item count is preserved.
-import { annotateOccurrences, scoreSpans, summarize } from "./redaction-eval-lib.mjs";
+//
+// Run records: every run gets a unique directory <outDir>/<runId>/ holding
+// manifest.json (run_id, planned case ids, input sha256 per case, started_at),
+// records.jsonl (one terminal record per planned case, appended + fsynced as
+// soon as the case finishes), summary.json, and report.txt. An existing run
+// dir is never reused (runEval throws). The raw-response log lives under the
+// run dir too, so a repeated run can never append into another run's file.
+import {
+  annotateOccurrences,
+  scoreSpans,
+  summarizeWithIntegrity,
+} from "./redaction-eval-lib.mjs";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { join } from "node:path";
 
 // Every supported PII string for span purposes: legacy entities plus the
 // separately annotated names/extra entities.
 export function caseEntities(c) {
   return [...(c.entities ?? []), ...(c.names ?? c.extra_entities ?? [])];
+}
+
+export function sha256Hex(text) {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+// Default run id: UTC timestamp plus randomness, unique per run.
+export function defaultRunId(now = new Date()) {
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  return `run-${stamp}-${randomBytes(6).toString("hex")}`;
 }
 
 // Serialized per-case record. ok records always carry misses (legacy entity
@@ -43,6 +75,15 @@ function errorRecord(c, err) {
     total: (c.entities ?? []).length,
     status: "error",
     error: err?.message ?? String(err),
+  };
+}
+
+function notRunRecord(c) {
+  return {
+    file: c.file,
+    hits: 0,
+    total: (c.entities ?? []).length,
+    status: "not_run",
   };
 }
 
@@ -114,6 +155,15 @@ export function formatReport(records, summary, misses, spanMisses) {
   return lines.join("\n");
 }
 
+// Key one redactor for a single case so its raw-response receipts carry
+// run_id, case_id, and input_sha256. Fake redactors without setReceiptContext
+// are left alone.
+function keyRedactor(redactor, receipt) {
+  if (redactor !== null && typeof redactor === "object" && typeof redactor.setReceiptContext === "function") {
+    redactor.setReceiptContext(receipt);
+  }
+}
+
 // Run the eval over planned cases with an injected redactor factory.
 //
 //   cases:        parsed cases.json entries ({ file, entities, names? })
@@ -121,11 +171,27 @@ export function formatReport(records, summary, misses, spanMisses) {
 //   makeRedactor: () => redactor with redactText(text) and optional timeoutMs
 //   deadlineMs:   global budget in ms from eval start (optional)
 //   concurrency:  worker count for the non-canary remainder (default 2)
+//   runId:        unique id for this run (default: timestamp + randomness)
+//   outDir:       parent dir for the run dir; when set, runEval writes
+//                 <outDir>/<runId>/{manifest.json,records.jsonl,summary.json,
+//                 report.txt} and points GLIMMER_RAW_DIR there for the run.
+//                 An existing run dir is refused (throws).
 //
 // Returns { records, summary, misses, span_misses, output, report, complete,
-// canaryFailed }. records and output have been through the same
+// canaryFailed, runId, runDir }. records and output have been through the same
 // JSON.stringify/parse round-trip as the GLIMMER_RESULT_JSON file payload.
-export async function runEval({ cases, readText, makeRedactor, deadlineMs, concurrency = 2 }) {
+export async function runEval({
+  cases,
+  readText,
+  makeRedactor,
+  deadlineMs,
+  concurrency = 2,
+  runId = defaultRunId(),
+  outDir,
+}) {
+  if (typeof runId !== "string" || runId === "" || runId.includes("/") || runId.includes("\\")) {
+    throw new Error(`runEval: invalid runId ${JSON.stringify(runId)}`);
+  }
   const startedAt = Date.now();
   const deadline =
     Number.isInteger(deadlineMs) && deadlineMs > 0 ? startedAt + deadlineMs : Infinity;
@@ -143,6 +209,7 @@ export async function runEval({ cases, readText, makeRedactor, deadlineMs, concu
   // BEFORE any dispatch, so failed/not_run cases keep planned denominators.
   const texts = new Map();
   const planned = [];
+  const manifestCases = [];
   for (const c of cases) {
     const text = await readText(c);
     texts.set(c.file, text);
@@ -151,63 +218,139 @@ export async function runEval({ cases, readText, makeRedactor, deadlineMs, concu
       total: (c.entities ?? []).length,
       expected: annotateOccurrences(text, caseEntities(c)).length,
     });
+    manifestCases.push({
+      file: c.file,
+      entities: c.entities ?? [],
+      ...(c.names !== undefined ? { names: c.names } : {}),
+      ...(c.extra_entities !== undefined ? { extra_entities: c.extra_entities } : {}),
+      input_sha256: sha256Hex(text),
+    });
   }
+
+  // Unique run dir. Refuse to reuse an existing one.
+  let runDir = null;
+  let recordsFd = null;
+  if (outDir !== undefined && outDir !== null && outDir !== "") {
+    mkdirSync(outDir, { recursive: true });
+    runDir = join(outDir, runId);
+    if (existsSync(runDir)) {
+      throw new Error(`runEval: run dir already exists (refusing reuse): ${runDir}`);
+    }
+    mkdirSync(runDir);
+    const manifest = {
+      run_id: runId,
+      started_at: new Date(startedAt).toISOString(),
+      planned: manifestCases,
+    };
+    writeFileSync(join(runDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    // Exclusive create: a repeated run can never append into this file.
+    recordsFd = openSync(join(runDir, "records.jsonl"), "wx");
+  }
+
+  // Raw-response log goes under the run dir so repeats can never append into
+  // another run's raw file. Restored afterwards.
+  const prevRawDir = process.env["GLIMMER_RAW_DIR"];
+  if (runDir !== null) process.env["GLIMMER_RAW_DIR"] = runDir;
+
+  // Durable save: append one JSON line per finished case and fsync before
+  // proceeding, so an interrupted run stays readable and honestly incomplete.
+  const persist = (rec) => {
+    if (recordsFd === null) return;
+    writeSync(recordsFd, `${JSON.stringify(toRecord(rec))}\n`);
+    fsyncSync(recordsFd);
+  };
 
   const finish = (allRecords, canaryFailed) => {
     const records = JSON.parse(JSON.stringify(allRecords.map(toRecord)));
-    const summary = summarize(records, planned);
+    const summary = summarizeWithIntegrity(records, planned);
     const misses = records.flatMap((r) => r.misses ?? []);
     const spanMisses = records.flatMap((r) => r.span_misses ?? []);
-    const output = JSON.parse(JSON.stringify({ ...summary, misses, span_misses: spanMisses }));
+    const output = JSON.parse(JSON.stringify({ run_id: runId, ...summary, misses, span_misses: spanMisses }));
+    const report = formatReport(records, summary, misses, spanMisses);
+    if (runDir !== null) {
+      writeFileSync(join(runDir, "summary.json"), `${JSON.stringify(output, null, 2)}\n`);
+      writeFileSync(join(runDir, "report.txt"), `${report}\n`);
+    }
     return {
       records,
       summary,
       misses,
       span_misses: spanMisses,
       output,
-      report: formatReport(records, summary, misses, spanMisses),
+      report,
       complete: summary.complete,
       canaryFailed,
+      runId,
+      runDir,
     };
   };
 
-  // Canary: case 1 runs first; an execution error stops the eval.
-  const records = [];
   try {
-    const redactor = makeRedactor();
-    applyTimeout(redactor);
-    records.push(await runCase(cases[0], texts.get(cases[0].file), redactor));
-  } catch (err) {
-    records.push(errorRecord(cases[0], err));
-    return finish(records, true);
-  }
-
-  // Remaining cases run concurrently.
-  const rest = cases.slice(1);
-  const results = new Array(rest.length);
-  let next = 0;
-  async function worker() {
-    for (;;) {
-      const i = next;
-      next += 1;
-      if (i >= rest.length) return;
-      const c = rest[i];
-      if (Date.now() >= deadline) {
-        results[i] = { file: c.file, hits: 0, total: (c.entities ?? []).length, status: "not_run" };
-        continue;
+    // Canary: case 1 runs first; an execution error stops the eval, and every
+    // remaining planned case gets an explicit not_run record.
+    const records = [];
+    try {
+      const redactor = makeRedactor();
+      applyTimeout(redactor);
+      keyRedactor(redactor, {
+        runId,
+        caseId: cases[0].file,
+        inputSha256: sha256Hex(texts.get(cases[0].file)),
+      });
+      const rec = await runCase(cases[0], texts.get(cases[0].file), redactor);
+      persist(rec);
+      records.push(rec);
+    } catch (err) {
+      const rec = errorRecord(cases[0], err);
+      persist(rec);
+      records.push(rec);
+      for (const c of cases.slice(1)) {
+        const nr = notRunRecord(c);
+        persist(nr);
+        records.push(nr);
       }
-      try {
-        const redactor = makeRedactor();
-        applyTimeout(redactor);
-        results[i] = await runCase(c, texts.get(c.file), redactor);
-      } catch (err) {
-        results[i] = errorRecord(c, err);
+      return finish(records, true);
+    }
+
+    // Remaining cases run concurrently; each record is persisted as soon as
+    // its case finishes, before the next case proceeds.
+    const rest = cases.slice(1);
+    const results = new Array(rest.length);
+    let next = 0;
+    async function worker() {
+      for (;;) {
+        const i = next;
+        next += 1;
+        if (i >= rest.length) return;
+        const c = rest[i];
+        if (Date.now() >= deadline) {
+          const nr = { file: c.file, hits: 0, total: (c.entities ?? []).length, status: "not_run" };
+          persist(nr);
+          results[i] = nr;
+          continue;
+        }
+        try {
+          const redactor = makeRedactor();
+          applyTimeout(redactor);
+          keyRedactor(redactor, { runId, caseId: c.file, inputSha256: sha256Hex(texts.get(c.file)) });
+          const rec = await runCase(c, texts.get(c.file), redactor);
+          persist(rec);
+          results[i] = rec;
+        } catch (err) {
+          const rec = errorRecord(c, err);
+          persist(rec);
+          results[i] = rec;
+        }
       }
     }
+    const workers = [];
+    for (let w = 0; w < Math.max(1, concurrency); w++) workers.push(worker());
+    await Promise.all(workers);
+    records.push(...results);
+    return finish(records, false);
+  } finally {
+    if (recordsFd !== null) closeSync(recordsFd);
+    if (prevRawDir === undefined) delete process.env["GLIMMER_RAW_DIR"];
+    else process.env["GLIMMER_RAW_DIR"] = prevRawDir;
   }
-  const workers = [];
-  for (let w = 0; w < Math.max(1, concurrency); w++) workers.push(worker());
-  await Promise.all(workers);
-  records.push(...results);
-  return finish(records, false);
 }

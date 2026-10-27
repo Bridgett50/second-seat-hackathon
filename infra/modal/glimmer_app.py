@@ -129,6 +129,7 @@ def eval_in_container() -> dict:
     eval_returncode = None
     eval_stdout = ""
     eval_stderr = ""
+    run_id = None
     try:
         ready_deadline = min(func_start + 300, global_deadline)
         while time.monotonic() < ready_deadline:
@@ -151,16 +152,29 @@ def eval_in_container() -> dict:
             if remaining_ms <= 0 or remaining_s <= 0:
                 eval_stderr = "no time remaining for eval"
             else:
+                # One unique run dir per run: /results/<run_id>/ holds
+                # manifest.json, records.jsonl, summary.json, report.txt, and
+                # the raw-response log.
+                run_id = (
+                    "run-"
+                    + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
+                    + f"-{os.getpid()}"
+                )
                 env = {
                     **os.environ,
                     "GLIMMER_BASE_URL": base_url,
                     "GLIMMER_DEADLINE_MS": str(remaining_ms),
-                    "GLIMMER_RAW_DIR": "/results/raw",
-                    "GLIMMER_RESULT_JSON": "/results/eval-summary.json",
                 }
                 try:
                     proc = subprocess.run(
-                        ["node", "scripts/redaction-eval.mjs"],
+                        [
+                            "node",
+                            "scripts/redaction-eval.mjs",
+                            "--out-dir",
+                            "/results",
+                            "--run-id",
+                            run_id,
+                        ],
                         cwd="/app/services/bot",
                         env=env,
                         capture_output=True,
@@ -180,8 +194,15 @@ def eval_in_container() -> dict:
             "eval_stdout": eval_stdout,
             "eval_stderr": eval_stderr,
             "ran_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "run_id": run_id if health_status == 200 else None,
         }
-        Path("/results/glimmer-live-eval.json").write_text(json.dumps(result, indent=2))
+        live_eval_path = (
+            Path(f"/results/{result['run_id']}/glimmer-live-eval.json")
+            if result["run_id"]
+            else Path("/results/glimmer-live-eval.json")
+        )
+        live_eval_path.parent.mkdir(parents=True, exist_ok=True)
+        live_eval_path.write_text(json.dumps(result, indent=2))
         try:
             if vllm.poll() is None:
                 os.killpg(vllm.pid, signal.SIGTERM)
@@ -203,18 +224,31 @@ def main() -> None:
 
 
 @app.local_entrypoint()
-def fetch() -> None:
+def fetch(run_id: str = "") -> None:
     out_dir = (
         Path(__file__).resolve().parents[2] / "services/bot/fixtures/glimmer-run"
     )
+    if run_id:
+        # Never overwrite the historical flat artifacts: per-run subdirectory.
+        out_dir = out_dir / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     # NOTE: the live result goes to fixtures/glimmer-run/glimmer-live-eval.json;
     # services/bot/fixtures/glimmer-live-eval.json must not be overwritten.
-    for remote, local in [
-        ("glimmer-live-eval.json", "glimmer-live-eval.json"),
-        ("eval-summary.json", "eval-summary.json"),
-        ("raw/glimmer-raw.jsonl", "glimmer-raw.jsonl"),
-    ]:
+    if run_id:
+        pairs = [
+            (f"{run_id}/glimmer-live-eval.json", "glimmer-live-eval.json"),
+            (f"{run_id}/summary.json", "eval-summary.json"),
+            (f"{run_id}/records.jsonl", "records.jsonl"),
+            (f"{run_id}/glimmer-raw.jsonl", "glimmer-raw.jsonl"),
+        ]
+    else:
+        # Historical flat layout (pre-run-dir results); kept read-only.
+        pairs = [
+            ("glimmer-live-eval.json", "glimmer-live-eval.json"),
+            ("eval-summary.json", "eval-summary.json"),
+            ("raw/glimmer-raw.jsonl", "glimmer-raw.jsonl"),
+        ]
+    for remote, local in pairs:
         try:
             data = b"".join(results.read_file(remote))
         except Exception:

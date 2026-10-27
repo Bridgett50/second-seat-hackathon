@@ -338,6 +338,92 @@ export interface GlimmerReplyDescription {
   durationMs: number;
 }
 
+/** Keying context for raw-response receipts (set per eval case by the runner). */
+export interface GlimmerReceiptContext {
+  runId?: string;
+  caseId?: string;
+  inputSha256?: string;
+}
+
+export interface GlimmerReceiptSpan {
+  start: number;
+  end: number;
+  /** Canonical label after aliasing. */
+  label: string;
+  /** Raw label exactly as the model returned it. */
+  original_label: string;
+}
+
+/**
+ * One raw-response receipt per model call. Reasoning content is stored ONLY in
+ * the separate `reasoning` field and is never parsed or scored as the answer
+ * (the answer is `content` only; see extractGlimmerJson).
+ */
+export interface GlimmerReceipt {
+  run_id: string;
+  case_id: string;
+  input_sha256: string;
+  kind: string;
+  status: number;
+  content: string;
+  spans: GlimmerReceiptSpan[];
+  reasoning: string;
+  finish_reason: string;
+  usage: unknown;
+  latency_ms: number;
+  error?: string;
+}
+
+/** Raw-response files claimed by exclusive create ('wx') in this process. */
+const claimedRawFiles = new Set<string>();
+
+function glimmerRawFile(rawDir: string): string {
+  // Fixed name: per-run isolation comes from the run dir plus exclusive
+  // create below, so a repeated run can never append into another run's file.
+  return join(rawDir, "glimmer-raw.jsonl");
+}
+
+function appendRawReceipt(file: string, receipt: GlimmerReceipt): void {
+  const line = `${JSON.stringify(receipt)}\n`;
+  if (!claimedRawFiles.has(file)) {
+    try {
+      writeFileSync(file, line, { flag: "wx" });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "EEXIST") {
+        throw new Error(
+          `glimmer: refusing to append into existing raw file ${file} (use a fresh run dir)`,
+        );
+      }
+      throw err;
+    }
+    claimedRawFiles.add(file);
+    return;
+  }
+  appendFileSync(file, line);
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function receiptSpans(content: string): GlimmerReceiptSpan[] {
+  try {
+    const parsed = JSON.parse(content) as { spans?: unknown };
+    if (!Array.isArray(parsed?.spans)) return [];
+    const out: GlimmerReceiptSpan[] = [];
+    for (const s of parsed.spans) {
+      if (typeof s !== "object" || s === null) continue;
+      const { start, end, label } = s as { start?: unknown; end?: unknown; label?: unknown };
+      if (!Number.isInteger(start) || !Number.isInteger(end)) continue;
+      if (typeof label !== "string" || label === "") continue;
+      out.push({ start: start as number, end: end as number, label: normalizeGlimmerLabel(label), original_label: label });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export function describeGlimmerReply(body: unknown, durationMs: number): GlimmerReplyDescription {
   const choice = (body as { choices?: Array<{ message?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown }; finish_reason?: unknown }> })?.choices?.[0];
   const message = choice?.message;
@@ -390,8 +476,12 @@ export class GlimmerClient implements Redactor {
   private baseUrl: string;
   private timeoutMs: number | undefined;
   private readonly fetchImpl: typeof fetch | undefined;
+  private receiptContext: GlimmerReceiptContext = {};
 
-  constructor(baseUrl?: string, opts?: { timeoutMs?: number; fetchImpl?: typeof fetch }) {
+  constructor(
+    baseUrl?: string,
+    opts?: { timeoutMs?: number; fetchImpl?: typeof fetch; receiptContext?: GlimmerReceiptContext },
+  ) {
     const resolved = baseUrl ?? process.env["GLIMMER_BASE_URL"] ?? "";
     if (resolved === "") throw new Error("glimmer: GLIMMER_BASE_URL is unset");
     if (!/^https?:\/\/[^/]/.test(resolved)) {
@@ -400,21 +490,107 @@ export class GlimmerClient implements Redactor {
     this.baseUrl = resolved.replace(/\/$/, "");
     this.timeoutMs = opts?.timeoutMs;
     this.fetchImpl = opts?.fetchImpl;
+    if (opts?.receiptContext !== undefined) this.receiptContext = { ...opts.receiptContext };
+  }
+
+  /** Key the next receipts by run/case (used by the eval runner; optional). */
+  setReceiptContext(ctx: GlimmerReceiptContext): void {
+    this.receiptContext = { ...ctx };
+  }
+
+  /**
+   * Write one raw-response receipt. Writes NOTHING unless GLIMMER_RAW_DIR is
+   * explicitly set, so application (non-eval) paths never log transcript or
+   * reply text by default.
+   */
+  private writeReceipt(receipt: GlimmerReceipt): void {
+    const rawDir = process.env["GLIMMER_RAW_DIR"] ?? "";
+    if (rawDir === "") return;
+    mkdirSync(rawDir, { recursive: true });
+    appendRawReceipt(glimmerRawFile(rawDir), receipt);
+  }
+
+  private receiptBase(kind: string): { run_id: string; case_id: string; input_sha256: string; kind: string } {
+    return {
+      run_id: this.receiptContext.runId ?? "",
+      case_id: this.receiptContext.caseId ?? "",
+      input_sha256: this.receiptContext.inputSha256 ?? "",
+      kind,
+    };
+  }
+
+  private replyReceipt(
+    kind: string,
+    body: unknown,
+    status: number,
+    latencyMs: number,
+    error?: string,
+  ): GlimmerReceipt {
+    const choice = (body as { choices?: Array<{ message?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown }; finish_reason?: unknown }> })?.choices?.[0];
+    const message = choice?.message;
+    const content = typeof message?.content === "string" ? message.content : "";
+    // Reasoning is preserved only here, as a separate field. It is never
+    // parsed or scored as the answer.
+    const reasoning =
+      typeof message?.reasoning === "string"
+        ? message.reasoning
+        : typeof message?.reasoning_content === "string"
+          ? message.reasoning_content
+          : "";
+    const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "unknown";
+    const usage = (body as { usage?: unknown })?.usage ?? null;
+    return {
+      ...this.receiptBase(kind),
+      status,
+      content,
+      spans: receiptSpans(content),
+      reasoning,
+      finish_reason: finishReason,
+      latency_ms: latencyMs,
+      // Legacy descriptive sizes (contentLen, finishReason, usage, ...) alongside
+      // the keyed receipt fields.
+      ...describeGlimmerReply(body, latencyMs),
+      ...(error !== undefined ? { error } : {}),
+    };
   }
 
   async redactText(text: string): Promise<RedactTextResult> {
-    const parsed = await this.chat(text, "text");
-    // Keep the model's original label alongside the canonical one.
-    const { spans } = validateGlimmerReply(text, parsed);
-    return { maskedText: maskText(text, spans), spans };
+    const started = Date.now();
+    // Transport failure throws here; its error receipt is written by fetchBody.
+    const body: unknown = await this.fetchBody(text, "text");
+    try {
+      const parsed = extractGlimmerJson(body);
+      // Keep the model's original label alongside the canonical one.
+      const { spans } = validateGlimmerReply(text, parsed);
+      this.writeReceipt(this.replyReceipt("text", body, 200, Date.now() - started));
+      return { maskedText: maskText(text, spans), spans };
+    } catch (err) {
+      this.writeReceipt(
+        this.replyReceipt("text", body, 200, Date.now() - started, errMessage(err)),
+      );
+      throw err;
+    }
   }
 
   async redactImage(png: Buffer, name: string): Promise<RedactImageResult> {
     void name;
-    const parsed = await this.chat(`redact PII boxes for image (base64 ${png.length} bytes)`, "image");
-    const { boxes } = validateGlimmerOutput("", { spans: [], boxes: (parsed as { boxes?: unknown }).boxes ?? [] });
-    if (boxes.length === 0) return { png, boxes: [], masked: false };
-    return { png: maskPngBoxes(png, boxes), boxes, masked: true };
+    const started = Date.now();
+    const body: unknown = await this.fetchBody(
+      `redact PII boxes for image (base64 ${png.length} bytes)`,
+      "image",
+    );
+    try {
+      const parsed = extractGlimmerJson(body);
+      const { boxes } = validateGlimmerOutput("", { spans: [], boxes: (parsed as { boxes?: unknown }).boxes ?? [] });
+      this.writeReceipt(this.replyReceipt("image", body, 200, Date.now() - started));
+      if (boxes.length === 0) return { png, boxes: [], masked: false };
+      return { png: maskPngBoxes(png, boxes), boxes, masked: true };
+    } catch (err) {
+      this.writeReceipt(
+        this.replyReceipt("image", body, 200, Date.now() - started, errMessage(err)),
+      );
+      throw err;
+    }
   }
 
   async health(): Promise<{ ok: boolean; label: string }> {
@@ -426,7 +602,11 @@ export class GlimmerClient implements Redactor {
     }
   }
 
-  private async chat(text: string, kind: string): Promise<unknown> {
+  /** Transport for one chat call. Writes an error receipt on transport
+   * failure (the caller writes exactly one receipt for parse/validate
+   * outcome). Kept private under a new name; `chat` behavior is preserved
+   * through redactText/redactImage. */
+  private async fetchBody(text: string, kind: string): Promise<unknown> {
     // OpenAI-compatible fetch. Never greedy: temp 1.0 / top_p 0.95 / top_k 64.
     const timeoutMs = this.timeoutMs ?? glimmerTimeoutMs();
     const requestBody: Record<string, unknown> = {
@@ -481,32 +661,65 @@ export class GlimmerClient implements Redactor {
       };
     }
     const started = Date.now();
-    const res = await (this.fetchImpl ?? fetch)(`${this.baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: AbortSignal.timeout(timeoutMs),
-      body: JSON.stringify(requestBody),
-    });
-    if (!res.ok) throw new Error(`glimmer: chat failed ${res.status}`);
+    let res: Response;
+    try {
+      res = await (this.fetchImpl ?? fetch)(`${this.baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: AbortSignal.timeout(timeoutMs),
+        body: JSON.stringify(requestBody),
+      });
+    } catch (err) {
+      const message = errMessage(err);
+      this.writeReceipt({
+        ...this.receiptBase(kind),
+        status: 0,
+        content: "",
+        spans: [],
+        reasoning: "",
+        finish_reason: "unknown",
+        usage: null,
+        latency_ms: Date.now() - started,
+        error: message,
+      });
+      throw err;
+    }
+    if (!res.ok) {
+      const message = `glimmer: chat failed ${res.status}`;
+      this.writeReceipt({
+        ...this.receiptBase(kind),
+        status: res.status,
+        content: "",
+        spans: [],
+        reasoning: "",
+        finish_reason: "unknown",
+        usage: null,
+        latency_ms: Date.now() - started,
+        error: message,
+      });
+      throw new Error(message);
+    }
     const raw = await res.text();
     let body: unknown;
     try {
       body = JSON.parse(raw) as unknown;
     } catch {
-      throw new Error(`glimmer: no JSON in reply (finish_reason=unknown, len=${raw.length})`);
+      const message = `glimmer: no JSON in reply (finish_reason=unknown, len=${raw.length})`;
+      this.writeReceipt({
+        ...this.receiptBase(kind),
+        status: res.status,
+        content: raw,
+        spans: [],
+        reasoning: "",
+        finish_reason: "unknown",
+        usage: null,
+        latency_ms: Date.now() - started,
+        error: message,
+      });
+      throw new Error(message);
     }
-    const durationMs = Date.now() - started;
-    const rawDir = process.env["GLIMMER_RAW_DIR"] ?? "";
-    if (rawDir !== "") {
-      const choice = (body as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0];
-      const content = typeof choice?.message?.content === "string" ? choice.message.content : "";
-      mkdirSync(rawDir, { recursive: true });
-      appendFileSync(
-        join(rawDir, "glimmer-raw.jsonl"),
-        `${JSON.stringify({ kind, status: res.status, content, ...describeGlimmerReply(body, durationMs) })}\n`,
-      );
-    }
-    return extractGlimmerJson(body);
+    // The caller writes exactly one receipt for the parse/validate outcome.
+    return body;
   }
 }
 
@@ -535,7 +748,7 @@ export function liveRedactor(): Redactor {
 // --- PNG box masking with node:zlib only (8-bit RGB/RGBA, non-interlaced) ---
 
 import { inflateSync, deflateSync } from "node:zlib";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
