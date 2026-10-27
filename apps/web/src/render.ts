@@ -633,9 +633,12 @@ function sessionPressureHtml(snap: SessionPageSnapshot): string {
   const status = (p as { status?: string }).status;
   if (p.items.length === 0) {
     if (status === "not_run" || status === "failed") {
+      const reason = (p as { reason?: unknown }).reason;
+      const reasonHtml =
+        typeof reason === "string" && reason !== "" ? `<p id="pressure-reason">${esc(reason)}</p>` : "";
       return `<section id="pressure" aria-label="Possible pressure">` +
         `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
-        `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p></section>`;
+        `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p>${reasonHtml}</section>`;
     }
     return "";
   }

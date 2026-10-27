@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { EVIDENCE_BRIEF_JSON_SCHEMA } from "@second-seat/core";
+import { EVIDENCE_BRIEF_JSON_SCHEMA, PRESSURE_TACTICS } from "@second-seat/core";
 import { hashDraft } from "./draftApproval.js";
 import {
   createPrivacyGate,
@@ -104,7 +104,8 @@ export interface LiveBriefAnalyzer {
     transcriptText: GatedText;
     framesSidecarText: GatedText | "";
     fixtureMode: boolean;
-    pressureAssessment?: string;
+    /** Structured labels bound to the approved transcript (no free-string channel). */
+    pressureLabels?: { segmentId: string; tactic: string; span: string }[];
   }): Promise<{ rawText: unknown }>;
 }
 
@@ -145,6 +146,9 @@ export interface PressureAssessment {
    * layer actually ran and returned a valid label array (positive iff
    * items.length > 0). not_run and failed always carry items [] and
    * allReviewed false: never an invisible negative or reviewed success.
+   * A rejected label (unknown tactic, unknown segment, missing/empty or
+   * nonmatching span) is never a valid_negative: any rejection fails the
+   * assessment with items [] and a visible reason.
    */
   status: "not_run" | "failed" | "valid_negative" | "valid_positive";
   items: PressureItem[];
@@ -153,6 +157,8 @@ export interface PressureAssessment {
   allReviewed: boolean;
   source: "offline-pattern" | "offline-fixture" | "live" | "pattern" | "none";
   offline: boolean;
+  /** Why a failed assessment failed; shown in the pressure section. */
+  reason?: string;
 }
 
 export interface SessionStoreOptions {
@@ -250,6 +256,32 @@ function resolveUnresolvedTerm(
   return ask;
 }
 
+/** The one shared known-tactic list (from `@second-seat/core`). */
+const KNOWN_PRESSURE_TACTICS: ReadonlySet<string> = new Set<string>(PRESSURE_TACTICS);
+
+/**
+ * Why a non-"none" label fails verification, or null when it verifies:
+ * unknown tactic, unknown segment, or a missing/empty span that is not a
+ * substring of the cited segment.
+ */
+function pressureLabelProblem(label: PressureLabel, byId: Map<string, string>): string | null {
+  if (!KNOWN_PRESSURE_TACTICS.has(label.tactic)) {
+    return `unknown tactic ${JSON.stringify(label.tactic)}`;
+  }
+  const text = typeof label.segmentId === "string" ? byId.get(label.segmentId) : undefined;
+  if (text === undefined) {
+    return `unknown segment ${JSON.stringify(label.segmentId)}`;
+  }
+  const span = typeof label.span === "string" ? label.span : "";
+  if (span === "") {
+    return "empty span";
+  }
+  if (!text.includes(span)) {
+    return "span is not a substring of the cited segment";
+  }
+  return null;
+}
+
 function verifyPressureLabels(
   labels: PressureLabel[],
   segments: Segment[],
@@ -260,21 +292,39 @@ function verifyPressureLabels(
   const approvedText = segments.map((s) => s.text).join("\n");
   const items: PressureItem[] = [];
   let rejected = 0;
+  let firstCause = "";
   for (const label of labels) {
     if (label.tactic === "none") continue;
-    const text = typeof label.segmentId === "string" ? byId.get(label.segmentId) : undefined;
-    const span = typeof label.span === "string" ? label.span : "";
-    if (text !== undefined && span !== "" && text.includes(span)) {
+    const problem = pressureLabelProblem(label, byId);
+    if (problem === null) {
+      const text = byId.get(label.segmentId) as string;
       items.push({
         id: `p${items.length + 1}`,
-        tactic: typeof label.tactic === "string" ? label.tactic : "unknown",
-        quote: span,
+        tactic: label.tactic,
+        quote: label.span,
         segmentId: label.segmentId,
         unresolvedTerm: resolveUnresolvedTerm(label.ask, text, approvedText),
       });
     } else {
       rejected += 1;
+      if (firstCause === "") firstCause = problem;
     }
+  }
+  // Any rejected non-"none" label fails the whole assessment: never an
+  // invisible valid_negative, and items [] so Copy gating stays disabled.
+  // valid_negative happens only for an empty array or only-"none" labels.
+  if (rejected > 0) {
+    return {
+      assessmentId: randomUUID(),
+      status: "failed",
+      items: [],
+      rejected,
+      reviewed: [],
+      allReviewed: false,
+      source,
+      offline,
+      reason: `pressure verification failed: rejected ${rejected} of ${rejected + items.length} label(s): ${firstCause}`,
+    };
   }
   const status: PressureAssessment["status"] = items.length > 0 ? "valid_positive" : "valid_negative";
   return {
@@ -302,7 +352,7 @@ function notRunPressure(offline: boolean): PressureAssessment {
   };
 }
 
-function failedPressure(offline: boolean): PressureAssessment {
+function failedPressure(offline: boolean, reason: string): PressureAssessment {
   return {
     assessmentId: randomUUID(),
     status: "failed",
@@ -312,6 +362,7 @@ function failedPressure(offline: boolean): PressureAssessment {
     allReviewed: false,
     source: "none",
     offline,
+    reason,
   };
 }
 
@@ -997,9 +1048,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
                 approvedSegments.map((g) => ({ segmentId: g.id, text: g.text })),
               );
             } catch {
-              return failedPressure(offline);
+              return failedPressure(offline, "pressure classifier failed");
             }
-            if (!isValidLabelArray(out)) return failedPressure(offline);
+            if (!isValidLabelArray(out)) return failedPressure(offline, "pressure classifier returned an unusable label array");
             return verifyPressureLabels(
               out,
               approvedSegments,
@@ -1008,23 +1059,21 @@ export function createSessionStore(options?: SessionStoreOptions) {
             );
           };
           // Live mode computes the assessment BEFORE the Spark request so
-          // it can ride inside the single owner-approved analysis request.
+          // it can ride inside the single owner-approved analysis request
+          // as structured labels bound to the approved segments.
           let livePressure: PressureAssessment | null = null;
-          let livePressureArg = "";
+          let livePressureLabels: { segmentId: string; tactic: string; span: string }[] = [];
           if (live) {
             livePressure = await resolvePressure();
             if (s.generation !== gen) {
               recordSuperseded();
               return;
             }
-            livePressureArg = JSON.stringify({
-              status: livePressure.status,
-              items: livePressure.items.map((i) => ({
-                tactic: i.tactic,
-                quote: i.quote,
-                segmentId: i.segmentId,
-              })),
-            });
+            livePressureLabels = livePressure.items.map((i) => ({
+              segmentId: i.segmentId,
+              tactic: i.tactic,
+              span: i.quote,
+            }));
           }
           const raw = await gate.send(s.runId, s.approvalToken, async (gated) => {
             if (!live) {
@@ -1040,7 +1089,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
                 transcriptText: gated,
                 framesSidecarText: "",
                 fixtureMode: false,
-                pressureAssessment: livePressureArg,
+                pressureLabels: livePressureLabels,
               });
               const rawText = (res as { rawText?: unknown } | null)?.rawText;
               if (typeof rawText !== "string") {
