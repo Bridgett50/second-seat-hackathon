@@ -29,6 +29,8 @@ const ownPath = join(here, "sealed-guard.mjs");
 const origReadFileSync = fs.readFileSync;
 const origExistsSync = fs.existsSync;
 const origRealpathNative = fs.realpathSync.native;
+const origLstatSync = fs.lstatSync;
+const origReadlinkSync = fs.readlinkSync;
 
 const sealedDirRoots = [resolve("/workspace/heldout-sealed")];
 const sealedFilePrefixes = [];
@@ -90,11 +92,48 @@ function lexResolve(p) {
 
 // Canonicalize without reading file contents: realpath the deepest
 // existing ancestor (stat only), then re-append the remainder.
-function canonicalize(abs) {
+function canonicalize(abs, depth = 0) {
   try {
+    if (depth > 40) return null;
     let cur = abs;
     const tail = [];
     for (;;) {
+      let st;
+      try {
+        st = origLstatSync(cur, { throwIfNoEntry: false });
+      } catch {
+        st = undefined;
+      }
+      if (
+        st !== undefined &&
+        st !== null &&
+        typeof st.isSymbolicLink === "function" &&
+        st.isSymbolicLink()
+      ) {
+        let ex = false;
+        try {
+          ex = origExistsSync(cur);
+        } catch {
+          ex = false;
+        }
+        if (!ex) {
+          let target;
+          try {
+            target = origReadlinkSync(cur);
+          } catch {
+            return null;
+          }
+          const s = toPathString(target);
+          if (s === null) return null;
+          const t = s.replace(/\\/g, "/");
+          const resolved =
+            t.startsWith("/") || /^[A-Za-z]:\//.test(t)
+              ? resolve(t)
+              : resolve(dirname(cur), t);
+          const next = tail.length === 0 ? resolved : join(resolved, ...tail);
+          return canonicalize(next, depth + 1);
+        }
+      }
       let ex = false;
       try {
         ex = origExistsSync(cur);
