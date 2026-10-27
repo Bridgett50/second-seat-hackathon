@@ -57,3 +57,53 @@ Applies to `scripts/redaction-eval-lib.mjs` (pure scorers) and
   payload after a `JSON.stringify`/`parse` round-trip identical to the
   `GLIMMER_RESULT_JSON` file payload, which carries top-level `misses` and
   `span_misses` lists alongside the summary.
+
+## Run records (replayable runs)
+
+- Each run gets a unique directory `<outDir>/<runId>/` (`runId` defaults to a
+  UTC timestamp plus randomness). Reusing an existing run dir is refused with
+  an error, so a repeated run can never append into another run's files.
+- `manifest.json`: `run_id`, `started_at`, and `planned` (planned case ids in
+  order, each with its `entities`/`names` and the `input_sha256` of the exact
+  input text it ran on).
+- `records.jsonl`: exactly one terminal record per planned case, with status
+  `ok` | `error` | `not_run`. Each record is appended and fsynced as soon as
+  its case finishes, before the next case proceeds. A failed canary produces
+  one `error` record plus an explicit `not_run` record for every remaining
+  planned case.
+- `summary.json` / `report.txt`: the summary payload and the printable report.
+- `checkRecordIntegrity` (in `redaction-eval-lib.mjs`): missing, duplicate, or
+  unexpected case ids force `complete: false` (and `all_valid: false`) with an
+  `integrity.reason` naming the offending ids.
+- `all_attempted` is true when no case is `not_run` (every case got a response,
+  even if some errored); `all_valid` (like `complete`) requires every case
+  `ok`.
+- `rescoreRun(runDir)` (in `rescore-glimmer-run.mjs`) recomputes the summary
+  and report from the saved `records.jsonl` plus the case files, with no
+  redactor and no network. It ignores a truncated trailing partial line,
+  synthesizes `not_run` records for missing cases, and reproduces the saved
+  `summary.json`/`report.txt` exactly for complete runs. Interrupted runs (no
+  `summary.json`) rescore as `complete: false`.
+
+## Raw-response receipts
+
+- Every model response is logged as one receipt keyed by `run_id`, `case_id`,
+  and `input_sha256`. Receipts preserve the final `content`, per-span original
+  (`original_label`) and canonical (`label`) labels, `finish_reason`, `usage`,
+  `latency_ms`, and `error` (failures write an error receipt instead of a
+  success receipt).
+- Reasoning content is stored ONLY in the receipt's separate `reasoning`
+  field. The answer is `message.content` only: a reply whose reasoning
+  contains a valid JSON answer but whose content is empty/invalid is a case
+  `error`, never a scored answer.
+- The raw log lives under the run dir (`<runDir>/glimmer-raw.jsonl`), opened
+  with exclusive create, so repeats cannot append into another run's file.
+
+## Logging boundary
+
+- Raw-response logging writes NOTHING unless `GLIMMER_RAW_DIR` is explicitly
+  set. Application (non-eval) paths therefore never write transcript or reply
+  text by default.
+- Synthetic evaluation artifacts (receipts, manifests, records under a run
+  dir) may contain synthetic text from the eval inputs. That is expected for
+  eval replay and must not be inherited by application logging.

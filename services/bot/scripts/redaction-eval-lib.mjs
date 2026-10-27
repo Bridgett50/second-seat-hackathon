@@ -94,6 +94,49 @@ export function annotateOccurrences(text, entities) {
   return spans;
 }
 
+// Every planned case must appear exactly once in the records: no missing,
+// no duplicates, no unexpected ids. Returns { ok, reason } (reason is null
+// when ok). Used by offline rescoring to keep incomplete runs honest.
+export function checkRecordIntegrity(records, plannedCases) {
+  const planned = new Set((plannedCases ?? []).map((c) => c.file));
+  const seen = new Set();
+  const missing = [];
+  const duplicates = [];
+  const unexpected = [];
+  for (const r of records ?? []) {
+    if (!planned.has(r.file)) {
+      unexpected.push(r.file);
+      continue;
+    }
+    if (seen.has(r.file)) {
+      duplicates.push(r.file);
+      continue;
+    }
+    seen.add(r.file);
+  }
+  for (const c of plannedCases ?? []) {
+    if (!seen.has(c.file)) missing.push(c.file);
+  }
+  const reasons = [];
+  if (missing.length > 0) reasons.push(`missing: ${missing.join(", ")}`);
+  if (duplicates.length > 0) reasons.push(`duplicate: ${duplicates.join(", ")}`);
+  if (unexpected.length > 0) reasons.push(`unexpected: ${unexpected.join(", ")}`);
+  if (reasons.length > 0) return { ok: false, reason: reasons.join("; ") };
+  return { ok: true, reason: null };
+}
+
+export function summarizeWithIntegrity(cases, plannedCases) {
+  const planned = Array.isArray(plannedCases) && plannedCases.length > 0 ? plannedCases : cases;
+  const integrity = checkRecordIntegrity(cases, planned);
+  const summary = summarize(cases, planned);
+  if (!integrity.ok) {
+    summary.complete = false;
+    summary.all_valid = false;
+  }
+  summary.integrity = integrity;
+  return summary;
+}
+
 // cases: [{ file, hits, total, status: "ok" | "error" | "not_run", error?,
 //            span?: { covered, expected, piiChars, piiCharsMasked, nonPii, nonPiiMasked } }]
 // plannedCases: full planned batch [{ file, total, expected? }]; failed and
@@ -147,6 +190,10 @@ export function summarize(cases, plannedCases) {
 
   return {
     complete: cases.length > 0 && failures.length === 0 && notRun.length === 0,
+    // all_attempted: every planned case got a response (ok or error, no not_run).
+    // all_valid: every planned case is ok. complete mirrors all_valid.
+    all_attempted: cases.length > 0 && notRun.length === 0,
+    all_valid: cases.length > 0 && failures.length === 0 && notRun.length === 0,
     request_completion: {
       completed: completed.length,
       planned: planned.length,
