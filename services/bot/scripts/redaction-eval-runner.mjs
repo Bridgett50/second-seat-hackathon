@@ -24,10 +24,10 @@ import {
 import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
-  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
+  rmSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -240,6 +240,17 @@ function keyRedactor(redactor, receipt) {
 //                 <outDir>/<runId>/{manifest.json,records.jsonl,summary.json,
 //                 report.txt} and points GLIMMER_RAW_DIR there for the run.
 //                 An existing run dir is refused (throws).
+//   evidenceFiles: optional {relName: Buffer|string} files written into the
+//                 run dir right after manifest.json with exclusive create.
+//                 Names must be non-empty and free of "/", "\\" and "..".
+//   fsImpl:       optional {mkdirSync, writeFileSync, openSync, rmSync}
+//                 overrides for the run-dir ownership steps (fault injection
+//                 in tests); defaults to the node:fs functions above.
+//
+// Ownership failures after the run dir is created never call makeRedactor:
+// they write <outDir>/<runId>.ownership-failure.json ({run_id, stage,
+// error}), remove only the run dir this call created, and throw
+// "runEval: ownership failure at <stage>: ...".
 //
 // Returns { records, summary, misses, span_misses, output, report, complete,
 // canaryFailed, runId, runDir }. records and output have been through the same
@@ -252,7 +263,16 @@ export async function runEval({
   concurrency = 2,
   runId = defaultRunId(),
   outDir,
+  evidenceFiles,
+  fsImpl,
 }) {
+  const fs = {
+    mkdirSync,
+    writeFileSync,
+    openSync,
+    rmSync,
+    ...(fsImpl ?? {}),
+  };
   if (typeof runId !== "string" || runId === "" || runId.includes("/") || runId.includes("\\")) {
     throw new Error(`runEval: invalid runId ${JSON.stringify(runId)}`);
   }
@@ -292,30 +312,86 @@ export async function runEval({
     });
   }
 
-  // Unique run dir. Refuse to reuse an existing one.
+  // Unique run dir, claimed with one atomic exclusive mkdir: a pre-existing
+  // dir throws EEXIST and is refused before makeRedactor is called.
   let runDir = null;
   let recordsFd = null;
   if (outDir !== undefined && outDir !== null && outDir !== "") {
-    mkdirSync(outDir, { recursive: true });
-    runDir = join(outDir, runId);
-    if (existsSync(runDir)) {
-      throw new Error(`runEval: run dir already exists (refusing reuse): ${runDir}`);
+    const failOwnership = (stage, err) => {
+      const detail = err?.message ?? String(err);
+      try {
+        fs.writeFileSync(
+          join(outDir, `${runId}.ownership-failure.json`),
+          `${JSON.stringify({ run_id: runId, stage, error: detail }, null, 2)}\n`,
+          { flag: "wx" },
+        );
+      } catch {
+        /* failure evidence itself is best effort */
+      }
+      try {
+        fs.rmSync(runDir, { recursive: true, force: true });
+      } catch {
+        /* cleanup is best effort */
+      }
+      throw new Error(`runEval: ownership failure at ${stage}: ${detail}`);
+    };
+    try {
+      fs.mkdirSync(outDir, { recursive: true });
+    } catch (err) {
+      throw new Error(`runEval: ownership failure at mkdir-out-dir: ${err?.message ?? String(err)}`);
     }
-    mkdirSync(runDir);
-    mkdirSync(join(runDir, "inputs"), { recursive: true });
-    for (const c of cases) {
-      const dest = join(runDir, "inputs", c.file);
-      mkdirSync(dirname(dest), { recursive: true });
-      writeFileSync(dest, texts.get(c.file) ?? "");
+    runDir = join(outDir, runId);
+    try {
+      fs.mkdirSync(runDir);
+    } catch (err) {
+      if (err?.code === "EEXIST") {
+        throw new Error(`runEval: run dir already exists (refusing reuse): ${runDir}`);
+      }
+      throw new Error(`runEval: ownership failure at mkdir-run-dir: ${err?.message ?? String(err)}`);
+    }
+    // The run dir is owned from here: every later ownership failure records
+    // <outDir>/<runId>.ownership-failure.json, removes only this run dir,
+    // and never calls makeRedactor.
+    try {
+      fs.mkdirSync(join(runDir, "inputs"), { recursive: true });
+      for (const c of cases) {
+        const dest = join(runDir, "inputs", c.file);
+        fs.mkdirSync(dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, texts.get(c.file) ?? "");
+      }
+    } catch (err) {
+      failOwnership("write-inputs", err);
     }
     const manifest = {
       run_id: runId,
       started_at: new Date(startedAt).toISOString(),
       planned: manifestCases,
     };
-    writeFileSync(join(runDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    try {
+      fs.writeFileSync(join(runDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    } catch (err) {
+      failOwnership("write-manifest", err);
+    }
+    if (evidenceFiles !== undefined && evidenceFiles !== null) {
+      for (const name of Object.keys(evidenceFiles)) {
+        if (typeof name !== "string" || name === "" || name.includes("/") || name.includes("\\") || name.includes("..")) {
+          failOwnership("write-evidence", new Error(`invalid evidence file name ${JSON.stringify(name)}`));
+        }
+      }
+      try {
+        for (const [name, data] of Object.entries(evidenceFiles)) {
+          fs.writeFileSync(join(runDir, name), data, { flag: "wx" });
+        }
+      } catch (err) {
+        failOwnership("write-evidence", err);
+      }
+    }
     // Exclusive create: a repeated run can never append into this file.
-    recordsFd = openSync(join(runDir, "records.jsonl"), "wx");
+    try {
+      recordsFd = fs.openSync(join(runDir, "records.jsonl"), "wx");
+    } catch (err) {
+      failOwnership("open-records", err);
+    }
   }
 
   // Raw-response log goes under the run dir so repeats can never append into
