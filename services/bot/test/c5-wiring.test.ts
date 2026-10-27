@@ -90,7 +90,19 @@ volume_mod = types.ModuleType("modal.volume"); volume_mod.FileEntry = FileEntry;
 sys.modules["modal.volume"] = volume_mod; modal.volume = volume_mod
 `;
 
-// A throwaway repo: real infra/modal sources copied in, dummy bot tree.
+function git(r: string, ...args: string[]): string {
+  const res = spawnSync("git", args, { cwd: r, encoding: "utf8" });
+  expect(res.status).toBe(0);
+  return (res.stdout as string).trim();
+}
+
+function headSha(r: string): string {
+  return git(r, "rev-parse", "HEAD");
+}
+
+// A throwaway repo that IS a real git checkout: real infra/modal sources
+// copied in, dummy bot tree, everything committed so launch (bound to the
+// git commit) can succeed from a clean tree.
 function fakeRepo(): string {
   const r = mkdtempSync(join(tmpdir(), "c5-repo-"));
   mkdirSync(join(r, "infra", "modal"), { recursive: true });
@@ -106,6 +118,13 @@ function fakeRepo(): string {
     writeFileSync(join(bot, "fixtures", name, `${name}-01.txt`), text);
     writeFileSync(join(bot, "fixtures", name, "cases.json"), JSON.stringify([{ file: `${name}-01.txt`, entities: [] }]));
   }
+  writeFileSync(join(r, ".gitignore"), "__pycache__/\n");
+  git(r, "init", "-q");
+  git(r, "config", "user.email", "dummy@example.invalid");
+  git(r, "config", "user.name", "Dummy");
+  git(r, "config", "commit.gpgsign", "false");
+  git(r, "add", "-A");
+  git(r, "commit", "-qm", "dummy commit");
   return r;
 }
 
@@ -140,7 +159,7 @@ function goodConfig(r: string, over: Record<string, unknown> = {}) {
   const cfg = {
     dataset: "dummyx",
     dataset_sha256: res.out.ds,
-    source_sha: "a".repeat(40),
+    source_sha: headSha(r),
     source_sha256: res.out.src,
     image: DIGEST,
     model: "meta-models/Muse-Glimmer-30B",

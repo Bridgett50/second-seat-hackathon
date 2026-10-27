@@ -298,6 +298,27 @@ def main(dataset: str = "", config: str = "") -> None:
     blockers = blockers + launch_contract.check_launch(
         cfg, fixtures_root, invoked_dataset=dataset, repo_root=str(_repo)
     )
+    # Git binding: the launch is bound to the recorded commit. HEAD must
+    # equal the frozen source_sha and the working tree must hold no tracked
+    # modifications and no untracked files besides the --config file itself
+    # (both its literal repo-relative path, so alias paths stay accepted,
+    # and its realpath-relative path). Any leftover refuses with zero
+    # spawns.
+    try:
+        _real_repo = os.path.realpath(str(_repo))
+        _cfg_paths = (
+            [os.path.relpath(os.path.abspath(config), _real_repo)]
+            if config
+            else []
+        )
+        if config:
+            _cfg_paths.append(os.path.relpath(os.path.realpath(config), _real_repo))
+    except Exception:
+        _cfg_paths = []
+    _frozen_sha = cfg.get("source_sha") if isinstance(cfg, dict) else None
+    blockers = blockers + launch_contract.git_binding_blockers(
+        str(_repo), _frozen_sha, allow_untracked=tuple(_cfg_paths)
+    )
     if dataset != env_dataset:
         blockers = [
             f"dataset mismatch: invoked {dataset!r} != GLIMMER_EVAL_DATASET {env_dataset!r}"
