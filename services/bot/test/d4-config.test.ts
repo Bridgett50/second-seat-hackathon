@@ -265,6 +265,7 @@ function launcherSha(r: string): string {
 // Python contract too.
 function d4RunConfig(ds: string, src: string) {
   return {
+    configVersion: 1,
     sourceSha: "a".repeat(40),
     sourceSha256: src,
     dataset: { id: "dummyx", sha256: ds },
