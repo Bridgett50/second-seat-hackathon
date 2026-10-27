@@ -108,7 +108,7 @@ function receipts(gate: PrivacyGate, runId: string): Array<Record<string, unknow
 
 async function flush(until: () => boolean): Promise<void> {
   // Event-loop turns (setImmediate is not faked), not wall-clock sleeps.
-  for (let i = 0; i < 500 && !until(); i += 1) await new Promise<void>((r) => setImmediate(r));
+  for (let i = 0; i < 20000 && !until(); i += 1) await new Promise<void>((r) => setImmediate(r));
   expect(until()).toBe(true);
 }
 
@@ -208,7 +208,15 @@ describe.each(CLIENTS)("B2 via %s client (B2-8: all clients)", (client) => {
       },
       {
         name: "prompt read",
-        arm: () => vi.mocked(fsp.readFile).mockRejectedValueOnce(new Error("ENOENT prompt")),
+        // Fail only reads of the developer prompt file (not the cost-guard state file).
+        arm: () => {
+          const real = vi.mocked(fsp.readFile).getMockImplementation()!;
+          vi.mocked(fsp.readFile).mockImplementation(((path: unknown, ...rest: unknown[]) =>
+            String(path).includes("/prompts/")
+              ? Promise.reject(new Error("ENOENT prompt"))
+              : (real as (...a: unknown[]) => Promise<unknown>)(path, ...rest)) as never);
+          disarm.push(() => vi.mocked(fsp.readFile).mockImplementation(real));
+        },
         applies: client !== "support", // support's developer prompt is an in-module constant
       },
       {
@@ -220,6 +228,7 @@ describe.each(CLIENTS)("B2 via %s client (B2-8: all clients)", (client) => {
         applies: true,
       },
     ];
+    const disarm: Array<() => void> = [];
     for (const c of cases) {
       if (!c.applies) continue;
       process.env["META_API_KEY"] = "test-dummy-not-a-secret";
@@ -228,6 +237,7 @@ describe.each(CLIENTS)("B2 via %s client (B2-8: all clients)", (client) => {
       await expect(gate.send(runId, token, (g) => callClient(client, g)), c.name).rejects.toThrow();
       expect(fetchCalls, c.name).toBe(0);
       expect(receipts(gate, runId), c.name).toEqual([]);
+      for (const d of disarm.splice(0)) d();
     }
   });
 

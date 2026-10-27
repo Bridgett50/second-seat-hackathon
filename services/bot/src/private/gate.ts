@@ -32,6 +32,25 @@ export class ResidualPIIError extends Error {
 
 const MINT = Symbol("gate-mint");
 
+/**
+ * Truthful dispatch record written at the transport boundary by
+ * `dispatchGuarded`, not on entry into an adapter. `dispatchedAt` is the
+ * ISO timestamp of the gate clock at the moment fetch is invoked;
+ * `attempt` is 1-based. `httpStatus` is present once a response arrives
+ * and omitted while the outcome is unknown (`invoked`) or the transport
+ * itself failed.
+ */
+export type DispatchReceipt = {
+  transport: "muse" | "shield" | "support";
+  runId: string;
+  revision: number;
+  payloadHash: string;
+  dispatchedAt: string;
+  attempt: number;
+  outcome: "invoked" | "provider_confirmed" | "http_error" | "transport_failed";
+  httpStatus?: number;
+};
+
 interface GateBinding {
   mode: "live" | "fixture";
   runId: string;
@@ -40,6 +59,7 @@ interface GateBinding {
   expiresAt: number;
   isCurrent: () => boolean;
   now: () => number;
+  record: (receipt: DispatchReceipt) => void;
 }
 
 const bindings = new WeakMap<GatedText, GateBinding>();
@@ -72,6 +92,74 @@ export class GatedText {
     this._text = text;
     Object.freeze(this);
   }
+}
+
+/**
+ * Revalidate approval at the transport boundary and record a truthful
+ * dispatch receipt. Synchronously (no await before `doFetch` is invoked):
+ * every gated value is revalidated with `requireLiveGatedText` (throws
+ * `GateApprovalError` when revoked, expired, stale, forged, fixture-mode,
+ * or mutated), then one `invoked` receipt per distinct run is recorded via
+ * the binding's `record` sink, then `doFetch()` is invoked. On resolve each
+ * receipt becomes `provider_confirmed` (response.ok) or `http_error` with
+ * the response status; on throw each becomes `transport_failed` and the
+ * error is rethrown. Mutating the recorded receipt objects in place keeps
+ * the stored history exact.
+ */
+export function dispatchGuarded(
+  transport: DispatchReceipt["transport"],
+  gated: readonly GatedText[],
+  attempt: number,
+  doFetch: () => Promise<Response>,
+): Promise<Response> {
+  for (const value of gated) {
+    requireLiveGatedText(value);
+  }
+  const distinct = new Map<string, GateBinding>();
+  for (const value of gated) {
+    const binding = bindings.get(value);
+    if (binding !== undefined && !distinct.has(binding.runId)) {
+      distinct.set(binding.runId, binding);
+    }
+  }
+  const pending: DispatchReceipt[] = [];
+  for (const binding of distinct.values()) {
+    const receipt: DispatchReceipt = {
+      transport,
+      runId: binding.runId,
+      revision: binding.revision,
+      payloadHash: binding.textHash,
+      dispatchedAt: new Date(binding.now()).toISOString(),
+      attempt,
+      outcome: "invoked",
+    };
+    binding.record(receipt);
+    pending.push(receipt);
+  }
+  let fetched: Promise<Response>;
+  try {
+    fetched = doFetch();
+  } catch (err) {
+    for (const receipt of pending) {
+      receipt.outcome = "transport_failed";
+    }
+    throw err;
+  }
+  return fetched.then(
+    (response) => {
+      for (const receipt of pending) {
+        receipt.outcome = response.ok ? "provider_confirmed" : "http_error";
+        receipt.httpStatus = response.status;
+      }
+      return response;
+    },
+    (err: unknown) => {
+      for (const receipt of pending) {
+        receipt.outcome = "transport_failed";
+      }
+      throw err;
+    },
+  );
 }
 
 /** Throw unless the value is gate-minted with a current, unexpired binding. Plain strings are rejected. */
@@ -119,6 +207,8 @@ interface StoredRun {
   spans: TextSpan[];
   rawNames: string[];
   approval: { token: string; textHash: string; at: number; revision: number } | null;
+  /** Dispatch history: appended only, never cleared by correct/revoke/approve. */
+  receipts: DispatchReceipt[];
 }
 
 function sha256Hex(text: string): string {
@@ -185,6 +275,8 @@ export interface PrivacyGate {
   approve(runId: string, text: string): string;
   send<T>(runId: string, approvalToken: string, sendFn: (gated: GatedText) => Promise<T>): Promise<T>;
   revoke(runId: string): void;
+  /** Copies of the recorded dispatch receipts for a run; unknown run -> []. */
+  receipts(runId: string): DispatchReceipt[];
 }
 
 export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
@@ -234,6 +326,7 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
         spans: redacted.spans,
         rawNames,
         approval: null,
+        receipts: [],
       });
       return {
         runId,
@@ -303,6 +396,12 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
             current.approval === approval
           );
         },
+        record: (receipt: DispatchReceipt) => {
+          const current = runs.get(runId);
+          if (current !== undefined) {
+            current.receipts.push(receipt);
+          }
+        },
       });
       return sendFn(gated);
     },
@@ -312,6 +411,10 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
       if (run === undefined) return;
       run.approval = null;
       run.revision += 1;
+    },
+
+    receipts(runId: string): DispatchReceipt[] {
+      return (runs.get(runId)?.receipts ?? []).map((receipt) => ({ ...receipt }));
     },
   };
 }

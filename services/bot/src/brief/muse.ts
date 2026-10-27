@@ -13,7 +13,7 @@
  */
 import { EVIDENCE_BRIEF_JSON_SCHEMA } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "./costGuard.js";
-import { requireLiveGatedText, type GatedText } from "../private/gate.js";
+import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const BRIEF_MODEL = "muse-spark-1.3";
 export const BRIEF_PROMPT_VERSION = "brief-v2";
@@ -162,18 +162,25 @@ function retryAfterMs(header: string | null, attempt: number): number {
 async function postChat(
   body: Record<string, unknown>,
   key: string,
+  gated: readonly GatedText[],
+  transport: "muse",
   fetchImpl?: typeof fetch,
 ): Promise<Response> {
   const maxAttempts = 4;
   for (let attempt = 0; ; attempt += 1) {
-    const response = await (fetchImpl ?? fetch)(BRIEF_API_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({ ...body, stream: true }),
-    });
+    // Every attempt (including retries) revalidates approval at the
+    // transport boundary and records a receipt. `fetch` is read here at
+    // call time so a test-installed global applies to every attempt.
+    const response = await dispatchGuarded(transport, gated, attempt + 1, () =>
+      (fetchImpl ?? fetch)(BRIEF_API_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({ ...body, stream: true }),
+      }),
+    );
     if (response.status === 400) {
       const text = await response.text();
       throw new Error(`muse-spark request rejected (400, not retried): ${text.slice(0, 500)}`);
@@ -280,17 +287,25 @@ export class MuseClient {
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
-    const gatedTranscript = requireLiveGatedText(input.transcriptText).text;
+    const gatedTranscriptValue = requireLiveGatedText(input.transcriptText);
+    const gatedTranscript = gatedTranscriptValue.text;
     // The model can only cite seg-N ids it has seen: send the gated text
     // with each non-empty line prefixed by its segment id.
     const transcriptText = this.labelSegments ? labelTranscriptSegments(gatedTranscript) : gatedTranscript;
-    const framesSidecarText =
-      input.framesSidecarText === "" ? "" : requireLiveGatedText(input.framesSidecarText).text;
+    const framesSidecarValue =
+      input.framesSidecarText === "" ? null : requireLiveGatedText(input.framesSidecarText);
+    const framesSidecarText = framesSidecarValue === null ? "" : framesSidecarValue.text;
+    const gatedValues: readonly GatedText[] =
+      framesSidecarValue === null ? [gatedTranscriptValue] : [gatedTranscriptValue, framesSidecarValue];
+    const redactedInput: BriefSourceInput = { ...input, transcriptText, framesSidecarText };
+    // Preflight order: the static developer prompt loads before the dynamic
+    // caps check reads its state file, so a prompt-read failure refuses the
+    // call before any fetch with no dispatch receipt. Caps and token guards
+    // still run before any network attempt.
+    const [developerPrompt, userMessage] = await Promise.all([loadDeveloperPrompt(), buildUserMessage(redactedInput)]);
     await checkCapsPreCall();
     const { logText } = await import("../private/payloadLog.js");
     logText(`${transcriptText}\n${framesSidecarText}`);
-    const redactedInput: BriefSourceInput = { ...input, transcriptText, framesSidecarText };
-    const [developerPrompt, userMessage] = await Promise.all([loadDeveloperPrompt(), buildUserMessage(redactedInput)]);
     // Rough pre-call guard: ~4 chars per token.
     checkPerCallTokenCap(Math.ceil((developerPrompt.length + userMessage.length) / 4), BRIEF_MAX_COMPLETION_TOKENS);
     const startedAt = Date.now();
@@ -315,6 +330,8 @@ export class MuseClient {
         ],
       },
       key,
+      gatedValues,
+      "muse",
       this.fetchImpl,
     );
     const { content, usage } = await readStreamedChat(response);

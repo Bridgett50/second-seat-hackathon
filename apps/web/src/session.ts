@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { hashDraft } from "./draftApproval.js";
 import {
   createPrivacyGate,
+  type DispatchReceipt,
   type GatedText,
   type PrivacyGate,
 } from "@second-seat/bot/dist/src/private/gate.js";
@@ -58,6 +59,12 @@ export interface SessionSnapshot {
   superseded: SupersededRecord | null;
   offline: boolean;
   draft: { text: string; origin: "user"; approved: boolean } | null;
+  /**
+   * Transport-boundary dispatch receipts for every run this session has
+   * ever used (in run order). Survives invalidation and setTranscript:
+   * already-dispatched history is never erased.
+   */
+  receipts: DispatchReceipt[];
 }
 
 export interface DraftRecord {
@@ -102,6 +109,8 @@ interface SessionRecord {
   segments: Segment[];
   rawText: string;
   runId: string | null;
+  /** Every runId this session has ever used; append-only across invalidation. */
+  runIds: string[];
   approvalToken: string | null;
   redactedText: string;
   approved: boolean;
@@ -322,6 +331,13 @@ export function createSessionStore(options?: SessionStoreOptions) {
   }
 
   function snapshot(s: SessionRecord): SessionSnapshot {
+    const seen = new Set<string>();
+    const receipts: DispatchReceipt[] = [];
+    for (const runId of [...s.runIds, s.runId]) {
+      if (runId === null || seen.has(runId)) continue;
+      seen.add(runId);
+      receipts.push(...gate.receipts(runId));
+    }
     const snap: SessionSnapshot = {
       state: s.state,
       segments: s.segments,
@@ -330,6 +346,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       result: s.result,
       payload: s.payload,
       superseded: s.superseded,
+      receipts,
       offline,
       draft:
         s.draft === null
@@ -388,6 +405,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
         segments: [],
         rawText: "",
         runId: null,
+        runIds: [],
         approvalToken: null,
         redactedText: "",
         approved: false,
@@ -433,6 +451,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
           if (s.generation !== gen) return;
           assertWellFormedRedaction(prepared);
           s.runId = prepared.runId;
+          if (!s.runIds.includes(prepared.runId)) s.runIds.push(prepared.runId);
           s.redactedText = prepared.redactedText;
           s.approved = false;
           s.approvalToken = null;
@@ -523,16 +542,32 @@ export function createSessionStore(options?: SessionStoreOptions) {
       const approvedText = s.approvedText;
       const approvedSegments = [...s.segments];
       const sentAt = new Date().toISOString();
+      const live = isLiveAnalyzer(analyzer);
+      // The run this analysis sends through, captured before the send so a
+      // later invalidation cannot move the receipt accounting to a new run.
+      const sendRunId = s.runId;
+      const receiptsBefore = sendRunId === null ? 0 : gate.receipts(sendRunId).length;
+      const refreshDispatched = (): void => {
+        // Truthful dispatch for live analyzers: true only when the
+        // transport boundary recorded a receipt for this analysis, never
+        // on entry into the send callback.
+        if (sendRunId !== null && gate.receipts(sendRunId).length > receiptsBefore) {
+          dispatched = true;
+        }
+      };
       let dispatched = false;
       let p!: Promise<void>;
       p = (async () => {
         try {
           if (!s.runId || !s.approvalToken) throw new Error("approval required");
           if (s.approvalExpired) throw new Error("approval is stale: test hook expired approvals");
-          const live = isLiveAnalyzer(analyzer);
           const raw = await gate.send(s.runId, s.approvalToken, async (gated) => {
-            dispatched = true;
-            s.inFlight = { approvedText, sentAt };
+            if (!live) {
+              // Offline transports have no transport boundary: entry marks
+              // dispatch, exactly as before.
+              dispatched = true;
+              s.inFlight = { approvedText, sentAt };
+            }
             if (live) {
               // Gate-approved payload is the sole source of outbound text.
               const res = await analyzer.completeBrief({
@@ -549,6 +584,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
             }
             return analyzer(approvedText);
           });
+          if (live) refreshDispatched();
           if (s.generation !== gen) {
             if (dispatched) {
               s.superseded = { approvedText, sentAt, status: "sent" };
@@ -601,6 +637,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
           };
           s.state = "completed";
         } catch (err: unknown) {
+          if (live) refreshDispatched();
           if (s.generation !== gen) {
             if (dispatched) {
               s.superseded = { approvedText, sentAt, status: "sent" };
