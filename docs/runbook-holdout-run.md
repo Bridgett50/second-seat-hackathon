@@ -16,7 +16,7 @@ trustworthy measurement, not a favorable percentage.
 |---|---|
 | Dataset selection | Explicit `--cases <dataset>` only; launch mode refuses to run without it. Frozen dataset name + `dataset_sha256` recorded in the JSON config; `check_launch` blocks on selection missing, mismatch, or hash mismatch |
 | Review attestation | `review.status: reviewed` with non-empty `reviewer`, `reviewed_at`, and `review.dataset_sha256` equal to the frozen `dataset_sha256`; enforced by `review_status_ok` / `check_launch` |
-| Source SHA | Full `git rev-parse HEAD` (40 lowercase hex, not all zeros, no placeholder) in the JSON config |
+| Source SHA | Full `git rev-parse HEAD` (40 lowercase hex, not all zeros, no placeholder) in the JSON config (`source_sha`); packaged source identity `source_sha256` (`packaged_source_sha256` over the eval image inputs) in the JSON config |
 | Container image | Pinned digest form `name@sha256:<64 hex>` in the JSON config (mutable tags blocked) |
 | Model revision | 40-char hex revision in the JSON config (unpinned values blocked) |
 | Scorer | `services/bot/scripts/redaction-eval-lib.mjs` |
@@ -47,7 +47,7 @@ Budget approval must cover the whole allocation, not just 780 s.
 2. Record the source SHA in the table above.
 3. Build: `cd services/bot && pnpm build`.
 4. Deploy: `python3 -m modal deploy infra/modal/glimmer_app.py`; record the image digest.
-5. Launch the bounded run: `GLIMMER_EVAL_DATASET=<dataset> python3 -m modal run --detach infra/modal/glimmer_app.py --dataset <dataset> --config <config>`.
+5. Launch the bounded run: `GLIMMER_LAUNCH_CONFIG=<config> GLIMMER_EVAL_DATASET=<dataset> python3 -m modal run --detach infra/modal/glimmer_app.py --dataset <dataset> --config <config>`.
 6. Container eval command: `node scripts/redaction-eval.mjs --cases <dataset> --out-dir /results --run-id <run_id>`.
 7. Fetch results: `python3 -m modal run infra/modal/glimmer_app.py::fetch --run-id <run_id>`.
 8. Offline rescore without inference: `node services/bot/scripts/rescore-glimmer-run.mjs --run-dir <run_dir>`; the rescore must reproduce `summary.json`/`report.txt` exactly for a complete run.

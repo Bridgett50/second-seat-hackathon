@@ -7,7 +7,7 @@
 //   GLIMMER_RUN_ID        run id (default: timestamp + randomness).
 //
 // Flags:
-//   --cases <name>       fixtures/<name> input set (default: pii).
+//   --cases <name>       fixtures/<name> input set (required, no default).
 //                        (--cases-dir is kept as an alias.)
 //   --out-dir <dir>      parent dir for the unique run dir.
 //   --run-id <id>        run id; an existing <out-dir>/<id> is refused.
@@ -33,22 +33,17 @@ function flagValue(name) {
   const i = cliArgs.indexOf(name);
   return i !== -1 && cliArgs[i + 1] !== undefined ? cliArgs[i + 1] : undefined;
 }
-// Launch mode (--out-dir/--run-id) requires an explicit dataset selection:
-// never default to dev fixtures. Fail before importing dist or creating
-// anything.
-if(
-  (cliArgs.includes("--out-dir") || cliArgs.includes("--run-id")) &&
-  !cliArgs.includes("--cases") && !cliArgs.includes("--cases-dir")
-) {
-  console.error("error: --cases <dataset> (dataset selection required) for launch mode");
+// An explicit dataset selection is always required: never default to dev
+// fixtures. Fail before importing dist or creating anything.
+const __casesVal = flagValue("--cases") ?? flagValue("--cases-dir");
+if (__casesVal === undefined || __casesVal === "" || __casesVal.startsWith("--")) {
+  console.error("error: --cases <dataset> required");
   process.exit(2);
 }
 
 const { runEval } = await import("./redaction-eval-runner.mjs");
 const { liveRedactor } = await import("../dist/src/private/redact.js");
-let casesDir = "pii";
-const casesDirFlag = flagValue("--cases") ?? flagValue("--cases-dir");
-if (casesDirFlag !== undefined) casesDir = casesDirFlag;
+const casesDir = __casesVal;
 if (casesDir.includes("/") || casesDir.includes("\\") || casesDir.includes("..")) {
   console.error(`refusing cases dir outside fixtures/: ${JSON.stringify(casesDir)}`);
   process.exit(2);

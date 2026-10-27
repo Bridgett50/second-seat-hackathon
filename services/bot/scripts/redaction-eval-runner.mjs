@@ -314,6 +314,14 @@ export async function runEval({
   const prevRawDir = process.env["GLIMMER_RAW_DIR"];
   if (runDir !== null) process.env["GLIMMER_RAW_DIR"] = runDir;
 
+  // Deadline already passed while preparing inputs: zero redactor requests
+  // (no canary) and every planned case is recorded not_run.
+  const __finishAllNotRun = () => {
+    const allNotRun = cases.map(notRunRecord);
+    for (const rec of allNotRun) persist(rec);
+    return finish(allNotRun, false);
+  };
+
   const rawShaOf = (redactor) => {
     try {
       const receipt = redactor?.lastReceipt ?? null;
@@ -386,6 +394,7 @@ export async function runEval({
   };
 
   try {
+    if (Date.now() >= deadline) return __finishAllNotRun();
     // Canary: case 1 runs first; an execution error stops the eval, and every
     // remaining planned case gets an explicit not_run record.
     const records = [];
