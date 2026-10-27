@@ -53,7 +53,10 @@ describe("B7 claims reconciliation", () => {
   it("B7-7 historical Glimmer failures visible and artifacts unchanged", () => {
     for (const s of ["6/8", "18/29", "18/39", "complete: false", "invalid JSON"]) expect(README).toContain(s);
     const h = (p: string) => createHash("sha256").update(readFileSync(resolve(root, p))).digest("hex");
-    expect(h("services/bot/fixtures/glimmer-run/rescore.json")).toBe("a13a0009ce785142ad5ee00782059cc287cc8bad91196c064332c723206dfcf5");
+    // rescore.json content pinned except `generatedAt`, which the pre-existing bot suite rewrites on every run.
+    const j = JSON.parse(readFileSync(resolve(root, "services/bot/fixtures/glimmer-run/rescore.json"), "utf8"));
+    delete j.generatedAt;
+    expect(createHash("sha256").update(JSON.stringify(j)).digest("hex")).toBe("99629cbebba3c9ea421442f9702424ddcfa51a7405e84f86293ac617ab5b5c34");
     expect(h("services/bot/fixtures/glimmer-run/eval-summary.json")).toBe("b293e4ce4250aa79d0ba10e2739d403cfb7eabf4f791e319895757594006da84");
   });
   it("B7-8 test counts link tested commit and CI run", () => {
