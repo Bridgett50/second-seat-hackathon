@@ -86,9 +86,9 @@ function evidenceBrief(entries: unknown[]) {
   };
 }
 
-/** "m" is a placeholder: the fake echoes the meeting id the app actually requested (B3 identity check). */
+/** The fake echoes the meeting id the app actually requested (identity check). */
 function withRequestedMeeting(payload: unknown, body: string): unknown {
-  if (typeof payload !== "object" || payload === null || (payload as { meetingId?: unknown }).meetingId !== "m") {
+  if (typeof payload !== "object" || payload === null || !("meetingId" in payload)) {
     return payload;
   }
   const m = /^meetingId: (.+)$/m.exec(userMessageText({ url: "", body }));

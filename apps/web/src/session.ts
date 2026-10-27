@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EVIDENCE_BRIEF_JSON_SCHEMA } from "@second-seat/core";
 import { hashDraft } from "./draftApproval.js";
 import {
   createPrivacyGate,
@@ -352,78 +353,87 @@ function toAnalysisResult(value: unknown, offline: boolean): AnalysisResult {
 }
 
 /**
- * Strict live-analysis validation against the EvidenceBrief shape
- * (mirrors EVIDENCE_BRIEF_JSON_SCHEMA in packages/core/src/evidence/schema.ts:
- * every object carries exactly its required keys, no extras). Root requires
- * meetingId/model/promptVersion/settings/entries/flagged/createdAt;
- * meetingId must equal the session the brief was requested for (besides
- * the legacy "m" fake placeholder). Entries map
+ * Strict live-analysis validation against the shared EvidenceBrief contract
+ * (EVIDENCE_BRIEF_JSON_SCHEMA from @second-seat/core: every object carries
+ * exactly its required keys with no extras, and each value matches its
+ * declared type and enum, including nested citation regions). meetingId must
+ * equal the session the brief was requested for, exactly. Entries map
  * to BriefEntry {kind: category, text, segmentIds, flags?}. Citations are
  * existence-checked only (never treated as proof of factual support): a
  * "segment" citation must name a current approved segment id, and a "frame"
  * citation is always unknown (sessions carry no frames). An entry with zero
  * citations is allowed only with the "missing_source" flag. Anything
  * unexpected throws (the caller records session state "error").
- * (Error texts avoid the gate's blocked-state keywords so failures land
- * in "error", never "blocked".)
+ * (Error texts avoid the gate's failure-state keywords so failures land
+ * in "error", never the gate failure state.)
  */
-const EVIDENCE_CATEGORIES: ReadonlySet<string> = new Set([
-  "decision",
-  "action_item",
-  "unresolved_question",
-  "owner_review",
-  "source_conflict",
-]);
-
-const EVIDENCE_FLAGS: ReadonlySet<string> = new Set([
-  "missing_source",
-  "citation_not_found",
-  "conflicting_sources",
-  "commitment_language",
-  "request_not_accepted",
-  "region_spotcheck_failed",
-  "pressure",
-  "instruction_in_evidence",
-]);
-
-const ROOT_FIELDS = [
-  "meetingId",
-  "model",
-  "promptVersion",
-  "settings",
-  "entries",
-  "flagged",
-  "createdAt",
-] as const;
-
-const ENTRY_FIELDS = [
-  "id",
-  "category",
-  "text",
-  "citations",
-  "requester",
-  "assignee",
-  "acceptance",
-  "speaker",
-  "flags",
-] as const;
-
-const CITATION_FIELDS = ["kind", "segmentId", "frameId", "region"] as const;
+interface SchemaNode {
+  readonly type?: string | readonly string[];
+  readonly enum?: readonly unknown[];
+  readonly required?: readonly string[];
+  readonly properties?: Record<string, SchemaNode>;
+  readonly items?: SchemaNode;
+  readonly additionalProperties?: boolean;
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function checkExactKeys(rec: Record<string, unknown>, required: readonly string[], label: string): void {
-  for (const k of Object.keys(rec)) {
-    if (!required.includes(k)) {
-      throw new Error(`live analysis: ${label} has unexpected field`);
+function matchesJsonType(v: unknown, t: string): boolean {
+  switch (t) {
+    case "object":
+      return isRecord(v);
+    case "array":
+      return Array.isArray(v);
+    case "string":
+      return typeof v === "string";
+    case "boolean":
+      return typeof v === "boolean";
+    case "number":
+      return typeof v === "number";
+    case "null":
+      return v === null;
+    default:
+      return false;
+  }
+}
+
+/** Walk one shared-schema node, enforcing type, enum, required and closed objects. */
+function validateAgainstSchema(value: unknown, schema: SchemaNode, label: string): void {
+  if (schema.type !== undefined) {
+    const allowed: readonly string[] = Array.isArray(schema.type) ? schema.type : [schema.type];
+    if (!allowed.some((t) => matchesJsonType(value, t))) {
+      throw new Error(`live analysis: ${label} has wrong type`);
     }
   }
-  for (const k of required) {
-    if (!(k in rec)) {
-      throw new Error(`live analysis: ${label} is missing a required field`);
+  if (schema.enum !== undefined) {
+    if (!(schema.enum as readonly unknown[]).includes(value)) {
+      throw new Error(`live analysis: ${label} has value outside the schema enum`);
     }
+  }
+  if (isRecord(value) && schema.properties !== undefined) {
+    if (schema.required !== undefined) {
+      for (const k of schema.required) {
+        if (!(k in value)) {
+          throw new Error(`live analysis: ${label} is missing required field ${k}`);
+        }
+      }
+    }
+    if (schema.additionalProperties === false) {
+      const allowed = new Set(Object.keys(schema.properties));
+      for (const k of Object.keys(value)) {
+        if (!allowed.has(k)) {
+          throw new Error(`live analysis: ${label} has unexpected field ${k}`);
+        }
+      }
+    }
+    for (const [k, sub] of Object.entries(schema.properties)) {
+      if (k in value) validateAgainstSchema(value[k], sub as SchemaNode, `${label}.${k}`);
+    }
+  }
+  if (Array.isArray(value) && schema.items !== undefined) {
+    value.forEach((v, i) => validateAgainstSchema(v, schema.items as SchemaNode, `${label}[${i}]`));
   }
 }
 
@@ -435,107 +445,44 @@ export function toLiveAnalysisResult(
   if (!isRecord(value)) {
     throw new Error("live analysis: response is not a JSON object with an entries array");
   }
-  checkExactKeys(value, ROOT_FIELDS, "response");
-  if (typeof value["meetingId"] !== "string") {
-    throw new Error("live analysis: meetingId must be a string");
+  validateAgainstSchema(
+    value,
+    EVIDENCE_BRIEF_JSON_SCHEMA as unknown as SchemaNode,
+    "response",
+  );
+  const root = value as {
+    meetingId: unknown;
+    entries: unknown[];
+  };
+  if (root.meetingId !== expectedMeetingId) {
+    throw new Error("live analysis: wrong meeting id");
   }
-  if (value["meetingId"] !== expectedMeetingId) {
-    // Legacy placeholder: fakes written before meeting-identity checks use
-    // "m" as a stand-in for the requested meeting id (liveWiring.test.ts
-    // echoes it via withRequestedMeeting). Only that placeholder is
-    // accepted; a brief actually made for another meeting is rejected.
-    if (value["meetingId"] !== "m") {
-      throw new Error("live analysis: wrong meeting id");
-    }
-  }
-  for (const f of ["model", "promptVersion", "createdAt"] as const) {
-    if (typeof value[f] !== "string") {
-      throw new Error(`live analysis: ${f} must be a string`);
-    }
-  }
-  const settings = value["settings"];
-  if (!isRecord(settings)) {
-    throw new Error("live analysis: settings must be an object");
-  }
-  checkExactKeys(settings, ["fixtureMode", "maxCostUsdPerDay"], "settings");
-  if (typeof settings["fixtureMode"] !== "boolean") {
-    throw new Error("live analysis: settings fixtureMode must be a boolean");
-  }
-  const cap = settings["maxCostUsdPerDay"];
-  if (typeof cap !== "number" && cap !== null) {
-    throw new Error("live analysis: settings maxCostUsdPerDay must be a number or null");
-  }
-  if (!Array.isArray(value["entries"])) {
-    throw new Error("live analysis: entries must be an array");
-  }
-  const flagged = value["flagged"];
-  if (!Array.isArray(flagged) || !flagged.every((f) => typeof f === "string")) {
-    throw new Error("live analysis: flagged must be an array of strings");
-  }
-  const raw = value["entries"] as unknown[];
-  const entries: BriefEntry[] = raw.map((e, i) => {
-    if (!isRecord(e)) {
-      throw new Error(`live analysis: entry ${i} is not an object`);
-    }
-    checkExactKeys(e, ENTRY_FIELDS, `entry ${i}`);
-    if (typeof e["id"] !== "string") {
-      throw new Error(`live analysis: entry ${i} id must be a string`);
-    }
-    if (typeof e["category"] !== "string" || !EVIDENCE_CATEGORIES.has(e["category"])) {
-      throw new Error(`live analysis: entry ${i} category must be one of the schema enum values`);
-    }
-    if (typeof e["text"] !== "string") {
-      throw new Error(`live analysis: entry ${i} text must be a string`);
-    }
-    if (!Array.isArray(e["citations"])) {
-      throw new Error(`live analysis: entry ${i} citations must be an array`);
-    }
-    for (const f of ["requester", "assignee", "speaker"] as const) {
-      if (typeof e[f] !== "string" && e[f] !== null) {
-        throw new Error(`live analysis: entry ${i} ${f} must be a string or null`);
-      }
-    }
-    const acceptance = e["acceptance"];
-    if (acceptance !== "established" && acceptance !== "not_established" && acceptance !== null) {
-      throw new Error(`live analysis: entry ${i} acceptance must be established, not_established, or null`);
-    }
-    const flagsRaw = e["flags"];
-    if (
-      !Array.isArray(flagsRaw) ||
-      !flagsRaw.every((f) => typeof f === "string" && EVIDENCE_FLAGS.has(f))
-    ) {
-      throw new Error(`live analysis: entry ${i} flags must be an array of schema flag values`);
-    }
-    const flags = flagsRaw as string[];
+  const raw = root.entries;
+  const entries: BriefEntry[] = raw.map((entryValue, i) => {
+    const e = entryValue as {
+      category: unknown;
+      text: unknown;
+      citations: unknown[];
+      flags: unknown;
+    };
+    const flags = e.flags as string[];
     const segmentIds: string[] = [];
-    (e["citations"] as unknown[]).forEach((c, j) => {
-      if (!isRecord(c)) {
-        throw new Error(`live analysis: entry ${i} citation ${j} is not an object`);
-      }
-      checkExactKeys(c, CITATION_FIELDS, `entry ${i} citation ${j}`);
-      if (c["kind"] !== "segment" && c["kind"] !== "frame") {
-        throw new Error(`live analysis: entry ${i} citation ${j} kind must be segment or frame`);
-      }
-      if (typeof c["segmentId"] !== "string" && c["segmentId"] !== null) {
-        throw new Error(`live analysis: entry ${i} citation ${j} segmentId must be a string or null`);
-      }
-      if (typeof c["frameId"] !== "string" && c["frameId"] !== null) {
-        throw new Error(`live analysis: entry ${i} citation ${j} frameId must be a string or null`);
-      }
-      const region = c["region"];
-      if (region !== null && !isRecord(region)) {
-        throw new Error(`live analysis: entry ${i} citation ${j} region must be null or an object`);
-      }
-      if (c["kind"] === "segment") {
-        if (typeof c["segmentId"] !== "string") {
+    (e.citations as unknown[]).forEach((citationValue, j) => {
+      const c = citationValue as {
+        kind: unknown;
+        segmentId: unknown;
+        frameId: unknown;
+      };
+      if (c.kind === "segment") {
+        if (typeof c.segmentId !== "string") {
           throw new Error(`live analysis: entry ${i} citation ${j} segmentId must be a string`);
         }
-        if (!validIds.has(c["segmentId"])) {
+        if (!validIds.has(c.segmentId)) {
           throw new Error(`live analysis: entry ${i} cites unknown segment`);
         }
-        segmentIds.push(c["segmentId"]);
+        segmentIds.push(c.segmentId);
       } else {
-        if (typeof c["frameId"] !== "string") {
+        if (typeof c.frameId !== "string") {
           throw new Error(`live analysis: entry ${i} citation ${j} frameId must be a string`);
         }
         throw new Error(`live analysis: entry ${i} cites unknown frame`);
@@ -545,8 +492,8 @@ export function toLiveAnalysisResult(
       throw new Error(`live analysis: entry ${i} is presented as source-backed without citations`);
     }
     const out: BriefEntry = {
-      kind: e["category"] as string,
-      text: e["text"] as string,
+      kind: e.category as string,
+      text: e.text as string,
       segmentIds,
     };
     if (flags.length > 0) out.flags = [...flags];
