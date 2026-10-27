@@ -125,31 +125,9 @@ else:
 @modal.concurrent(max_inputs=16)
 @modal.web_server(port=8000, startup_timeout=1500)
 def serve() -> None:
-    cmd = [
-        "vllm",
-        "serve",
-        "meta-models/Muse-Glimmer-30B",
-        "--revision",
-        _MODEL_REVISION,
-        "--served-model-name",
-        "meta-models/Muse-Glimmer-30B",
-        "--tensor-parallel-size",
-        "1",
-        "--dtype",
-        "bfloat16",
-        "--max-model-len",
-        "16384",
-        "--gpu-memory-utilization",
-        "0.92",
-        "--reasoning-parser",
-        "muse_glimmer",
-        "--generation-config",
-        "auto",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8000",
-    ]
+    # vLLM flags come from the frozen launch config via the pure contract
+    # builder (revision + token-limit derived, never hardcoded here).
+    cmd = launch_contract.vllm_argv(_LAUNCH_CONFIG, host="0.0.0.0", port=8000)
     subprocess.Popen(cmd)
 
 
@@ -166,31 +144,9 @@ def serve() -> None:
 )
 def eval_in_container(dataset: str) -> dict:
     func_start = time.monotonic()
-    cmd = [
-        "vllm",
-        "serve",
-        "meta-models/Muse-Glimmer-30B",
-        "--revision",
-        _MODEL_REVISION,
-        "--served-model-name",
-        "meta-models/Muse-Glimmer-30B",
-        "--tensor-parallel-size",
-        "1",
-        "--dtype",
-        "bfloat16",
-        "--max-model-len",
-        "16384",
-        "--gpu-memory-utilization",
-        "0.92",
-        "--reasoning-parser",
-        "muse_glimmer",
-        "--generation-config",
-        "auto",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "8000",
-    ]
+    # Same contract builder as serve(): the frozen config's revision and
+    # token limit drive the server, never hardcoded values.
+    cmd = launch_contract.vllm_argv(_LAUNCH_CONFIG, host="127.0.0.1", port=8000)
     # Own process group so the whole vLLM tree can be signalled on teardown.
     vllm = subprocess.Popen(cmd, start_new_session=True)
     health_url = "http://127.0.0.1:8000/health"
@@ -231,7 +187,21 @@ def eval_in_container(dataset: str) -> dict:
                     + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
                     + f"-{os.getpid()}"
                 )
-                node_cmd = launch_contract.eval_command(dataset, "/results", run_id)
+                # Materialize the frozen launch-config bytes beside the run so
+                # the eval consumes the frozen config (retry/token/decoding
+                # settings) instead of defaults. Best effort: when the
+                # bytes cannot be staged, the eval runs unconfigured as
+                # before rather than failing the whole run.
+                run_config_path = None
+                try:
+                    if _LAUNCH_CONFIG_BYTES:
+                        run_config_path = f"/results/{run_id}/run-config.json"
+                        os.makedirs(os.path.dirname(run_config_path), exist_ok=True)
+                        with open(run_config_path, "wb") as _fh:
+                            _fh.write(_LAUNCH_CONFIG_BYTES)
+                except Exception:
+                    run_config_path = None
+                node_cmd = launch_contract.eval_command(dataset, "/results", run_id, run_config_path)
                 env = {
                     **os.environ,
                     "GLIMMER_BASE_URL": base_url,

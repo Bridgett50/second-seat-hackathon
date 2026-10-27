@@ -12,8 +12,15 @@
 //   --out-dir <dir>      parent dir for the unique run dir.
 //   --run-id <id>        run id; an existing <out-dir>/<id> is refused.
 //   --run-config <path>  run config JSON (services/bot/src/release/runConfig.ts
-//                        shape); worker concurrency comes from its
-//                        modal.concurrency instead of the default 2.
+//                        shape); validated with validateRunConfig before any
+//                        import or fixture work. Worker concurrency, request
+//                        deadlines, token/decoding settings, and the proof
+//                        retry budget (maxAttempts) come from it instead of the
+//                        defaults; the token limit drives the live client via
+//                        GLIMMER_MAX_TOKENS.
+//   --dry-run            resolve and print the derived runner/client settings
+//                        as a DRYRUN JSON line, then exit 0 without running
+//                        the eval or touching the network.
 //
 // Protocol: case 1 runs first as a scored canary; if it errors, stop and
 // exit 2, with explicit not_run records for every remaining case. Remaining
@@ -58,6 +65,48 @@ if (runConfigPath !== undefined) {
   }
 }
 
+// The frozen run config is validated (services/bot/src/release/runConfig.ts
+// shape) before any import or fixture work, so an invalid config fails fast
+// naming the offending keys. The schema module is pure: no side effects, no
+// network.
+let runnerSettings = null;
+let clientOptions = null;
+let runRevision = null;
+if (runConfig !== null) {
+  const { validateRunConfig, toRunnerSettings, sparkProofClientOptions } = await import(
+    "../dist/src/release/runConfig.js"
+  );
+  const errors = validateRunConfig(runConfig);
+  if (errors.length > 0) {
+    console.error(`error: invalid --run-config ${JSON.stringify(runConfigPath)}: ${errors.join("; ")}`);
+    process.exit(2);
+  }
+  runnerSettings = toRunnerSettings(runConfig);
+  clientOptions = sparkProofClientOptions(runConfig);
+  runRevision = runConfig?.model?.revision ?? null;
+  // The frozen token limit drives the live client, which reads
+  // GLIMMER_MAX_TOKENS per request; the frozen config is authoritative.
+  process.env["GLIMMER_MAX_TOKENS"] = String(runnerSettings.maxTokens);
+}
+
+// --dry-run: report the resolved runner/client settings derived from the
+// frozen run config (or defaults when none was given) without importing the
+// redactor, reading fixtures, or touching the network.
+if (cliArgs.includes("--dry-run")) {
+  console.log(
+    "DRYRUN " +
+      JSON.stringify({
+        dryRun: true,
+        runConfig: runConfigPath ?? null,
+        concurrency: runnerSettings?.concurrency ?? 2,
+        runner: runnerSettings,
+        clientOptions,
+        revision: runRevision,
+      }),
+  );
+  process.exit(0);
+}
+
 const { runEval, concurrencyFromRunConfig } = await import("./redaction-eval-runner.mjs");
 const { liveRedactor } = await import("../dist/src/private/redact.js");
 const casesDir = __casesVal;
@@ -76,6 +125,12 @@ const runId = flagValue("--run-id") ?? process.env["GLIMMER_RUN_ID"] ?? undefine
 
 const first = liveRedactor();
 console.log(`redactor: ${first.label}`);
+if (runnerSettings !== null && clientOptions !== null) {
+  console.log(
+    `client: maxAttempts=${clientOptions.maxAttempts} maxTokens=${runnerSettings.maxTokens} ` +
+      `requestMs=${runnerSettings.requestMs} decoding=${JSON.stringify(runnerSettings.decoding)}`,
+  );
+}
 
 const result = await runEval({
   cases,
