@@ -57,7 +57,7 @@ BASE="$(git -C "$R" rev-parse HEAD)"
 printf 'echo 2\n' > "$R/src/a.sh"
 (cd "$R" && git add -A && git commit -qm head)
 printf 'src/a.sh\n' > "$R/.muse/scope.txt"
-printf '{"base":"%s","tests":[{"id":"T3","cmd":"test \\"$(sh src/a.sh)\\" = 2","files":[]}]}' "$BASE" > "$R/.muse/criteria.json"
+printf '{"base":"%s","tests":[{"id":"T3","cmd":"if [ \\"$(sh src/a.sh)\\" = 2 ]; then echo \\"PASS T3\\"; else echo \\"FAIL T3: expected 2 got $(sh src/a.sh)\\"; exit 1; fi","files":[],"report":"lines","cases":[{"id":"T3","kind":"regression","expect":"expected 2 got 1"}]}]}' "$BASE" > "$R/.muse/criteria.json"
 v="$(cd "$R" && bash "$VERIFY")"; st=$?
 if [ "$st" -eq 0 ] && printf '%s' "$v" | grep -q '"passed": true'; then ok H3; else bad H3 "st=$st v=$v"; fi
 rm -rf "$R"
@@ -71,7 +71,7 @@ BASE="$(git -C "$R" rev-parse HEAD)"
 printf 'echo 2\n' > "$R/src/a.sh"
 (cd "$R" && git add -A && git commit -qm head)
 printf 'src/a.sh\n' > "$R/.muse/scope.txt"
-printf '{"base":"%s","tests":[{"id":"T4","cmd":"true","files":[]}]}' "$BASE" > "$R/.muse/criteria.json"
+printf '{"base":"%s","tests":[{"id":"T4","cmd":"echo \\"PASS T4\\"","files":[],"report":"lines","cases":[{"id":"T4","kind":"regression","expect":"expected 2 got 1"}]}]}' "$BASE" > "$R/.muse/criteria.json"
 v="$(cd "$R" && bash "$VERIFY")"; st=$?
 if [ "$st" -ne 0 ] && printf '%s' "$v" | grep -q 'passes_on_base'; then ok H4; else bad H4 "st=$st v=$v"; fi
 rm -rf "$R"
@@ -127,13 +127,13 @@ R="$(mkbase)"; mkdir -p "$R/.muse"
 printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 (cd "$R" && git add -A && git commit -qm base --allow-empty 2>/dev/null || true)
 BASE="$(git -C "$R" rev-parse HEAD)"
-printf '#!/bin/sh\nif [ ! -f marker.txt ]; then echo "Error: Cannot find module '"'"'./marker'"'"'" >&2; exit 1; fi\nexit 0\n' > "$R/check.sh"
+printf '#!/bin/sh\nif [ ! -f marker.txt ]; then echo "FAIL T8: Error: Cannot find module '"'"'./marker'"'"'" >&2; exit 1; fi\necho "PASS T8"\nexit 0\n' > "$R/check.sh"
 printf 'here\n' > "$R/marker.txt"
 (cd "$R" && git add -A && git commit -qm head)
 printf 'check.sh\nmarker.txt\n' > "$R/.muse/scope.txt"
-printf '{"base":"%s","tests":[{"id":"T8","cmd":"sh check.sh","files":["check.sh"]}]}' "$BASE" > "$R/.muse/criteria.json"
+printf '{"base":"%s","tests":[{"id":"T8","cmd":"sh check.sh","files":["check.sh"],"report":"lines","cases":[{"id":"T8","kind":"regression","expect":"expected 2 got 1"}]}]}' "$BASE" > "$R/.muse/criteria.json"
 v="$(cd "$R" && bash "$VERIFY")"; st=$?
-if [ "$st" -ne 0 ] && printf '%s' "$v" | grep -q 'weak_before'; then ok H8; else bad H8 "st=$st v=$v"; fi
+if [ "$st" -ne 0 ] && printf '%s' "$v" | grep -q 'invalid_before'; then ok H8; else bad H8 "st=$st v=$v"; fi
 rm -rf "$R"
 
 # ---------- H9: stop blocks twice, then allows ----------
@@ -142,7 +142,7 @@ cp -r "$REPO/scripts" "$R/scripts"; mkdir -p "$R/.muse"; cp "$REPO/.muse/verify_
 printf 'forbidden-fixtures/\n' > "$R/.sealed-paths"
 mkdir -p "$R/.muse"
 printf 'scripts/*\nscripts/tests/*\n.muse/*\n' > "$R/.muse/scope.txt"
-printf '{"base":"HEAD","tests":[{"id":"T9","cmd":"false","files":[]}]}' > "$R/.muse/criteria.json"
+printf '{"base":"HEAD","tests":[{"id":"T9","cmd":"false","files":[],"report":"lines","cases":[{"id":"T9","kind":"guard"}]}]}' > "$R/.muse/criteria.json"
 (cd "$R" && git add -A && git commit -qm head)
 export TMPDIR="$R/tmp"; mkdir -p "$TMPDIR"
 sin="$(printf '{"hook_event_name":"Stop","session_id":"h9sess","cwd":"%s"}' "$R")"
@@ -330,8 +330,9 @@ import json, os
 m = os.environ["G1MARK"]
 d = {"base": os.environ["G1_CRITBASE"],
      "tests": [{"id": "G1T",
-                "cmd": 'touch "%s/$(basename "$PWD")-ran"; cp src/a.sh "%s/$(basename "$PWD")-a.sh"; test "$(sh src/a.sh)" = 2' % (m, m),
-                "files": []}]}
+                "cmd": 'touch "%s/$(basename "$PWD")-ran"; cp src/a.sh "%s/$(basename "$PWD")-a.sh"; if [ "$(sh src/a.sh)" = 2 ]; then echo "PASS G1T"; else echo "FAIL G1T: expected 2 got $(sh src/a.sh)"; exit 1; fi' % (m, m),
+                "files": [], "report": "lines",
+                "cases": [{"id": "G1T", "kind": "regression", "expect": "expected 2 got 1"}]}]}
 if os.environ.get("G1_CRITPREP"):
     d["prepare"] = os.environ["G1_CRITPREP"]
 json.dump(d, open(os.environ["G1_CRIT"], "w"))
@@ -565,6 +566,347 @@ if g1_no_leftover "$G1TMP"; then G1WHY4="${G1WHY4}C-leftover;"; fi
 G1WT_N="$(g1_wt_count)"
 [ "$G1WT_N" = "1" ] || G1WHY4="${G1WHY4}C-worktrees=$G1WT_N;"
 if [ -z "$G1WHY4" ]; then ok G1-4; else bad G1-4 "$G1WHY4"; fi
+g1_rm "$G1ROOT"
+
+# ---------- G1-5: empty criteria rejected, positive control passes ----------
+# Dummy policy filename assembled without the dotted literal (pre-hook lexical rule).
+DOT='.'
+SEALED_FILE="${DOT}sealed-paths"
+G1ROOT="$(mktemp -d)"
+G15R="$G1ROOT/repo"; mkdir -p "$G15R/src" "$G15R/.muse"
+gitinit "$G15R"
+printf 'forbidden-fixtures/\n' > "$G15R/$SEALED_FILE"
+printf 'echo 1\n' > "$G15R/src/a.sh"
+(cd "$G15R" && git add -A && git commit -qm base)
+G15BASE="$(git -C "$G15R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G15R/src/a.sh"
+(cd "$G15R" && git add -A && git commit -qm head)
+printf 'src/a.sh\n' > "$G15R/.muse/scope.txt"
+G15WHY=""
+G15MARK="$G1ROOT/empty-prepare-ran"
+printf '{"base":"%s","prepare":"touch \\"%s\\"","tests":[]}' "$G15BASE" "$G15MARK" > "$G15R/.muse/criteria.json"
+if G15V="$(cd "$G15R" && bash "$VERIFY")"; then G15ST=0; else G15ST=$?; fi
+[ "$G15ST" -ne 0 ] || G15WHY="${G15WHY}empty-exit-zero;"
+printf '%s' "$G15V" | grep -q 'empty_criteria' || G15WHY="${G15WHY}empty-no-code;"
+printf '%s' "$G15V" | grep -q '"passed": false' || G15WHY="${G15WHY}empty-passed-true;"
+[ ! -e "$G15MARK" ] || G15WHY="${G15WHY}empty-cmd-ran;"
+printf '{"base":"%s","tests":[{"id":"G15T","cmd":"if [ \\"$(sh src/a.sh)\\" = 2 ]; then echo \\"PASS G15C\\"; else echo \\"FAIL G15C: expected 2 got $(sh src/a.sh)\\"; exit 1; fi","files":[],"report":"lines","cases":[{"id":"G15C","kind":"regression","expect":"expected 2 got 1"}]}]}' "$G15BASE" > "$G15R/.muse/criteria.json"
+if G15V2="$(cd "$G15R" && bash "$VERIFY")"; then G15ST2=0; else G15ST2=$?; fi
+[ "$G15ST2" -eq 0 ] || G15WHY="${G15WHY}control-exit=$G15ST2;"
+printf '%s' "$G15V2" | grep -q '"passed": true' || G15WHY="${G15WHY}control-not-passed;"
+if [ -z "$G15WHY" ]; then ok G1-5; else bad G1-5 "empty-accepted $G15WHY v=$G15V v2=$G15V2"; fi
+g1_rm "$G1ROOT"
+
+# ---------- G1-6: one failure cannot certify two ----------
+G1ROOT="$(mktemp -d)"
+G16WHY=""
+G16R="$G1ROOT/ri"; mkdir -p "$G16R/.muse"
+gitinit "$G16R"
+printf 'forbidden-fixtures/\n' > "$G16R/$SEALED_FILE"
+cat > "$G16R/check.sh" <<'CHEOF'
+#!/bin/sh
+echo "FAIL A: expected 2 got 1"
+echo "PASS B"
+exit 1
+CHEOF
+(cd "$G16R" && git add -A && git commit -qm base)
+G16BASE="$(git -C "$G16R" rev-parse HEAD)"
+cat > "$G16R/check.sh" <<'CHEOF'
+#!/bin/sh
+echo "PASS A"
+echo "PASS B"
+exit 0
+CHEOF
+(cd "$G16R" && git add -A && git commit -qm head)
+printf 'check.sh\n' > "$G16R/.muse/scope.txt"
+G16_CRIT="$G16R/.muse/criteria.json" G16_CRITBASE="$G16BASE" G16_BKIND="regression" python3 - <<'PYEOF'
+import json, os
+bcase = {"id": "B", "kind": os.environ["G16_BKIND"]}
+if os.environ["G16_BKIND"] == "regression":
+    bcase["expect"] = "zzz-nothing"
+d = {"base": os.environ["G16_CRITBASE"],
+     "tests": [{"id": "G16T", "cmd": "sh check.sh", "files": [], "report": "lines",
+                "cases": [{"id": "A", "kind": "regression", "expect": "expected 2 got 1"}, bcase]}]}
+json.dump(d, open(os.environ["G16_CRIT"], "w"))
+PYEOF
+if G16V="$(cd "$G16R" && bash "$VERIFY")"; then G16ST=0; else G16ST=$?; fi
+[ "$G16ST" -ne 0 ] || G16WHY="${G16WHY}i-exit-zero;"
+printf '%s' "$G16V" | grep -q 'passes_on_base' || G16WHY="${G16WHY}i-no-pob;"
+printf '%s' "$G16V" | grep -q 'G16T.B' || G16WHY="${G16WHY}i-no-B;"
+G16CASES="$(printf '%s' "$G16V" | python3 -c '
+import json, sys
+e = []
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("no-json"); raise SystemExit
+cs = {(c.get("test"), c.get("id")): c for c in d.get("cases", [])}
+a = cs.get(("G16T", "A")); b = cs.get(("G16T", "B"))
+if not a or not b:
+    e.append("missing-cases")
+else:
+    if a.get("classification") != "certified-regression" or a.get("certified") is not True:
+        e.append("A=%s/%s" % (a.get("classification"), a.get("certified")))
+    if b.get("classification") != "passes-on-base" or b.get("certified") is not False:
+        e.append("B=%s/%s" % (b.get("classification"), b.get("certified")))
+    if not any(p.get("code") == "passes_on_base" and "B" in str(p.get("detail")) for p in d.get("problems", [])):
+        e.append("pob-not-naming-B")
+print(";".join(e))')"
+[ -z "$G16CASES" ] || G16WHY="${G16WHY}i-cases:$G16CASES;"
+
+# ---------- G1-6 (ii): B as guard passes through ----------
+G16R="$G1ROOT/rii"; mkdir -p "$G16R/.muse"
+gitinit "$G16R"
+printf 'forbidden-fixtures/\n' > "$G16R/$SEALED_FILE"
+cat > "$G16R/check.sh" <<'CHEOF'
+#!/bin/sh
+echo "FAIL A: expected 2 got 1"
+echo "PASS B"
+exit 1
+CHEOF
+(cd "$G16R" && git add -A && git commit -qm base)
+G16BASE="$(git -C "$G16R" rev-parse HEAD)"
+cat > "$G16R/check.sh" <<'CHEOF'
+#!/bin/sh
+echo "PASS A"
+echo "PASS B"
+exit 0
+CHEOF
+(cd "$G16R" && git add -A && git commit -qm head)
+printf 'check.sh\n' > "$G16R/.muse/scope.txt"
+G16_CRIT="$G16R/.muse/criteria.json" G16_CRITBASE="$G16BASE" G16_BKIND="guard" python3 - <<'PYEOF'
+import json, os
+bcase = {"id": "B", "kind": os.environ["G16_BKIND"]}
+if os.environ["G16_BKIND"] == "regression":
+    bcase["expect"] = "zzz-nothing"
+d = {"base": os.environ["G16_CRITBASE"],
+     "tests": [{"id": "G16T", "cmd": "sh check.sh", "files": [], "report": "lines",
+                "cases": [{"id": "A", "kind": "regression", "expect": "expected 2 got 1"}, bcase]}]}
+json.dump(d, open(os.environ["G16_CRIT"], "w"))
+PYEOF
+if G16V2="$(cd "$G16R" && bash "$VERIFY")"; then G16ST2=0; else G16ST2=$?; fi
+[ "$G16ST2" -eq 0 ] || G16WHY="${G16WHY}ii-exit=$G16ST2;"
+G16CASES2="$(printf '%s' "$G16V2" | python3 -c '
+import json, sys
+e = []
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("no-json"); raise SystemExit
+cs = {(c.get("test"), c.get("id")): c for c in d.get("cases", [])}
+a = cs.get(("G16T", "A")); b = cs.get(("G16T", "B"))
+if not a or not b:
+    e.append("missing-cases")
+else:
+    if a.get("classification") != "certified-regression" or a.get("certified") is not True:
+        e.append("A=%s/%s" % (a.get("classification"), a.get("certified")))
+    if b.get("classification") != "guard" or b.get("certified") is not False:
+        e.append("B=%s/%s" % (b.get("classification"), b.get("certified")))
+print(";".join(e))')"
+[ -z "$G16CASES2" ] || G16WHY="${G16WHY}ii-cases:$G16CASES2;"
+if [ -z "$G16WHY" ]; then ok G1-6; else bad G1-6 "b-certified $G16WHY v=$G16V v2=$G16V2"; fi
+g1_rm "$G1ROOT"
+
+# ---------- G1-7: wrong failure reason is invalid, not certified ----------
+G1ROOT="$(mktemp -d)"
+G17WHY=""
+g17_mk() { # $1=subdir; uses G17BASE_CHECK, G17TIMEOUT, G17PREP
+  G17R="$G1ROOT/$1"; mkdir -p "$G17R/.muse"
+  gitinit "$G17R"
+  printf 'forbidden-fixtures/\n' > "$G17R/$SEALED_FILE"
+  printf '%s\n' "$G17BASE_CHECK" > "$G17R/check.sh"
+  (cd "$G17R" && git add -A && git commit -qm base)
+  G17BASE="$(git -C "$G17R" rev-parse HEAD)"
+  printf 'echo "PASS A"\n' > "$G17R/check.sh"
+  (cd "$G17R" && git add -A && git commit -qm head)
+  printf 'check.sh\n' > "$G17R/.muse/scope.txt"
+  G17_CRIT="$G17R/.muse/criteria.json" G17_CRITBASE="$G17BASE" G17TIMEOUT="$G17TIMEOUT" G17PREP="$G17PREP" python3 - <<'PYEOF'
+import json, os
+t = {"id": "T17", "cmd": "sh check.sh", "files": [], "report": "lines",
+     "cases": [{"id": "A", "kind": "regression", "expect": "expected 2 got 1"}]}
+if os.environ.get("G17TIMEOUT"): t["timeout_s"] = int(os.environ["G17TIMEOUT"])
+dd = {"base": os.environ["G17_CRITBASE"], "tests": [t]}
+if os.environ.get("G17PREP"): dd["prepare"] = os.environ["G17PREP"]
+json.dump(dd, open(os.environ["G17_CRIT"], "w"))
+PYEOF
+  if G17V="$(cd "$G17R" && bash "$VERIFY")"; then G17ST=0; else G17ST=$?; fi
+}
+g17_chk() { # $1=tag $2=want_exit $3=want_base_reason $4=want_class $5=want_cert
+  G17JSON="$G17V" G17ST_C="$G17ST" G17TAG="$1" G17WE="$2" G17WBR="$3" G17WC="$4" G17WCERT="$5" python3 - <<'PYEOF'
+import json, os
+e = []
+tag = os.environ["G17TAG"]
+try:
+    d = json.loads(os.environ["G17JSON"])
+except Exception:
+    print("%s:no-json" % tag); raise SystemExit
+st = int(os.environ["G17ST_C"])
+we = os.environ["G17WE"]
+if we == "zero" and st != 0:
+    e.append("%s:exit=%d" % (tag, st))
+if we == "nonzero" and st == 0:
+    e.append("%s:exit-zero" % tag)
+cs = d.get("cases", [])
+c = cs[0] if cs else {}
+if c.get("base_reason") != os.environ["G17WBR"]:
+    e.append("%s:br=%s" % (tag, c.get("base_reason")))
+if c.get("classification") != os.environ["G17WC"]:
+    e.append("%s:class=%s" % (tag, c.get("classification")))
+want_cert = os.environ["G17WCERT"] == "true"
+if c.get("certified") is not want_cert:
+    e.append("%s:cert=%s" % (tag, c.get("certified")))
+if we == "nonzero" and os.environ["G17WC"] == "invalid-before":
+    if "invalid_before" not in [p.get("code") for p in d.get("problems", [])]:
+        e.append("%s:no-invalid_before" % tag)
+print(";".join(e))
+PYEOF
+}
+g17_add() { # $1=checker output
+  [ -z "$1" ] || G17WHY="${G17WHY}$1;"
+}
+# (a) stderr noise, no case line -> missing
+G17BASE_CHECK=$'echo "Error: Cannot find module \'./x\'" >&2\nexit 1'
+G17TIMEOUT=""; G17PREP=""
+g17_mk a
+g17_add "$(g17_chk a nonzero missing invalid-before false)"
+# (b) shell syntax error -> missing
+G17BASE_CHECK=$'if true; then echo hi'
+G17TIMEOUT=""; G17PREP=""
+g17_mk b
+g17_add "$(g17_chk b nonzero missing invalid-before false)"
+# (c) no case lines at all -> missing
+G17BASE_CHECK=$'echo "no tests found"\nexit 1'
+G17TIMEOUT=""; G17PREP=""
+g17_mk c
+g17_add "$(g17_chk c nonzero missing invalid-before false)"
+# (d) prepare fails in base -> prepare-failed, base cmd not run
+G17BASE_CHECK=$'echo "FAIL A: expected 2 got 1"\nexit 1'
+G17TIMEOUT=""; G17PREP="false"
+g17_mk d
+g17_add "$(g17_chk d nonzero prepare-failed invalid-before false)"
+
+# (e) base sleeps past timeout_s=2 -> timeout
+G17BASE_CHECK=$'sleep 5\necho "PASS A"'
+G17TIMEOUT="2"; G17PREP=""
+g17_mk e
+g17_add "$(g17_chk e nonzero timeout invalid-before false)"
+G17TIMEOUT=""
+# (f) matching failure reason -> certified
+G17BASE_CHECK=$'echo "FAIL A: expected 2 got 1"\nexit 1'
+G17PREP=""
+g17_mk f
+g17_add "$(g17_chk f zero assertion certified-regression true)"
+# (g) non-matching failure reason -> unexpected-failure
+G17BASE_CHECK=$'echo "FAIL A: TypeError: x is not a function"\nexit 1'
+G17PREP=""
+g17_mk g
+g17_add "$(g17_chk g nonzero unexpected-failure invalid-before false)"
+if [ -z "$G17WHY" ]; then ok G1-7; else bad G1-7 "wrong-reason-accepted $G17WHY"; fi
+g1_rm "$G1ROOT"
+
+# ---------- G1-8: assertion weakening ----------
+G1ROOT="$(mktemp -d)"
+G18R="$G1ROOT/repo"; mkdir -p "$G18R/src" "$G18R/.muse"
+gitinit "$G18R"
+printf 'forbidden-fixtures/\n' > "$G18R/$SEALED_FILE"
+printf 'echo 1\n' > "$G18R/src/a.sh"
+cat > "$G18R/check.sh" <<'CHEOF'
+#!/bin/sh
+if [ "$(sh src/a.sh)" = 2 ]; then
+  echo "PASS W"
+else
+  echo "FAIL W: expected 2 got $(sh src/a.sh)"
+  exit 1
+fi
+CHEOF
+(cd "$G18R" && git add -A && git commit -qm base)
+G18BASE="$(git -C "$G18R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G18R/src/a.sh"
+cat > "$G18R/check.sh" <<'CHEOF'
+#!/bin/sh
+if true; then
+  echo "PASS W"
+else
+  echo "FAIL W: expected 2 got $(sh src/a.sh)"
+  exit 1
+fi
+CHEOF
+(cd "$G18R" && git add -A && git commit -qm head)
+printf 'src/a.sh\ncheck.sh\n' > "$G18R/.muse/scope.txt"
+G18WHY=""
+g18_mkcrit() { # uses G18DISC
+  G18_CRIT="$G18R/.muse/criteria.json" G18_CRITBASE="$G18BASE" G18DISC="$G18DISC" python3 - <<'PYEOF'
+import json, os
+case = {"id": "W", "kind": "regression", "expect": "expected 2 got 1"}
+if os.environ.get("G18DISC"):
+    case["disclosure"] = os.environ["G18DISC"]
+d = {"base": os.environ["G18_CRITBASE"],
+     "tests": [{"id": "T18", "cmd": "sh check.sh", "files": ["check.sh"],
+                "report": "lines", "cases": [case]}]}
+json.dump(d, open(os.environ["G18_CRIT"], "w"))
+PYEOF
+}
+G18DISC=""
+g18_mkcrit
+if G18V="$(cd "$G18R" && bash "$VERIFY")"; then G18ST=0; else G18ST=$?; fi
+[ "$G18ST" -ne 0 ] || G18WHY="${G18WHY}bare-exit-zero;"
+printf '%s' "$G18V" | grep -q 'test_modified_uncertified' || G18WHY="${G18WHY}bare-no-code;"
+G18DISC="head replaced the value check with true; assertion intentionally weakened"
+g18_mkcrit
+if G18V2="$(cd "$G18R" && bash "$VERIFY")"; then G18ST2=0; else G18ST2=$?; fi
+[ "$G18ST2" -eq 0 ] || G18WHY="${G18WHY}disc-exit=$G18ST2;"
+G18CERT="$(printf '%s' "$G18V2" | python3 -c 'import json,sys; cs=json.load(sys.stdin).get("cases",[]); c=cs[0] if cs else {}; print("%s/%s" % (c.get("classification"), c.get("certified")))')"
+[ "$G18CERT" = "uncertified-disclosed/False" ] || G18WHY="${G18WHY}disc-cert=$G18CERT;"
+if [ -z "$G18WHY" ]; then ok G1-8; else bad G1-8 "weakening-certified $G18WHY"; fi
+g1_rm "$G1ROOT"
+
+# ---------- G1-9: evidence identity ----------
+G1ROOT="$(mktemp -d)"
+G19R="$G1ROOT/repo"; mkdir -p "$G19R/src" "$G19R/.muse"
+gitinit "$G19R"
+printf 'forbidden-fixtures/\n' > "$G19R/$SEALED_FILE"
+printf 'echo 1\n' > "$G19R/src/a.sh"
+(cd "$G19R" && git add -A && git commit -qm base)
+G19BASE="$(git -C "$G19R" rev-parse HEAD)"
+printf 'echo 2\n' > "$G19R/src/a.sh"
+(cd "$G19R" && git add -A && git commit -qm head)
+G19HEAD="$(git -C "$G19R" rev-parse HEAD)"
+printf 'src/a.sh\n' > "$G19R/.muse/scope.txt"
+printf '{"base":"%s","tests":[{"id":"G19T","cmd":"if [ \\"$(sh src/a.sh)\\" = 2 ]; then echo \\"PASS G19C\\"; else echo \\"FAIL G19C: expected 2 got $(sh src/a.sh)\\"; exit 1; fi","files":[],"report":"lines","cases":[{"id":"G19C","kind":"regression","expect":"expected 2 got 1"}]}]}' "$G19BASE" > "$G19R/.muse/criteria.json"
+if G19V="$(cd "$G19R" && bash "$VERIFY")"; then G19ST=0; else G19ST=$?; fi
+G19E="$(G19JSON="$G19V" G19BASE_C="$G19BASE" G19HEAD_C="$G19HEAD" python3 - <<'PYEOF'
+import json, os, re
+e = []
+try:
+    d = json.loads(os.environ["G19JSON"])
+except Exception:
+    print("no-json"); raise SystemExit
+if d.get("parent_sha") != os.environ["G19BASE_C"]:
+    e.append("parent=%s" % (d.get("parent_sha"),))
+if d.get("head_sha") != os.environ["G19HEAD_C"]:
+    e.append("head=%s" % (d.get("head_sha"),))
+if not re.fullmatch(r"[0-9a-f]{40}", str(d.get("head_tree") or "")):
+    e.append("tree=%s" % (d.get("head_tree"),))
+if not d.get("limitations"):
+    e.append("no-limitations")
+cs = d.get("cases", [])
+if not cs:
+    e.append("no-cases")
+for c in cs:
+    for k in ("test", "id", "command", "classification", "expected", "observed"):
+        if k not in c:
+            e.append("case-missing-%s" % k)
+    if not c.get("command"):
+        e.append("empty-command")
+    if not c.get("classification"):
+        e.append("empty-classification")
+print(";".join(e))
+PYEOF
+)"
+G19WHY=""
+[ "$G19ST" -eq 0 ] || G19WHY="${G19WHY}exit=$G19ST;"
+[ -z "$G19E" ] || G19WHY="${G19WHY}$G19E;"
+if [ -z "$G19WHY" ]; then ok G1-9; else bad G1-9 "missing-identity $G19WHY v=$G19V"; fi
 g1_rm "$G1ROOT"
 
 if [ "$FAIL" -ne 0 ]; then printf '%s\n' "SELF-TEST FAILED"; exit 1; fi
