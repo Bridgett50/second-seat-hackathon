@@ -1367,6 +1367,17 @@ export function createSessionStore(options?: SessionStoreOptions) {
           fail(s, err);
           s.revision += 1;
         } finally {
+          // Settle from this analysis's own receipts before dropping the
+          // pending-send pointer. A verification rejection used to return
+          // early and leave the approval-time "prepared" status behind a
+          // confirmed send. An older generation must not write the payload.
+          if (s.generation === gen && live) {
+            const status = receiptStatus();
+            const at = receiptSentAt();
+            if (status !== null && at !== null) {
+              s.payload = { approvedText, status, sentAt: at, adapterLabel: analyzerLabel };
+            }
+          }
           if (s.analyzePending === p) s.analyzePending = null;
           if (s.pendingSend === thisSend) s.pendingSend = null;
         }
