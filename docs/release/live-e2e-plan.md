@@ -14,7 +14,7 @@ pnpm install && pnpm -r build
 #    GLIMMER_LAUNCH_CONFIG must name a canonical nested run config
 #    (runConfig.ts shape, configVersion 1) with model.revision set.
 #    The deploy ships those exact bytes into the container (H3).
-GLIMMER_LAUNCH_CONFIG=<config.json> python3 -m modal deploy infra/modal/glimmer_app.py
+GLIMMER_LAUNCH_CONFIG=config/live/glimmer-launch-config.json python3 -m modal deploy infra/modal/glimmer_app.py
 
 # 2. Point the app at the endpoint Modal prints for the `serve` function,
 #    then warm both models (one tiny request each).
@@ -43,7 +43,7 @@ Worst case: a stuck container can bill until the 1500 s startup timeout, or up t
 
 ## What would make it fail
 
-1. **Launch config (fixed by the H3 PR; still needs a real config file).** Before H3, the deployed `serve` container never got `GLIMMER_LAUNCH_CONFIG` or `launch_contract.py`, so vLLM would have started with `--revision ''`. H3 ships both into the image at `/root/` with `Image.add_local_file`, and `serve()` now refuses to start without a pinned revision. Still open: no canonical launch config with the real `model.revision` and image digest is committed. One has to be written before deploy, or `serve` will refuse.
+1. **Launch config (fixed by the H3 PR; still needs a real config file).** Before H3, the deployed `serve` container never got `GLIMMER_LAUNCH_CONFIG` or `launch_contract.py`, so vLLM would have started with `--revision ''`. H3 ships both into the image at `/root/` with `Image.add_local_file`, and `serve()` now refuses to start without a pinned revision. The config with the verified revision and image digest is in `config/live/glimmer-launch-config.json` (H4 PR). Bridgett Sanders confirmed it on 2026-10-28 and its review fields are recorded, so `validateRunConfig` accepts it (see `config/live/README.md`). `serve()` itself does not check the review, so validate before deploying.
 2. **Cold start.** If the weights volume `glimmer-weights` is empty, the first start downloads the 30B weights and can exceed the 1500 s startup timeout. Each Glimmer request has a 90 s timeout, so redaction fails if warmup didn't finish.
 3. **Glimmer output.** The historical run completed 6/8. The two failures were invalid JSON and a length finish with empty output. Either one fails redaction.
 4. **Residual PII.** If Glimmer misses the phone or email, the privacy gate refuses Analyze ("residual PII detected"). The owner must fix the preview first.
