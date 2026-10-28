@@ -630,6 +630,13 @@ export type SessionPageSnapshot = {
   offline: boolean;
   draft?: { text: string; origin: string; approved: boolean } | null;
   pressure?: PressureAssessment | null;
+  verification?: {
+    status: "verified" | "needs_owner_review";
+    blocked: boolean;
+    title: string;
+    message: string;
+    checks: { id: string; label: string; result: string }[];
+  } | null;
 };
 
 function pressureSourceLabel(p: { source: string; status?: string }): string {
@@ -712,6 +719,23 @@ export function sessionStateLabel(snap: SessionPageSnapshot): string {
     case "error": return snap.reason ? `Error — ${snap.reason}` : "Error — something went wrong.";
     default: return snap.state;
   }
+}
+
+export function verificationSectionHtml(
+  verification: SessionPageSnapshot["verification"],
+): string {
+  if (verification === null || verification === undefined) {
+    return `<section id="verification" hidden></section>`;
+  }
+  const items = verification.checks
+    .map((check) => `<li data-check="${esc(check.id)}">${esc(check.label)}: ${esc(check.result)}</li>`)
+    .join("");
+  const message =
+    verification.message === ""
+      ? ""
+      : `<p id="verification-message">${esc(verification.message)}</p>`;
+  return `<section id="verification" data-status="${esc(verification.status)}" aria-label="${esc(verification.title)}">` +
+    `<h2 id="verification-title">${esc(verification.title)}</h2>${message}<ul id="verification-checks">${items}</ul></section>`;
 }
 
 function sessionFindingsHtml(snap: SessionPageSnapshot): string {
@@ -907,7 +931,7 @@ ${sessionProgressHtml(view)}
 <div><button type="button" id="btn-approve"${dis(snap.state !== "review_required")}>Approve</button>
 <button type="button" id="btn-analyze"${dis(snap.state !== "approved" && snap.state !== "completed")}>Analyze</button></div>
 </section>
-<section id="findings" aria-label="Findings"><h2>Findings</h2><div id="results">${sessionFindingsHtml(snap)}</div></section>
+<section id="findings" aria-label="Findings"><h2>Findings</h2>${verificationSectionHtml(snap.verification)}<div id="results">${sessionFindingsHtml(snap)}</div></section>
 ${sessionPressureHtml(snap)}
 <section id="transcript" aria-label="Approved transcript"><h2>Approved transcript segments</h2><ol id="segments">${segmentHtml}</ol></section>
 ${sessionDraftHtml(snap)}
@@ -963,6 +987,21 @@ function render(s){
   btnAnalyze.disabled=pending||(s.state!=="approved"&&s.state!=="completed");
   while(segmentsEl.firstChild)segmentsEl.removeChild(segmentsEl.firstChild);
   (s.segments||[]).forEach(function(g){segmentsEl.appendChild(el("li",{id:g.id},g.text));});
+  var verEl=document.getElementById("verification");
+  if(verEl){
+    while(verEl.firstChild)verEl.removeChild(verEl.firstChild);
+    var v=s.verification;
+    if(!v){verEl.hidden=true;verEl.removeAttribute("data-status");}
+    else{
+      verEl.hidden=false;
+      verEl.setAttribute("data-status",v.status||"");
+      verEl.appendChild(el("h2",{id:"verification-title"},v.title||""));
+      if(v.message)verEl.appendChild(el("p",{id:"verification-message"},v.message));
+      var list=el("ul",{id:"verification-checks"});
+      (v.checks||[]).forEach(function(c){list.appendChild(el("li",{"data-check":c.id},c.label+": "+c.result));});
+      verEl.appendChild(list);
+    }
+  }
   while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);
   if(s.state==="error"){resultsEl.appendChild(el("p",{id:"analysis-error",role:"alert"},"Analysis failed: "+(s.reason||"unknown reason")+". Results unavailable because the analysis could not be validated."));}
   else if(!s.result){resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));}

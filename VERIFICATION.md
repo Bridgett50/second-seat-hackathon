@@ -108,10 +108,13 @@ results are in `eval/results/rules-table.md`.
 
 ## Status and known findings
 
-- **Not wired into the live session yet.** `apps/web` and `session.ts` are
-  untouched on purpose, because other open PRs change them. Today the checks
-  run through `verify-run.mjs` and the tests. Wiring them in is a follow-up,
-  and the table's **When** column says where each call belongs.
+- **Wired into the session.** `apps/web/src/session.ts` calls
+  `verifyRedaction` on the approved preview before anything is sent, then
+  `verifyBrief` on the brief. `verifyClaims` runs only when recorded judge
+  verdicts were supplied. A hard failure stops the flow and shows a fixed
+  "Needs owner review" line. Heuristic warnings escalate to that same
+  review and do not block. Offline and demo sessions use the same checks
+  on the local brief. The owner Approve controls stay on the page.
 - **The four recorded briefs** (hero, dev01-03):
   - all pass the hard rules;
   - `ungrounded_number` produces zero false alarms on them;
