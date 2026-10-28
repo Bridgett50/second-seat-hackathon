@@ -3,6 +3,10 @@
 Daily log of work added in this repo. Everything below was built this week;
 the earlier Second Seat idea and prototype live elsewhere and are not included.
 
+## Oct 28 — Phase 08 resistance table
+
+- `eval/resistance-table.mjs` prints off, pattern-only, and pattern+Spark catch counts with Wilson 95% intervals for the public dev fixtures. pattern+Spark reads the frozen recorded Spark labels when they are present, and otherwise says pending live run. `--split heldout` exits before any held-out file is opened. No model call.
+
 ## Oct 28 — Phase 04b shield report
 
 - `eval/shield-report.mjs` prints pattern, spark, gate, and combined shield N/M with Wilson 95% intervals on the public dev fixtures, plus a mutation check. `--split heldout` is accepted and refused before any held-out file is opened.
