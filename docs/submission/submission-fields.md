@@ -1,6 +1,8 @@
 # Submission fields
 
 - Track: Startup track only.
+- Models: We run Muse Glimmer (open weights) on our own Modal A100.
+- Merged pull requests: 63. That is the GitHub count of pull requests in state merged for this repository, checked 2026-10-28.
 - Repo: https://github.com/Bridgett50/second-seat-hackathon
 - Video: PENDING — not yet supplied (no URL invented).
 - New-work disclosure: Pre-existing: the Second Seat idea and an earlier prototype in a separate repo. Built this week (Oct 26–Nov 4): everything in this repo.

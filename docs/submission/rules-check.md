@@ -6,7 +6,7 @@
 - [ ] X post is draft only. Bridgett posts it herself; nothing here auto-posts.
 - [ ] No deploy on camera. The public link is demo mode with recorded examples. A clip of the Oct 28 live run (3/3 at `0365fdb`) is allowed only when it is labeled as a recorded run; organizers confirmed recorded runs are fine if labeled. Do not present a fixture as that run. Spend cap $5/day plus daily call-count cap with refuse-and-stop behavior [docs/failure-modes.md].
 - [ ] Replay honesty: the scripted walkthrough says "replay" or "offline demo." A labeled recording of the live run is separate from that walkthrough. Second Seat never joins calls and never sends a reply.
-- [ ] Glimmer honesty: the incomplete historical run is shown WITH its limitations (6/8 requests, 18/29 on completed, 18/39 end-to-end, span coverage not re-scorable) [services/bot/fixtures/glimmer-run/rescore.json]. The n=10 10/10 figure [services/bot/fixtures/glimmer-live-eval-n10.json] is a small smoke test and is never the headline.
+- [ ] Glimmer honesty: say "We run Muse Glimmer (open weights) on our own Modal A100." The incomplete historical run is shown WITH its limitations (6/8 requests, 18/29 on completed, 18/39 end-to-end, span coverage not re-scorable) [services/bot/fixtures/glimmer-run/rescore.json]. The n=10 10/10 figure [services/bot/fixtures/glimmer-live-eval-n10.json] is a small smoke test and is never the headline.
 - [ ] SAM honesty: SAM/image features are experimental, off by default, and not in the core video at all.
 - [ ] No PDF drop shown. The PDF normalizer was cut.
 - [ ] No screenshot upload shown. The core video pastes transcript text only.

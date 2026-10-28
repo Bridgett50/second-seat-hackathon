@@ -25,6 +25,7 @@ The whole video follows ONE meeting through the connected `/session` flow (`apps
 - The scripted walkthrough is an offline demo. Say "replay" or "offline demo" for those beats. A separate clip of the Oct 28 live run is allowed only when labeled as a recorded run; organizers confirmed recorded runs are fine if labeled. Second Seat never joins calls and never sends a reply.
 - Show only the connected `/session` paste-to-copy flow with real UI states (`#transcript-input`, `#btn-redact`, `#session-state`, `#btn-approve`, `#btn-analyze`, `#draft-text`, `#btn-draft-approve`, `#btn-copy`, `#offline-label`).
 - No screenshot upload, no SAM, no timed replay in the core video. SAM/image features are experimental and off by default.
+- On the redaction beat, say: "We run Muse Glimmer (open weights) on our own Modal A100."
 - Show the incomplete historical Glimmer run WITH its limitations (6/8 requests, 18/39 end-to-end, span coverage not re-scorable) [services/bot/fixtures/glimmer-run/rescore.json]. Never present the n=10 10/10 smoke test [services/bot/fixtures/glimmer-live-eval-n10.json] as the headline.
 - Never state "the raw transcript never left our server" as a guarantee. Say what the code does: the approved redacted text goes through the privacy gate, and test mode stays offline even with credentials present [apps/web/src/liveConfig.ts].
 - Founder story, user observations, and video URLs are PENDING — not yet supplied. Invent nothing: no user quotes, no founder anecdotes, no URLs.
