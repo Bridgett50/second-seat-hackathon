@@ -11,6 +11,7 @@ import type {
 } from "./render.js";
 import type { RunLogLine } from "./modelStrip.js";
 import { parseGlimmerRecall } from "./modelStrip.js";
+import type { CacheUsage } from "./cacheRatio.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -357,6 +358,7 @@ export interface DemoData {
   briefScore: BriefScore | null;
   seededScore: SeededScore | null;
   heroChain: HeroChainData | null;
+  cacheUsage: CacheUsage[];
 }
 
 export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
@@ -421,5 +423,10 @@ export function loadDemo(webRoot: string = WEB_ROOT): DemoData {
   const briefScore = loadBriefScore(webRoot);
   const seededScore = loadSeededScore(webRoot);
   const heroChain = loadHeroChain(webRoot);
-  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive, briefScore, seededScore, heroChain };
+  const usage = (recorded as { usage?: { inputTokens?: unknown; cachedTokens?: unknown } }).usage;
+  const cacheUsage: CacheUsage[] =
+    typeof usage?.inputTokens === "number" && typeof usage?.cachedTokens === "number"
+      ? [{ inputTokens: usage.inputTokens, cachedTokens: usage.cachedTokens }]
+      : [];
+  return { brief, segments, frames, runLog, pressureFallback, payloadDemo, glimmerLive, briefScore, seededScore, heroChain, cacheUsage };
 }

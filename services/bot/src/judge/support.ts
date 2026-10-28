@@ -23,7 +23,8 @@
 
 import { BRIEF_API_URL, BRIEF_MAX_COMPLETION_TOKENS, BRIEF_SEED } from "../brief/muse.js";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
-import { requireLiveGatedText, type GatedText } from "../private/gate.js";
+import { PROMPT_CACHE_KEYS } from "../promptCache.js";
+import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const SUPPORT_MODEL = "muse-spark-1.3";
 export const SUPPORT_PROMPT_VERSION = "support-v1";
@@ -195,32 +196,42 @@ function retryAfterMs(header: string | null, attempt: number): number {
   return Math.min(1000 * 2 ** attempt, 30_000);
 }
 
-async function postChat(body: Record<string, unknown>, key: string): Promise<Response> {
-  const maxAttempts = 4;
+async function postChat(
+  body: Record<string, unknown>,
+  key: string,
+  gated: readonly GatedText[],
+  transport: "support",
+  maxAttempts: number,
+  fetchImpl?: typeof fetch,
+): Promise<Response> {
   for (let attempt = 0; ; attempt += 1) {
-    const response = await fetch(BRIEF_API_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({ ...body, stream: true }),
-    });
+    // Every attempt (including retries) revalidates approval at the
+    // transport boundary and records a receipt.
+    const response = await dispatchGuarded(transport, gated, attempt + 1, () =>
+      (fetchImpl ?? globalThis.fetch)(BRIEF_API_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({ ...body, stream: true }),
+      }),
+    );
     if (response.status === 400) {
       const text = await response.text();
-      throw new Error(`muse-spark request rejected (400, not retried): ${text.slice(0, 500)}`);
+      throw new Error(`muse-spark request rejected (400, not retried; body ${Buffer.byteLength(text)} bytes)`);
     }
     if (response.status === 429 || response.status >= 500) {
       if (attempt >= maxAttempts - 1) {
         const text = await response.text();
-        throw new Error(`muse-spark request failed after retries (${response.status}): ${text.slice(0, 500)}`);
+        throw new Error(`muse-spark request failed after retries (${response.status}; body ${Buffer.byteLength(text)} bytes)`);
       }
       await sleep(retryAfterMs(response.headers.get("retry-after"), attempt));
       continue;
     }
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`muse-spark request failed (${response.status}, not retried): ${text.slice(0, 500)}`);
+      throw new Error(`muse-spark request failed (${response.status}, not retried; body ${Buffer.byteLength(text)} bytes)`);
     }
     return response;
   }
@@ -274,7 +285,7 @@ async function readStreamedChat(response: Response): Promise<{ content: string; 
 function parseGrade(content: string): { grade: SupportGrade; missingQualifier: string | null } {
   const parsed = JSON.parse(content) as { grade?: unknown; missing_qualifier?: unknown };
   if (parsed.grade !== "supported" && parsed.grade !== "partial" && parsed.grade !== "unsupported") {
-    throw new Error(`support judge returned invalid grade: ${content.slice(0, 200)}`);
+    throw new Error(`support judge returned invalid grade (content ${content.length} chars)`);
   }
   const missingQualifier =
     typeof parsed.missing_qualifier === "string" ? parsed.missing_qualifier : null;
@@ -284,6 +295,17 @@ function parseGrade(content: string): { grade: SupportGrade; missingQualifier: s
 /** Live Spark judge. Never called without an API key and the cost-guard caps. */
 export class SparkSupportJudge {
   readonly mode = "live" as const;
+  private readonly maxAttempts: number;
+  private readonly fetchImpl: typeof fetch | undefined;
+
+  constructor(opts?: { maxAttempts?: number; fetchImpl?: typeof fetch }) {
+    const maxAttempts = opts?.maxAttempts ?? 4;
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+      throw new Error("maxAttempts must be an integer >= 1");
+    }
+    this.maxAttempts = maxAttempts;
+    this.fetchImpl = opts?.fetchImpl;
+  }
 
   /**
    * Live Spark call. Entry text and cited spans must arrive as
@@ -296,8 +318,11 @@ export class SparkSupportJudge {
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
-    const entryText = requireLiveGatedText(input.entryText).text;
-    const citedSpans = input.citedSpans.map((span) => requireLiveGatedText(span).text);
+    const entryTextValue = requireLiveGatedText(input.entryText);
+    const citedSpanValues = input.citedSpans.map((span) => requireLiveGatedText(span));
+    const gatedValues: readonly GatedText[] = [entryTextValue, ...citedSpanValues];
+    const entryText = entryTextValue.text;
+    const citedSpans = citedSpanValues.map((span) => span.text);
     await checkCapsPreCall();
     const userMessage = buildSupportUserMessage({ entryId: input.entryId, entryText, citedSpans });
     checkPerCallTokenCap(
@@ -307,6 +332,7 @@ export class SparkSupportJudge {
     const response = await postChat(
       {
         model: SUPPORT_MODEL,
+        prompt_cache_key: PROMPT_CACHE_KEYS.support,
         reasoning_effort: "medium",
         seed: SUPPORT_SEED,
         max_completion_tokens: SUPPORT_MAX_COMPLETION_TOKENS,
@@ -320,6 +346,10 @@ export class SparkSupportJudge {
         ],
       },
       key,
+      gatedValues,
+      "support",
+      this.maxAttempts,
+      this.fetchImpl,
     );
     const { content, usage } = await readStreamedChat(response);
     const { grade, missingQualifier } = parseGrade(content);

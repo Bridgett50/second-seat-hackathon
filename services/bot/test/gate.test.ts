@@ -1,4 +1,7 @@
 import { get } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   BRIEF_API_URL,
@@ -407,20 +410,29 @@ describe("gated entry points reject plain strings", () => {
       await expect(client.completeBrief(input)).rejects.toThrow(GateApprovalError);
       expect(sparkCalls(calls)).toHaveLength(0);
       // Gated input passes the gate check: the Spark body carries only the reviewed redacted text.
-      process.env["MUSE_STATE_FILE"] = "/tmp/gate-test-state.json";
-      process.env["MUSE_COST_LOG_FILE"] = "/tmp/gate-test-cost.jsonl";
-      const gated = await mintGated("plain meeting notes");
-      const result = await client.completeBrief({
-        meetingId: "m",
-        transcriptText: gated,
-        framesSidecarText: gated,
-        fixtureMode: false,
-      });
-      expect(result.fixture).toBe(false);
-      const sparkBody = sparkCalls(calls)[0]!.body;
-      expect(sparkBody).toContain(gated.text);
-      delete process.env["MUSE_STATE_FILE"];
-      delete process.env["MUSE_COST_LOG_FILE"];
+      const stateDir = mkdtempSync(join(tmpdir(), "gate-test-state-"));
+      const prevStateFile = process.env["MUSE_STATE_FILE"];
+      const prevCostLog = process.env["MUSE_COST_LOG_FILE"];
+      process.env["MUSE_STATE_FILE"] = join(stateDir, "state.json");
+      process.env["MUSE_COST_LOG_FILE"] = join(stateDir, "cost.jsonl");
+      try {
+        const gated = await mintGated("plain meeting notes");
+        const result = await client.completeBrief({
+          meetingId: "m",
+          transcriptText: gated,
+          framesSidecarText: gated,
+          fixtureMode: false,
+        });
+        expect(result.fixture).toBe(false);
+        const sparkBody = sparkCalls(calls)[0]!.body;
+        expect(sparkBody).toContain(gated.text);
+      } finally {
+        if (prevStateFile === undefined) delete process.env["MUSE_STATE_FILE"];
+        else process.env["MUSE_STATE_FILE"] = prevStateFile;
+        if (prevCostLog === undefined) delete process.env["MUSE_COST_LOG_FILE"];
+        else process.env["MUSE_COST_LOG_FILE"] = prevCostLog;
+        rmSync(stateDir, { recursive: true, force: true });
+      }
     } finally {
       restore();
     }

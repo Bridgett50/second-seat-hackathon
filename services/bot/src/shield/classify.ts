@@ -14,7 +14,8 @@
  */
 import type { PressureLabel, PressureTactic } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/costGuard.js";
-import { requireLiveGatedText, type GatedText } from "../private/gate.js";
+import { PROMPT_CACHE_KEYS } from "../promptCache.js";
+import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
 export const PRESSURE_MODEL = "muse-spark-1.3";
 export const PRESSURE_PROMPT_VERSION = "pressure-v1";
@@ -149,26 +150,36 @@ function retryAfterMs(header: string | null, attempt: number): number {
   return Math.min(1000 * 2 ** attempt, 30_000);
 }
 
-async function postChat(body: Record<string, unknown>, key: string): Promise<Response> {
-  const maxAttempts = 4;
+async function postChat(
+  body: Record<string, unknown>,
+  key: string,
+  gated: readonly GatedText[],
+  transport: "shield",
+  maxAttempts: number,
+  fetchImpl?: typeof fetch,
+): Promise<Response> {
   for (let attempt = 0; ; attempt += 1) {
-    const response = await fetch(PRESSURE_API_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({ ...body, stream: true }),
-    });
+    // Every attempt (including retries) revalidates approval at the
+    // transport boundary and records a receipt.
+    const response = await dispatchGuarded(transport, gated, attempt + 1, () =>
+      (fetchImpl ?? globalThis.fetch)(PRESSURE_API_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({ ...body, stream: true }),
+      }),
+    );
     if (response.status === 400) {
       const text = await response.text();
-      throw new Error(`muse-spark pressure request rejected (400, not retried): ${text.slice(0, 500)}`);
+      throw new Error(`muse-spark pressure request rejected (400, not retried; body ${Buffer.byteLength(text)} bytes)`);
     }
     if (response.status === 429 || response.status >= 500) {
       if (attempt >= maxAttempts - 1) {
         const text = await response.text();
         throw new Error(
-          `muse-spark pressure request failed after retries (${response.status}): ${text.slice(0, 500)}`,
+          `muse-spark pressure request failed after retries (${response.status}; body ${Buffer.byteLength(text)} bytes)`,
         );
       }
       await sleep(retryAfterMs(response.headers.get("retry-after"), attempt));
@@ -176,7 +187,7 @@ async function postChat(body: Record<string, unknown>, key: string): Promise<Res
     }
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`muse-spark pressure request failed (${response.status}, not retried): ${text.slice(0, 500)}`);
+      throw new Error(`muse-spark pressure request failed (${response.status}, not retried; body ${Buffer.byteLength(text)} bytes)`);
     }
     return response;
   }
@@ -253,6 +264,17 @@ export interface SparkRawResult {
 /** Live classifier: exactly ONE batched call over all redacted lines. */
 export class SparkPressureClassifier {
   readonly mode = "live" as const;
+  private readonly maxAttempts: number;
+  private readonly fetchImpl: typeof fetch | undefined;
+
+  constructor(opts?: { maxAttempts?: number; fetchImpl?: typeof fetch }) {
+    const maxAttempts = opts?.maxAttempts ?? 4;
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+      throw new Error("maxAttempts must be an integer >= 1");
+    }
+    this.maxAttempts = maxAttempts;
+    this.fetchImpl = opts?.fetchImpl;
+  }
 
   /**
    * Live Spark call. Lines must arrive as gate-minted `GatedText`
@@ -269,17 +291,22 @@ export class SparkPressureClassifier {
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
-    const redacted = lines.map((line) => ({
+    const gatedValues: readonly GatedText[] = lines.map((line) => requireLiveGatedText(line.text));
+    const redacted = lines.map((line, index) => ({
       segmentId: line.segmentId,
-      text: requireLiveGatedText(line.text).text,
+      text: gatedValues[index]!.text,
     }));
-    await checkCapsPreCall();
-    const { logText } = await import("../private/payloadLog.js");
-    logText(redacted.map((line) => `[${line.segmentId}] ${line.text}`).join("\n"));
+    // Preflight order: the static pressure prompt loads before the dynamic
+    // caps check reads its state file, so a prompt-read failure refuses the
+    // call before any fetch with no dispatch receipt. Caps and token guards
+    // still run before any network attempt.
     const [developerPrompt, userMessage] = await Promise.all([
       loadPressurePrompt(),
       Promise.resolve(buildPressureUserMessage(redacted)),
     ]);
+    await checkCapsPreCall();
+    const { logText } = await import("../private/payloadLog.js");
+    logText(redacted.map((line) => `[${line.segmentId}] ${line.text}`).join("\n"));
     checkPerCallTokenCap(
       Math.ceil((developerPrompt.length + userMessage.length) / 4),
       PRESSURE_MAX_COMPLETION_TOKENS,
@@ -287,6 +314,7 @@ export class SparkPressureClassifier {
     const response = await postChat(
       {
         model: PRESSURE_MODEL,
+        prompt_cache_key: PROMPT_CACHE_KEYS.shield,
         reasoning_effort: "low",
         seed: PRESSURE_SEED,
         max_completion_tokens: PRESSURE_MAX_COMPLETION_TOKENS,
@@ -304,6 +332,10 @@ export class SparkPressureClassifier {
         ],
       },
       key,
+      gatedValues,
+      "shield",
+      this.maxAttempts,
+      this.fetchImpl,
     );
     const { content, usage } = await readStreamedChat(response);
     const usageRecord = {

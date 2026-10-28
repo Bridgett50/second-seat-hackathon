@@ -14,10 +14,11 @@
     "shield:run": "tsc -p tsconfig.json && node dist/src/shield/run.js",
     "redaction:eval": "node scripts/redaction-eval.mjs",
     "pretypecheck": "pnpm --filter @second-seat/core build",
-    "pretest": "pnpm --filter @second-seat/core build",
+    "pretest": "pnpm --filter @second-seat/core build && tsc -p tsconfig.json",
     "preredaction:eval": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@meta-sam/parser": "0.1.0",
     "@second-seat/core": "workspace:*"
   },
   "devDependencies": {

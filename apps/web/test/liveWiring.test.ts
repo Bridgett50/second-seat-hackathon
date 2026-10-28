@@ -86,8 +86,21 @@ function evidenceBrief(entries: unknown[]) {
   };
 }
 
+/** The fake echoes the meeting id the app actually requested (identity check). */
+function withRequestedMeeting(payload: unknown, body: string): unknown {
+  if (typeof payload !== "object" || payload === null || !("meetingId" in payload)) {
+    return payload;
+  }
+  const m = /^meetingId: (.+)$/m.exec(userMessageText({ url: "", body }));
+  return { ...(payload as Record<string, unknown>), meetingId: m ? m[1] : "missing" };
+}
+
 function liveDeps(payload: unknown, calls: FetchCall[]) {
-  const fetchImpl = fakeFetchFactory(calls, () => sseResponse(JSON.stringify(payload)));
+  const fetchImpl = (async (url: unknown, init?: { body?: unknown }) => {
+    const body = String((init as { body?: unknown } | undefined)?.body ?? "");
+    calls.push({ url: String(url), body });
+    return sseResponse(JSON.stringify(withRequestedMeeting(payload, body)));
+  }) as typeof fetch;
   const gate = createPrivacyGate({
     mode: "live",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -270,8 +283,9 @@ describe("live session analysis over fake transports", () => {
     expect(s.result).toBeNull();
     expect(s.reason).toBeTypeOf("string");
     // The offline heuristic would have found a question here; live must not.
-    // The transport ran, so the payload is marked dispatched even on failure.
-    expect(s.payload?.status).toBe("dispatched");
+    // The transport ran and the provider refused (http_error receipt), so
+    // the payload shows the failed attempt, never a success claim.
+    expect(s.payload?.status).toBe("failed");
     expect(typeof s.payload?.sentAt).toBe("string");
     expect(calls.length).toBeGreaterThan(0);
   });
@@ -396,7 +410,7 @@ describe("live session analysis over fake transports", () => {
     );
     const id = await runToApproval(store);
     const preparedPage = renderSessionPage(store.getState(id));
-    expect(preparedPage).toContain('<p id="payload-status">Prepared (not sent)</p>');
+    expect(preparedPage).toContain('<p id="payload-status">Prepared (not dispatched)</p>');
     const done = await store.analyze(id);
     expect(done.payload?.status).toBe("dispatched");
     const dispatchedPage = renderSessionPage(done);

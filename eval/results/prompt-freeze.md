@@ -7,6 +7,7 @@ Prompt file hashes (sha256):
 | services/bot/prompts/brief-v1.txt | fe0e1f595d9f3eb5a27afc757e09ead6ad1e165824db7e5724e6d348772bd05a |
 | services/bot/prompts/brief-v2.txt | 1fe6a6ded607a5a1fccfe8cd73b4e8215df4bb6c06042418c156e85b67a74cdc |
 | services/bot/prompts/pressure-v1.txt | 141e962264623c4407578ace881d9461371d15957e75dfa1684ee52cb7e568ab |
+| services/bot/src/private/redact.ts (inline Glimmer system prompt) | 7211c665ff685e6a8d52496bc3e616559e1fcdf89741695f32444f920a7ae77f |
 
 Model ids and settings read from source:
 
@@ -20,8 +21,8 @@ Model ids and settings read from source:
 | vision model (SAM_MODEL) | sam-3.1 | services/bot/src/vision/sam.ts |
 | shield reasoning_effort | low | services/bot/src/shield/classify.ts |
 | shield model | muse-spark-1.3 | services/bot/src/shield/classify.ts |
-| redact temperature | 1.0 | services/bot/src/private/redact.ts |
-| redact top_p | 0.95 | services/bot/src/private/redact.ts |
+| redact temperature | 0.0 | services/bot/src/private/redact.ts |
+| redact top_p | NOT FOUND | services/bot/src/private/redact.ts |
 | judge reasoning_effort | medium | services/bot/src/judge/support.ts |
 
 Fixture mode, not production. Re-run `node services/bot/scripts/prompt-freeze.mjs` to refresh.

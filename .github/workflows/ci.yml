@@ -1,3 +1,7 @@
+# This workflow is nonsealed: it checks out the repo WITHOUT sealed data
+# (sparse-checkout excludes every .sealed-paths entry) and refuses to run
+# if any sealed path is present. Sealed verification is only
+# .github/workflows/sealed-verify.yml (manual, separately authorized).
 name: ci
 
 on:
@@ -12,17 +16,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/services/bot/fixtures/holdout-v1/
+            !/eval/heldout/
+            !/eval/heldout-presealed.sha256
+            !/eval/shield-heldout.sha256
+      - name: Sealed paths must be absent (nonsealed workflow)
+        run: |
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in ''|'#'*) continue;; esac
+            if [ -e "$line" ]; then
+              echo "sealed path present in nonsealed checkout: $line" >&2
+              exit 1
+            fi
+          done < .sealed-paths
+          echo "sealed absence ok"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: bash scripts/tests/muse-helper.test.sh
       - run: pnpm -r typecheck
       - run: pnpm -r test
-      - name: Truth hash seal (scorer refuses on mismatch)
-        run: node eval/check-hashes.mjs
       - run: pnpm -r build
+      - run: bash scripts/ci/repeat-check.sh test/stub.test.ts test/d1-provenance.test.ts
+      - run: bash scripts/ci/clean-build-check.sh
       - run: pnpm --filter @second-seat/web exec playwright install --with-deps chromium
       - run: pnpm --filter @second-seat/web exec playwright test
         env:
@@ -35,7 +59,4 @@ jobs:
           path: apps/web/playwright-report
           retention-days: 14
       - name: Secret scan (no keys in tracked files)
-        run: |
-          # The scan patterns live in this file, so exclude it from its own scan.
-          ! git grep -nE 's[k]-|Bearer [A-Za-z0-9]|(MODEL|META)_API_KEY=.+' -- . ':!.github/workflows/ci.yml'
-          test ! -f .env
+        run: bash scripts/ci/secret-scan.sh

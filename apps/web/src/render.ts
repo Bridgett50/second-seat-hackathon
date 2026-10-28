@@ -1,4 +1,6 @@
 import { modelChips, type RunLogLine } from "./modelStrip.js";
+import { renderCacheRatio, type CacheUsage } from "./cacheRatio.js";
+import type { PressureAssessment } from "./session.js";
 
 export interface Citation {
   kind: string;
@@ -165,6 +167,7 @@ export interface RenderOpts {
   briefScore?: BriefScore | null;
   seededScore?: SeededScore | null;
   heroChain?: HeroChainProof | null;
+  cacheUsage?: CacheUsage[];
 }
 
 function esc(s: string): string {
@@ -532,6 +535,7 @@ ${flaggedHtml}
 <section id="frames"><h2>Frames</h2>${frameHtml}</section>
 ${heroChainHtml}
 ${payloadHtml}
+${renderCacheRatio(opts.cacheUsage ?? [])}
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script type="application/json" id="transcript-data">${transcriptJson}</script>
 <script>
@@ -602,16 +606,67 @@ refresh();
 
 export type SessionPageSnapshot = {
   state: string;
+  /** Last server revision rendered; the client script sends it back as expectedRevision. */
+  revision: number;
   reason?: string;
   segments: { id: string; text: string }[];
   redactedText: string;
   approved: boolean;
-  result: { offline: boolean; entries: { kind: string; text: string; segmentIds: string[] }[] } | null;
+  result: { offline: boolean; entries: { kind: string; text: string; segmentIds: string[]; flags?: string[] }[] } | null;
   payload: { approvedText: string; status: string; sentAt?: string; adapterLabel?: string } | null;
   superseded?: { approvedText: string; sentAt?: string; status?: string } | null;
   offline: boolean;
   draft?: { text: string; origin: string; approved: boolean } | null;
+  pressure?: PressureAssessment | null;
 };
+
+function pressureSourceLabel(p: { source: string; status?: string }): string {
+  if (p.status === "not_run") return "not run";
+  if (p.status === "failed") return "failed / unavailable";
+  if (p.source === "offline-fixture") return "offline fixture";
+  if (p.source === "live") return "live check";
+  if (p.source === "pattern") return "deterministic pattern detection";
+  if (p.source === "none") return "not run";
+  return "deterministic pattern detection";
+}
+
+function sessionPressureHtml(snap: SessionPageSnapshot): string {
+  const p = snap.pressure ?? null;
+  if (p === null) return "";
+  const status = (p as { status?: string }).status;
+  if (p.items.length === 0) {
+    if (status === "not_run" || status === "failed") {
+      const reason = (p as { reason?: unknown }).reason;
+      const reasonHtml =
+        typeof reason === "string" && reason !== "" ? `<p id="pressure-reason">${esc(reason)}</p>` : "";
+      return `<section id="pressure" aria-label="Possible pressure">` +
+        `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
+        `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p>${reasonHtml}</section>`;
+    }
+    if (status === "valid_negative") {
+      return `<section id="pressure" aria-label="Possible pressure">` +
+        `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
+        `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p>` +
+        `<p id="pressure-negative">No pressure items found</p></section>`;
+    }
+    return "";
+  }
+  const items = p.items
+    .map(
+      (item) =>
+        `<article class="pressure-item" id="pressure-${esc(item.id)}">` +
+        `<a class="pressure-badge" href="#${esc(item.segmentId)}">pressure: ${esc(item.id)}</a>` +
+        `<p class="pressure-quote">${esc(item.quote)}</p>` +
+        `<p class="pressure-tactic">tactic: ${esc(item.tactic)}</p>` +
+        `<p class="pressure-term">unresolved term: ${esc(item.unresolvedTerm === "" ? "term not identified" : item.unresolvedTerm)}</p>` +
+        `<label class="pressure-check"><input type="checkbox" class="pressure-review" data-pressure="${esc(item.id)}"${p.reviewed.includes(item.id) ? " checked" : ""}> Reviewed</label>` +
+        `</article>`,
+    )
+    .join("\n");
+  return `<section id="pressure" aria-label="Possible pressure">` +
+    `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
+    `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p>${items}</section>`;
+}
 
 function sessionDraftHtml(snap: SessionPageSnapshot): string {
   const d = snap.draft ?? null;
@@ -662,6 +717,7 @@ function sessionFindingsHtml(snap: SessionPageSnapshot): string {
     .map(
       (e, i) =>
         `<article class="result" id="result-${i}"><p>${esc(e.text)}</p>` +
+        (e.flags && e.flags.length > 0 ? `<p class="flags">flags: ${e.flags.map(esc).join(", ")}</p>` : "") +
         `<p class="citations">${e.segmentIds.map((id) => `<a href="#${esc(id)}">[${esc(id)}]</a>`).join(" ")}</p></article>`,
     )
     .join("\n");
@@ -674,19 +730,68 @@ function sessionSupersededHtml(snap: SessionPageSnapshot): string {
   return `<p id="superseded-notice">An earlier approved text was sent to the analyzer before your edit; its result was discarded. ${esc(snap.superseded.approvedText)}</p>`;
 }
 
-function sessionPayloadHtml(snap: SessionPageSnapshot): string {
-  if (snap.payload === null) {
-    return `<pre id="payload-text"></pre><p id="payload-status">Not prepared yet</p>${sessionSupersededHtml(snap)}`;
+export function payloadStatusLabel(
+  payload: { status: string; sentAt?: string; adapterLabel?: string } | null,
+): string {
+  if (payload === null) return "Not prepared yet";
+  if (payload.status === "invoked") {
+    return `Transport invoked at ${payload.sentAt ?? "unknown time"} — outcome pending`;
   }
-  if (snap.payload.status !== "dispatched") {
-    return `<pre id="payload-text">${esc(snap.payload.approvedText)}</pre><p id="payload-status">Prepared (not sent)</p>${sessionSupersededHtml(snap)}`;
+  if (payload.status === "dispatched") {
+    return `Dispatched to ${payload.adapterLabel ?? "analyzer"} at ${payload.sentAt ?? "unknown time"}`;
   }
-  const label = snap.payload.adapterLabel ?? "analyzer";
-  const at = snap.payload.sentAt ?? "unknown time";
-  return `<pre id="payload-text">${esc(snap.payload.approvedText)}</pre><p id="payload-status">Dispatched to ${esc(label)} at ${esc(at)}</p>${sessionSupersededHtml(snap)}`;
+  if (payload.status === "failed") {
+    return `Dispatch attempted at ${payload.sentAt ?? "unknown time"} — failed or unknown outcome`;
+  }
+  return "Prepared (not dispatched)";
 }
 
-export function renderSessionPage(snap: SessionPageSnapshot): string {
+function sessionPayloadHtml(snap: SessionPageSnapshot): string {
+  const text = snap.payload === null ? "" : snap.payload.approvedText;
+  return `<pre id="payload-text">${esc(text)}</pre><p id="payload-status">${esc(payloadStatusLabel(snap.payload))}</p>${sessionSupersededHtml(snap)}`;
+}
+
+/** How the session page was opened: analysis mode and whether Live is configured. */
+export type SessionPageView = {
+  mode?: "offline" | "live";
+  liveAvailable?: boolean;
+  liveRequestedButUnavailable?: boolean;
+};
+
+const DEMO_STEPS: readonly [string, string][] = [
+  ["paste", "Paste"],
+  ["redact", "Redact"],
+  ["approve", "You approve the redacted text"],
+  ["analyze", "Analyze"],
+  ["draft", "You approve the draft"],
+  ["copy", "Copy"],
+];
+
+function sessionHeaderHtml(snap: SessionPageSnapshot, view: SessionPageView): string {
+  const mode = view.mode ?? "offline";
+  const live = view.liveAvailable === true;
+  const cur = (m: string): string => (m === mode ? ' aria-current="true" class="active"' : "");
+  const liveAttrs = live ? cur("live") : ' aria-disabled="true" class="unavailable"';
+  const note =
+    mode === "live"
+      ? `<p id="live-label">Live — raw text goes only to the private Glimmer redactor; Spark sees only the text you approve.</p>`
+      : view.liveRequestedButUnavailable === true
+        ? `<p id="live-unavailable" role="alert">Live is not configured on this server. Start it with SECOND_SEAT_MODE=live, GLIMMER_BASE_URL and META_API_KEY to use Live. Showing Offline.</p>`
+        : "";
+  const steps = DEMO_STEPS.map(([id, label], i) => `<li data-step="${id}">${i + 1}. ${esc(label)}</li>`).join("");
+  return `<header id="app-header">` +
+    `<div class="brand"><strong>Second Seat</strong><span class="tagline">Redact privately. Brief with citations. You approve every step.</span></div>` +
+    `<nav id="mode-select" aria-label="Analysis mode"><span class="mode-title">Mode</span>` +
+    `<a id="mode-offline" href="/session"${cur("offline")}>Offline</a>` +
+    `<a id="mode-live" href="/session?mode=live"${liveAttrs}>Live (Glimmer + Spark)</a></nav>` +
+    `<label id="demo-mode-toggle"><input type="checkbox" id="demo-mode"> Demo Mode</label>` +
+    `</header>` +
+    note +
+    `<p id="demo-mode-note" hidden>Demo Mode streamlines the screen for recording. Owner approval is unchanged: you still approve the redacted text and the draft yourself.</p>` +
+    `<ol id="steps" aria-label="Steps" hidden>${steps}</ol>`;
+}
+
+export function renderSessionPage(snap: SessionPageSnapshot, view: SessionPageView = {}): string {
   const canRedact = snap.state !== "redaction_pending" && snap.state !== "analysis_pending";
   const dis = (off: boolean): string => (off ? " disabled" : "");
   const segmentHtml = snap.segments
@@ -706,10 +811,33 @@ h2{font-size:1.1rem;margin:0 0 .5rem}
 section{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem}
 textarea{width:100%;font:inherit}
 pre{white-space:pre-wrap;word-break:break-word}
-button{margin:.25rem;padding:.4rem .9rem;font:inherit}
+button{margin:.25rem;padding:.45rem 1rem;font:inherit;border-radius:.5rem;border:1px solid #c8c8c8;background:#fff;color:#1a1a1a;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+#btn-redact,#btn-approve,#btn-analyze,#btn-draft-approve,#btn-copy{background:#1f4fd1;border-color:#1f4fd1;color:#fff;font-weight:600;padding:.6rem 1.3rem}
+#btn-approve,#btn-draft-approve{background:#0f7a4a;border-color:#0f7a4a}
+#app-header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;padding:.75rem 0;border-bottom:1px solid #ddd;margin-bottom:1rem}
+#app-header .brand{display:flex;flex-direction:column}
+#app-header .brand strong{font-size:1.25rem}
+.tagline{color:#555;font-size:.9rem}
+#mode-select{display:flex;align-items:center;gap:.25rem}
+.mode-title{color:#555;font-size:.85rem;margin-right:.25rem}
+#mode-select a{padding:.35rem .8rem;border:1px solid #c8c8c8;border-radius:999px;text-decoration:none;color:#1a1a1a;background:#fff}
+#mode-select a.active{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
+#mode-select a.unavailable{color:#888;border-style:dashed}
+#demo-mode-toggle{font-weight:600}
+#offline-label,#live-label{display:inline-block;padding:.2rem .7rem;border-radius:999px;font-size:.85rem;font-weight:600}
+#offline-label{background:#eef1f6;color:#33405a}
+#live-label{background:#fff4e0;color:#7a4b00}
+#steps{display:flex;flex-wrap:wrap;gap:.4rem;list-style:none;padding:0;margin:0 0 1rem}
+#steps li{padding:.3rem .7rem;border-radius:999px;background:#eceff3;color:#555;font-size:.9rem}
+#steps li.done{background:#dff3e8;color:#0f5a37}
+#steps li.current{background:#1f4fd1;color:#fff;font-weight:600}
+body.demo #payload-panel{display:none}
+body.demo #btn-redact,body.demo #btn-approve,body.demo #btn-analyze,body.demo #btn-draft-approve,body.demo #btn-copy{font-size:1.1rem;padding:.75rem 1.6rem}
 </style>
 </head>
 <body>
+${sessionHeaderHtml(snap, view)}
 <h1>Vendor brief — session</h1>
 ${snap.offline ? `<p id="offline-label">Offline demo</p>` : ""}
 <p id="session-state" role="status">${esc(sessionStateLabel(snap))}</p>
@@ -722,13 +850,15 @@ ${snap.offline ? `<p id="offline-label">Offline demo</p>` : ""}
 <button type="button" id="btn-analyze"${dis(snap.state !== "approved" && snap.state !== "completed")}>Analyze</button></div>
 </section>
 <section id="findings" aria-label="Findings"><h2>Findings</h2><div id="results">${sessionFindingsHtml(snap)}</div></section>
+${sessionPressureHtml(snap)}
 <section id="transcript" aria-label="Approved transcript"><h2>Approved transcript segments</h2><ol id="segments">${segmentHtml}</ol></section>
 ${sessionDraftHtml(snap)}
 <section id="payload-panel" aria-label="Payload"><h2>Payload</h2>${sessionPayloadHtml(snap)}</section>
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script>
 (function(){
-var sessionId=null,pending=false,lastRedacted="",dirty=false,seq=0;
+var sessionId=null,pending=false,lastRedacted="",lastDraft="",dirty=false,seq=0,editedSince=false,draftEdited=false,pollTimer=null;
+var serverRev=${snap.revision ?? 0},serverAssessment=null,invSeq=0;
 var input=document.getElementById("transcript-input"),redacted=document.getElementById("redacted-text");
 var btnRedact=document.getElementById("btn-redact"),btnApprove=document.getElementById("btn-approve"),btnAnalyze=document.getElementById("btn-analyze");
 var stateEl=document.getElementById("session-state"),resultsEl=document.getElementById("results");
@@ -738,13 +868,26 @@ var supersededEl=document.getElementById("superseded-notice");
 var draftSection=document.getElementById("draft"),draftText=document.getElementById("draft-text");
 var draftStatus=document.getElementById("draft-status"),draftNote=document.getElementById("draft-note");
 var btnDraftApprove=document.getElementById("btn-draft-approve"),btnDraftReject=document.getElementById("btn-draft-reject"),btnCopy=document.getElementById("btn-copy");
+var PAGE_MODE=${JSON.stringify(view.mode ?? "offline")};
+var demoBox=document.getElementById("demo-mode"),stepsEl=document.getElementById("steps"),demoNote=document.getElementById("demo-mode-note");
+function setDemo(on){document.body.classList.toggle("demo",on);if(stepsEl)stepsEl.hidden=!on;if(demoNote)demoNote.hidden=!on;if(demoBox)demoBox.checked=on;try{localStorage.setItem("secondSeatDemo",on?"1":"0");}catch(e){}}
+function stepFor(s){var d=s.draft||null;if(d&&d.approved)return 5;if(d)return 4;switch(s.state){case "redaction_pending":return 1;case "review_required":return 2;case "approved":return 3;case "analysis_pending":return 3;case "completed":return 4;default:return input&&input.value.trim()?1:0;}}
+function syncSteps(s){if(!stepsEl)return;var k=stepFor(s),items=stepsEl.getElementsByTagName("li");for(var i=0;i<items.length;i++){items[i].className=i<k?"done":(i===k?"current":"");}}
+if(demoBox){demoBox.addEventListener("change",function(){setDemo(demoBox.checked);});}
+(function(){var on=false;try{on=/[?&]demo=1(&|$)/.test(location.search)||localStorage.getItem("secondSeatDemo")==="1";}catch(e){}setDemo(on);})();
 var LABELS={"input":"Input — paste a transcript to begin.","redaction_pending":"Redaction pending…","review_required":"Review required — check the redacted preview, then approve.","approved":"Approved — ready to analyze.","analysis_pending":"Analysis pending…","completed":"Completed — findings below."};
 function labelFor(s){if(s.state==="blocked")return "Blocked — "+(s.reason||"a policy or approval check refused the request");if(s.state==="error")return s.reason?("Error — "+s.reason):"Error — something went wrong.";return LABELS[s.state]||s.state;}
 function el(tag,attrs,text){var n=document.createElement(tag);for(var k in attrs){n.setAttribute(k,attrs[k]);}if(text!==undefined)n.textContent=text;return n;}
+function revOf(s){return (s&&typeof s.revision==="number")?s.revision:null;}
 function render(s){
+  var rev=revOf(s);
+  if(rev!==null){if(rev<serverRev)return false;serverRev=rev;}
+  if(s.pressure&&typeof s.pressure.assessmentId==="string")serverAssessment=s.pressure.assessmentId;
   stateEl.textContent=labelFor(s);
+  syncSteps(s);
   if(offlineLabel)offlineLabel.hidden=!s.offline;
-  lastRedacted=s.redactedText||"";if(document.activeElement!==redacted)redacted.value=lastRedacted;
+  var serverPreview=s.redactedText||"";
+  if(redacted.value===lastRedacted||redacted.value===serverPreview){redacted.value=serverPreview;lastRedacted=serverPreview;}
   var canRedact=s.state!=="redaction_pending"&&s.state!=="analysis_pending";
   btnRedact.disabled=pending||!canRedact||!input.value.trim();
   btnApprove.disabled=pending||s.state!=="review_required";
@@ -758,24 +901,35 @@ function render(s){
   else{s.result.entries.forEach(function(e,i){
     var a=el("article",{"class":"result",id:"result-"+i});
     a.appendChild(el("p",{},e.text));
+    if(e.flags&&e.flags.length){a.appendChild(el("p",{"class":"flags"},"flags: "+e.flags.join(", ")));}
     var c=el("p",{"class":"citations"});
     (e.segmentIds||[]).forEach(function(id){var link=el("a",{href:"#"+id},"["+id+"]");c.appendChild(link);c.appendChild(document.createTextNode(" "));});
     a.appendChild(c);resultsEl.appendChild(a);});}
-  if(!s.payload){payloadText.textContent="";payloadStatus.textContent="Not prepared yet";}
-  else{payloadText.textContent=s.payload.approvedText;payloadStatus.textContent=s.payload.status==="dispatched"?("Dispatched to "+(s.payload.adapterLabel||"analyzer")+" at "+(s.payload.sentAt||"unknown time")):"Prepared (not sent)";}
+  if(!s.payload){payloadText.textContent="";payloadStatus.textContent=(lastRedacted&&redacted.value!==lastRedacted)?"Not prepared — preview edited, approve again":"Not prepared yet";}
+  else{payloadText.textContent=s.payload.approvedText;var pst=s.payload.status;
+  if(pst==="invoked")payloadStatus.textContent="Transport invoked at "+(s.payload.sentAt||"unknown time")+" — outcome pending";
+  else if(pst==="dispatched")payloadStatus.textContent="Dispatched to "+(s.payload.adapterLabel||"analyzer")+" at "+(s.payload.sentAt||"unknown time");
+  else if(pst==="failed")payloadStatus.textContent="Dispatch attempted at "+(s.payload.sentAt||"unknown time")+" — failed or unknown outcome";
+  else payloadStatus.textContent="Prepared (not dispatched)";}
+  syncPressure(s);
   var d=s.draft||null;
+  serverDraftApproved=!!(d&&d.approved);
+  if(serverDraftApproved){draftRejectSent=false;}
   if(draftSection)draftSection.hidden=!d;
   if(d){
-    if(document.activeElement!==draftText)draftText.value=d.text||"";
+    var serverDraft=d.text||"";
+    if(draftText.value===lastDraft||draftText.value===serverDraft){draftText.value=serverDraft;lastDraft=serverDraft;}
     draftText.disabled=false;
-    var approvedNow=!!d.approved&&draftText.value===(d.text||"");
-    draftStatus.textContent=d.approved?"Approved — ready to copy.":"Review — approve to copy.";
-    if(document.activeElement===draftText&&draftText.value!==(d.text||"")){draftStatus.textContent="Edited — approve again";approvedNow=false;}
+    var localMatches=draftText.value===serverDraft;
+    var approvedNow=!!d.approved&&localMatches&&!draftEdited;
+    var draftSyncPending=draftDeb!==null;
+    draftStatus.textContent=!localMatches?"Edited — approve again":(d.approved&&!draftEdited?"Approved — ready to copy.":(draftEdited&&draftSyncPending?"Edited — approve again":"Review — approve to copy."));
     btnDraftApprove.disabled=pending||false;
     btnDraftReject.disabled=pending||false;
-    btnCopy.disabled=pending||!approvedNow;
+    var previewClean=redacted.value===lastRedacted;
+    btnCopy.disabled=pending||!approvedNow||editedSince||!pressureOk(s)||!previewClean;
   }else{
-    if(document.activeElement!==draftText)draftText.value="";
+    if(draftText.value===lastDraft){draftText.value="";lastDraft="";}
     draftText.disabled=true;
     draftStatus.textContent="No draft yet — analyze first.";
     btnDraftApprove.disabled=true;btnDraftReject.disabled=true;btnCopy.disabled=true;
@@ -784,16 +938,127 @@ function render(s){
     if(s.superseded){supersededEl.hidden=false;supersededEl.textContent="An earlier approved text was sent to the analyzer before your edit; its result was discarded. "+s.superseded.approvedText;}
     else{supersededEl.hidden=true;supersededEl.textContent="";}
   }
+  return true;
 }
-function call(path,body){return fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(b){return {ok:r.ok,body:b};});});}
-function refresh(){if(!sessionId)return;pending=true;updateButtons();var my=++seq;fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){pending=false;if(my!==seq)return;render(s);}).catch(function(){pending=false;updateButtons();});}
+function call(path,body){return fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(b){return {ok:r.ok,status:r.status,body:b};});});}
+function applySnapshot(s){
+  if(!s||typeof s!=="object")return refresh();
+  var rev=revOf(s);
+  if(rev!==null&&rev<serverRev)return refresh();
+  editedSince=false;
+  render(s);
+}
+function applyResult(r){
+  if(!r)return refresh();
+  if(r.ok){applySnapshot(r.body);return;}
+  if(r.body&&r.body.state){applySnapshot(r.body.state);return;}
+  refresh();
+}
+/* Versioned mutation: names the exact revision reviewed. Never overwrites
+   local edits made after the request was issued (see render). Superseding
+   intents (invalidate, draft text) rebase once after a 409; review intents
+   (approvals, pressure) never retry — a stale review must stay rejected. */
+function mut(path,fields,opts){
+  opts=opts||{};
+  if(!sessionId)return Promise.resolve({ok:false,status:0,body:null});
+  var payload={sessionId:sessionId};
+  for(var k in fields){payload[k]=fields[k];}
+  payload.expectedRevision=serverRev;
+  return call(path,payload).then(function(r){
+    if(r.ok){applySnapshot(r.body);return r;}
+    if(r.status===409&&r.body&&r.body.state){
+      applySnapshot(r.body.state);
+      if(opts.rebase&&!opts.retried){opts.retried=true;return mut(path,fields,opts);}
+    }
+    return r;
+  });
+}
+function pressureOk(s){var p=s.pressure||null;if(!p)return true;if(p.status==="valid_negative")return true;if(p.status==="valid_positive")return !!p.allReviewed;if(p.status==="not_run"||p.status==="failed")return false;if(!p.items||p.items.length===0)return true;return !!p.allReviewed;}
+function pressureLabel(p){if(p&&p.status==="not_run")return "not run";if(p&&p.status==="failed")return "failed / unavailable";var source=p?p.source:"";if(source==="offline-fixture")return "offline fixture";if(source==="live")return "live check";if(source==="pattern")return "deterministic pattern detection";if(source==="none")return "not run";return "deterministic pattern detection";}
+function syncPressure(s){
+  var old=document.getElementById("pressure");
+  if(old&&old.parentNode)old.parentNode.removeChild(old);
+  var p=s.pressure||null;
+  if(!p)return;
+  var empty=!p.items||p.items.length===0;
+  var findings=document.getElementById("findings");
+  if(!findings||!findings.parentNode)return;
+  var sec=el("section",{id:"pressure","aria-label":"Possible pressure"});
+  sec.appendChild(el("h2",{},"Possible pressure — assessment, not a judgment of anyone's intent"));
+  sec.appendChild(el("p",{id:"pressure-source"},pressureLabel(p)));
+  if(empty){
+    if(p.status==="valid_negative")sec.appendChild(el("p",{id:"pressure-negative"},"No pressure items found"));
+    else if(p.status!=="not_run"&&p.status!=="failed")return;
+    return findings.parentNode.insertBefore(sec,findings.nextSibling);
+  }
+  p.items.forEach(function(item){
+    var art=el("article",{"class":"pressure-item",id:"pressure-"+item.id});
+    art.appendChild(el("a",{"class":"pressure-badge",href:"#"+item.segmentId},"pressure: "+item.id));
+    art.appendChild(el("p",{"class":"pressure-quote"},item.quote));
+    art.appendChild(el("p",{"class":"pressure-tactic"},"tactic: "+item.tactic));
+    art.appendChild(el("p",{"class":"pressure-term"},"unresolved term: "+((item.unresolvedTerm===""||item.unresolvedTerm===undefined)?"term not identified":item.unresolvedTerm)));
+    var lab=document.createElement("label");lab.setAttribute("class","pressure-check");
+    var box=document.createElement("input");box.setAttribute("type","checkbox");box.setAttribute("class","pressure-review");box.setAttribute("data-pressure",item.id);
+    if(p.reviewed&&p.reviewed.indexOf(item.id)>=0)box.checked=true;
+    (function(id,checkbox){
+      checkbox.addEventListener("change",function(){
+        if(!sessionId)return;
+        if(checkbox.checked){
+          run(mut("/api/session/pressure-review",{itemId:id,assessmentId:serverAssessment},{}));
+        }else{
+          if(btnCopy)btnCopy.disabled=true;
+          run(mut("/api/session/pressure-review",{itemId:id,assessmentId:serverAssessment,reviewed:false},{}));
+        }
+      });
+    })(item.id,box);
+    lab.appendChild(box);lab.appendChild(document.createTextNode(" Reviewed"));
+    art.appendChild(lab);sec.appendChild(art);
+  });
+  findings.parentNode.insertBefore(sec,findings.nextSibling);
+}
+function refresh(){if(!sessionId)return;pending=true;updateButtons();var my=++seq;fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){pending=false;if(my!==seq)return;editedSince=false;render(s);}).catch(function(){pending=false;updateButtons();});}
 function updateButtons(){btnRedact.disabled=true;btnApprove.disabled=true;btnAnalyze.disabled=true;if(btnDraftApprove)btnDraftApprove.disabled=true;if(btnDraftReject)btnDraftReject.disabled=true;if(btnCopy)btnCopy.disabled=true;}
-function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq)return;if(r.ok)render(r.body);else if(r.body&&r.body.state)render(r.body);else refresh();}).catch(function(){pending=false;if(my!==seq)return;refresh();});}
+function run(promise){pending=true;updateButtons();var my=++seq;return promise.then(function(r){pending=false;if(my!==seq){refresh();return r;}applyResult(r);return r;}).catch(function(){pending=false;if(my!==seq){refresh();return;}refresh();});}
+function stopPoll(){if(pollTimer!==null){clearInterval(pollTimer);pollTimer=null;}}
+function startPoll(){
+  stopPoll();
+  pollTimer=setInterval(function(){
+    if(!sessionId)return;
+    var my=seq;
+    fetch("/api/session/state?sessionId="+encodeURIComponent(sessionId)).then(function(r){return r.json();}).then(function(s){
+      if(my!==seq)return;
+      var rev=revOf(s);
+      if(rev!==null&&rev<serverRev)return;
+      render(s);
+    }).catch(function(){});
+  },250);
+}
+function invalidateLocal(scope){
+  editedSince=true;
+  draftEdited=false;
+  stopPoll();
+  seq++;
+  invSeq++;
+  var po=document.getElementById("pressure");if(po&&po.parentNode)po.parentNode.removeChild(po);
+  while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);
+  resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));
+  clearDraftLocal();
+  btnAnalyze.disabled=true;
+  if(scope==="transcript"){
+    btnApprove.disabled=true;
+    redacted.value="";
+    payloadText.textContent="";payloadStatus.textContent="Not prepared yet";
+  }else{
+    payloadStatus.textContent="Not prepared — preview edited, approve again";
+  }
+  if(!sessionId)return;
+  run(mut("/api/session/invalidate",{scope:scope},{rebase:true}));
+}
 function clearLocalResults(){while(resultsEl.firstChild)resultsEl.removeChild(resultsEl.firstChild);resultsEl.appendChild(el("p",{id:"empty-state"},"No findings yet — paste a transcript and run analysis."));}
 var deb=null;
 function clearDraftLocal(){
   if(draftSection)draftSection.hidden=true;
-  if(draftText){draftText.value="";draftText.disabled=true;}
+  if(draftText){draftText.value="";draftText.disabled=true;lastDraft="";}
   if(draftStatus)draftStatus.textContent="No draft yet — analyze first.";
   if(btnDraftApprove)btnDraftApprove.disabled=true;
   if(btnDraftReject)btnDraftReject.disabled=true;
@@ -801,35 +1066,48 @@ function clearDraftLocal(){
 }
 input.addEventListener("input",function(){
   dirty=true;
-  btnApprove.disabled=true;btnAnalyze.disabled=true;
+  invalidateLocal("transcript");
   btnRedact.disabled=pending||!input.value.trim();
-  redacted.value="";
-  clearLocalResults();
-  clearDraftLocal();
-  payloadText.textContent="";payloadStatus.textContent="Not prepared yet";
   if(deb)clearTimeout(deb);
   var v=input.value;
   deb=setTimeout(function(){if(!sessionId)return;dirty=false;run(call("/api/session/transcript",{sessionId:sessionId,text:v}));},300);
 });
 redacted.addEventListener("input",function(){
-  if(redacted.value!==lastRedacted){btnAnalyze.disabled=true;payloadStatus.textContent="Not prepared — preview edited, approve again";}
+  invalidateLocal("preview");
 });
 btnRedact.addEventListener("click",function(){if(btnRedact.disabled||!sessionId)return;if(deb){clearTimeout(deb);deb=null;}dirty=false;pending=true;updateButtons();run(call("/api/session/transcript",{sessionId:sessionId,text:input.value}).then(function(t){if(!t.ok)return t;return call("/api/session/redact",{sessionId:sessionId});}));});
-/* corrections are sent with Approve (avoids blur/click race) */
-btnApprove.addEventListener("click",function(){if(btnApprove.disabled)return;var txt=redacted.value,needs=txt!==lastRedacted;pending=true;updateButtons();run((needs?call("/api/session/correct",{sessionId:sessionId,text:txt}):Promise.resolve({ok:true})).then(function(c){if(!c.ok)return c;return call("/api/session/approve",{sessionId:sessionId});}));});
-btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;if(dirty)return;if(redacted.value!==lastRedacted)return;stateEl.textContent=LABELS["analysis_pending"];run(call("/api/session/analyze",{sessionId:sessionId}));});
-var draftDeb=null;
+/* corrections are sent with Approve (avoids blur/click race); the chained
+   approve is skipped when the preview changed — or was invalidated — after the click */
+btnApprove.addEventListener("click",function(){
+  if(btnApprove.disabled||!sessionId)return;
+  var basis=redacted.value,mark=invSeq;
+  pending=true;updateButtons();
+  if(basis===lastRedacted){run(mut("/api/session/approve",{},{}));return;}
+  run(mut("/api/session/correct",{text:basis},{}).then(function(c){
+    if(!c.ok)return c;
+    if(redacted.value!==basis||invSeq!==mark)return c;
+    return mut("/api/session/approve",{},{});
+  }));
+});
+btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;if(dirty)return;if(redacted.value!==lastRedacted)return;stateEl.textContent=LABELS["analysis_pending"];startPoll();run(call("/api/session/analyze",{sessionId:sessionId})).then(function(){stopPoll();});});
+var draftDeb=null,draftGen=0,serverDraftApproved=false,draftApproveInflight=false,draftRejectSent=false;
 draftText.addEventListener("input",function(){
+  draftGen++;
+  draftEdited=true;
+  seq++;
   btnCopy.disabled=true;
   draftStatus.textContent="Edited — approve again";
+  if(serverDraftApproved||draftApproveInflight){
+    if(!draftRejectSent){draftRejectSent=true;run(mut("/api/session/draft/reject",{},{rebase:true}));}
+  }
   if(draftDeb)clearTimeout(draftDeb);
-  var v=draftText.value;
-  draftDeb=setTimeout(function(){if(!sessionId)return;run(call("/api/session/draft",{sessionId:sessionId,text:v}));},300);
+  var g=draftGen;
+  draftDeb=setTimeout(function(){draftDeb=null;if(!sessionId)return;if(g!==draftGen)return;run(mut("/api/session/draft",{text:draftText.value},{rebase:true}));},300);
 });
-btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value;pending=true;updateButtons();run(call("/api/session/draft",{sessionId:sessionId,text:t}).then(function(e){if(!e.ok)return e;return call("/api/session/draft/approve",{sessionId:sessionId,text:t});}));});
-btnDraftReject.addEventListener("click",function(){if(btnDraftReject.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}run(call("/api/session/draft/reject",{sessionId:sessionId}));});
+btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value,g=draftGen;draftApproveInflight=true;draftRejectSent=false;pending=true;updateButtons();run(mut("/api/session/draft",{text:t},{rebase:true}).then(function(e){if(!e.ok)return e;if(draftText.value!==t||g!==draftGen)return e;draftEdited=false;return mut("/api/session/draft/approve",{text:t},{}).then(function(a){if(!a.ok)return a;if(draftText.value!==t||g!==draftGen)return a;draftEdited=false;return a;});}).then(function(r){draftApproveInflight=false;return r;},function(err){draftApproveInflight=false;throw err;}));});
+btnDraftReject.addEventListener("click",function(){if(btnDraftReject.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}draftGen++;draftEdited=false;run(mut("/api/session/draft/reject",{},{}));});
 btnCopy.addEventListener("click",function(){if(btnCopy.disabled)return;var text=draftText.value;function done(){draftNote.textContent="Copied locally. Nothing was sent.";}function fallback(){var t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(t);done();}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){fallback();});}else{fallback();}});
-fetch("/api/session",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}).then(function(r){return r.json();}).then(function(b){sessionId=b.sessionId;refresh();});
+fetch("/api/session",{method:"POST",headers:{"content-type":"application/json"},body:PAGE_MODE==="live"?JSON.stringify({mode:"live"}):"{}"}).then(function(r){return r.json();}).then(function(b){sessionId=b.sessionId;refresh();});
 })();
 </script>
 </body>

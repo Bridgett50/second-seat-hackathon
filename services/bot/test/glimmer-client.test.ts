@@ -29,13 +29,13 @@ describe("GlimmerClient request body", () => {
     delete process.env["GLIMMER_RAW_DIR"];
   });
 
-  it("sends temperature/top_p/top_k/chat_template_kwargs and max_tokens 2048", async () => {
+  it("sends temperature 0 without top_p/top_k plus chat_template_kwargs and max_tokens 2048", async () => {
     mockChat();
     await new GlimmerClient("http://localhost:9").redactText("hello");
     const body = JSON.parse((fetch as any).mock.calls[0][1].body);
-    expect(body.temperature).toBe(1.0);
-    expect(body.top_p).toBe(0.95);
-    expect(body.top_k).toBe(64);
+    expect(body.temperature).toBe(0);
+    expect(body).not.toHaveProperty("top_p");
+    expect(body).not.toHaveProperty("top_k");
     expect(body.max_tokens).toBe(2048);
     expect(body.chat_template_kwargs).toEqual({ reasoning_strength: "low" });
   });

@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -193,23 +193,28 @@ describe("approval boundary", () => {
   });
 
   it("live approval sends the approved text in exactly one provider call", async () => {
-    process.env["MUSE_STATE_FILE"] = "/tmp/approval-boundary-state.json";
-    process.env["MUSE_COST_LOG_FILE"] = "/tmp/approval-boundary-cost.jsonl";
-    const gated = await mintLive("approved meeting notes");
-    let rawText = "";
+    const stateDir = await mkdtemp(join(tmpdir(), "approval-boundary-state-"));
+    process.env["MUSE_STATE_FILE"] = join(stateDir, "state.json");
+    process.env["MUSE_COST_LOG_FILE"] = join(stateDir, "cost.jsonl");
     try {
-      const result = await new SparkPressureClassifier().classifyRaw([{ segmentId: "s1", text: gated }]);
-      rawText = result.rawText;
-    } catch {
-      // Fall through: the fetch count and request body are asserted below regardless.
+      const gated = await mintLive("approved meeting notes");
+      let rawText = "";
+      try {
+        const result = await new SparkPressureClassifier().classifyRaw([{ segmentId: "s1", text: gated }]);
+        rawText = result.rawText;
+      } catch {
+        // Fall through: the fetch count and request body are asserted below regardless.
+      }
+      void rawText;
+      const providerCalls = calls.filter((c) => c.url === PRESSURE_API_URL);
+      expect(providerCalls).toHaveLength(1);
+      expect(calls).toHaveLength(1);
+      const parsed = JSON.parse(providerCalls[0]!.body) as { messages?: Array<{ content?: unknown }> };
+      const contents = (parsed.messages ?? []).map((m) => (typeof m.content === "string" ? m.content : ""));
+      expect(contents.some((c) => c.includes("approved meeting notes"))).toBe(true);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
     }
-    void rawText;
-    const providerCalls = calls.filter((c) => c.url === PRESSURE_API_URL);
-    expect(providerCalls).toHaveLength(1);
-    expect(calls).toHaveLength(1);
-    const parsed = JSON.parse(providerCalls[0]!.body) as { messages?: Array<{ content?: unknown }> };
-    const contents = (parsed.messages ?? []).map((m) => (typeof m.content === "string" ? m.content : ""));
-    expect(contents.some((c) => c.includes("approved meeting notes"))).toBe(true);
   });
 
   it("runtime mutation of a live minted value is rejected with zero fetch calls", async () => {

@@ -26,7 +26,7 @@ test("paste -> redact -> review -> approve -> analyze -> completed", async ({
 
   await page.locator("#btn-approve").click();
   await expect(page.locator("#session-state")).toContainText("Approved");
-  await expect(page.locator("#payload-panel")).toContainText("Prepared (not sent)");
+  await expect(page.locator("#payload-panel")).toContainText("Prepared (not dispatched)");
   expect(await page.locator("#payload-text").textContent()).toBe(approvedText);
 
   // Double-click analyze: still a single analysis result.

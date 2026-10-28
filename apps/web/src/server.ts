@@ -10,6 +10,7 @@ import { renderBriefPage, renderSessionPage } from "./render.js";
 
 const PORT = Number(process.env.PORT ?? 4173);
 const LIVE_DEV = process.env.LIVE_DEV === "1";
+const SAM_ENABLED = process.env.SECOND_SEAT_EXPERIMENTAL_IMAGES === "1";
 
 /**
  * Text-only core flow: no POST route accepts image or frame-sidecar inputs.
@@ -38,15 +39,17 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/correct": new Set(["runId", "editedText"]),
   "/api/approve": new Set(["runId", "text"]),
   "/api/send": new Set(["runId", "approvalToken"]),
-  "/api/session": new Set([]),
+  "/api/session": new Set(["mode"]),
   "/api/session/transcript": new Set(["sessionId", "text"]),
   "/api/session/redact": new Set(["sessionId"]),
-  "/api/session/correct": new Set(["sessionId", "text"]),
-  "/api/session/approve": new Set(["sessionId"]),
+  "/api/session/correct": new Set(["sessionId", "text", "expectedRevision"]),
+  "/api/session/approve": new Set(["sessionId", "expectedRevision"]),
   "/api/session/analyze": new Set(["sessionId"]),
-  "/api/session/draft": new Set(["sessionId", "text"]),
-  "/api/session/draft/approve": new Set(["sessionId", "text"]),
-  "/api/session/draft/reject": new Set(["sessionId"]),
+  "/api/session/draft": new Set(["sessionId", "text", "expectedRevision"]),
+  "/api/session/draft/approve": new Set(["sessionId", "text", "expectedRevision"]),
+  "/api/session/draft/reject": new Set(["sessionId", "expectedRevision"]),
+  "/api/session/invalidate": new Set(["sessionId", "scope", "expectedRevision"]),
+  "/api/session/pressure-review": new Set(["sessionId", "itemId", "expectedRevision", "assessmentId", "reviewed"]),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -120,6 +123,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
+/** True for the store's optimistic-concurrency rejection (stale revision/assessment). */
+function isStaleRevision(err: unknown): err is Error {
+  return err instanceof Error && err.name === "StaleRevisionError";
+}
+
+/**
+ * expectedRevision names the exact server revision the caller reviewed.
+ * Missing or non-numeric values cannot identify reviewed state: 400.
+ */
+function readExpectedRevision(body: Record<string, unknown> | null | undefined): number | null {
+  const v = body?.["expectedRevision"];
+  return typeof v === "number" ? v : null;
+}
+
 /** Privacy-gate review page: redacted preview in an editable textarea, then Approve. Editing clears approval. */
 export function renderGatePage(): string {
   return `<!DOCTYPE html>
@@ -180,34 +197,74 @@ refresh();
 </html>`;
 }
 
+type SessionStore = ReturnType<typeof createSessionStore>;
+
+/**
+ * One store per mode; every session id is owned by exactly one store and all
+ * calls for that id go to its owner. Approval rules are unchanged: each store
+ * enforces its own owner approvals.
+ */
+function routeSessions(offline: SessionStore, live: SessionStore | null) {
+  const owner = new Map<string, SessionStore>();
+  const of = (id: string): SessionStore => owner.get(id) ?? offline;
+  const routed = {
+    createSession(mode: "offline" | "live" = "offline"): string {
+      const store = mode === "live" && live !== null ? live : offline;
+      const id = store.createSession();
+      owner.set(id, store);
+      return id;
+    },
+    expireApprovals(): void {
+      offline.expireApprovals();
+      live?.expireApprovals();
+    },
+  };
+  return new Proxy(routed, {
+    get(target, prop, recv) {
+      if (prop in target) return Reflect.get(target, prop, recv);
+      return (id: string, ...rest: unknown[]) => {
+        const store = of(id) as unknown as Record<string | symbol, (...a: unknown[]) => unknown>;
+        return store[prop]!.call(store, id, ...rest);
+      };
+    },
+  }) as unknown as SessionStore & typeof routed;
+}
+
 export function createWebServer(deps?: WebServerDeps) {
   installNetGuard();
   const testMode = process.env.SECOND_SEAT_TEST_MODE === "1";
   const analysisConfig = testMode ? { mode: "offline" as const } : resolveAnalysisConfig(process.env);
-  const sessions =
-    testMode || analysisConfig.mode === "offline"
-      ? testMode
-        ? createSessionStore({
-            offline: true,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            redactor: new MockRedactor() as any,
-            analyzer: async (approvedText: string) => {
-              if (approvedText.includes("[[slow]]")) {
-                await new Promise((r) => setTimeout(r, 1500));
-              }
-              recordAnalyzerCall(approvedText);
-              return buildOfflineBrief(approvedText, []);
-            },
-          })
-        : createSessionStore()
-      : createSessionStore({
+  // Offline is always available and is the default for every new session.
+  // Live is available only when the server was started with
+  // SECOND_SEAT_MODE=live plus its credentials (never in test mode), and a
+  // session is live only when the owner picks Live (/session?mode=live).
+  const offlineStore = testMode
+    ? createSessionStore({
+        offline: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        redactor: new MockRedactor() as any,
+        analyzer: async (approvedText: string) => {
+          if (approvedText.includes("[[slow]]")) {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+          recordAnalyzerCall(approvedText);
+          return buildOfflineBrief(approvedText, []);
+        },
+      })
+    : createSessionStore();
+  const liveStore =
+    !testMode && analysisConfig.mode === "live"
+      ? createSessionStore({
           offline: false,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           redactor: analysisConfig.redactor as any,
           gate: analysisConfig.gate,
           analyzer: analysisConfig.analyzer,
           analyzerLabel: analysisConfig.analyzerLabel,
-        });
+        })
+      : null;
+  const liveAvailable = liveStore !== null;
+  const sessions = routeSessions(offlineStore, liveStore);
   const gate = deps?.gate ?? createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
   const sent: { text: string } = deps?.lastSent ?? { text: "" };
   const sender =
@@ -231,7 +288,9 @@ export function createWebServer(deps?: WebServerDeps) {
           glimmerLive: demo.glimmerLive,
           briefScore: demo.briefScore,
           seededScore: demo.seededScore,
-          heroChain: demo.heroChain,
+          // SAM / image hero chain is experimental and hidden unless enabled.
+          heroChain: SAM_ENABLED ? demo.heroChain : null,
+          cacheUsage: demo.cacheUsage,
         },
       );
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -239,8 +298,14 @@ export function createWebServer(deps?: WebServerDeps) {
       return;
     }
     if (req.method === "GET" && (url.pathname === "/session" || url.pathname === "/session/")) {
-      const sessionId = sessions.createSession();
-      const html = renderSessionPage(sessions.getState(sessionId));
+      const wantsLive = url.searchParams.get("mode") === "live";
+      const mode = wantsLive && liveAvailable ? "live" : "offline";
+      const sessionId = sessions.createSession(mode);
+      const html = renderSessionPage(sessions.getState(sessionId), {
+        mode,
+        liveAvailable,
+        liveRequestedButUnavailable: wantsLive && !liveAvailable,
+      });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(html);
       return;
@@ -373,7 +438,9 @@ export function createWebServer(deps?: WebServerDeps) {
             return;
           }
           if (url.pathname === "/api/session") {
-            const sessionId = sessions.createSession();
+            const sessionId = sessions.createSession(
+              body?.["mode"] === "live" && liveAvailable ? "live" : "offline",
+            );
             json(res, 200, { sessionId });
             return;
           }
@@ -412,10 +479,19 @@ export function createWebServer(deps?: WebServerDeps) {
               json(res, 400, { error: 'fields "sessionId" and "text" must be strings' });
               return;
             }
+            const expectedRevision = readExpectedRevision(body);
+            if (expectedRevision === null) {
+              json(res, 400, { error: 'field "expectedRevision" must be a number' });
+              return;
+            }
             try {
-              json(res, 200, sessions.correct(sessionId, text));
+              json(res, 200, sessions.correct(sessionId, text, { expectedRevision }));
             } catch (err: unknown) {
-              json(res, 400, { error: err instanceof Error ? err.message : "correct failed" });
+              if (isStaleRevision(err)) {
+                json(res, 409, { error: err.message, state: sessions.getState(sessionId) });
+              } else {
+                json(res, 400, { error: err instanceof Error ? err.message : "correct failed" });
+              }
             }
             return;
           }
@@ -425,10 +501,19 @@ export function createWebServer(deps?: WebServerDeps) {
               json(res, 400, { error: 'field "sessionId" must be a string' });
               return;
             }
+            const expectedRevision = readExpectedRevision(body);
+            if (expectedRevision === null) {
+              json(res, 400, { error: 'field "expectedRevision" must be a number' });
+              return;
+            }
             try {
-              json(res, 200, sessions.approve(sessionId));
+              json(res, 200, sessions.approve(sessionId, { expectedRevision }));
             } catch (err: unknown) {
-              json(res, 400, { error: err instanceof Error ? err.message : "approve failed" });
+              if (isStaleRevision(err)) {
+                json(res, 409, { error: err.message, state: sessions.getState(sessionId) });
+              } else {
+                json(res, 400, { error: err instanceof Error ? err.message : "approve failed" });
+              }
             }
             return;
           }
@@ -454,10 +539,19 @@ export function createWebServer(deps?: WebServerDeps) {
               json(res, 400, { error: 'fields "sessionId" and "text" must be strings' });
               return;
             }
+            const expectedRevision = readExpectedRevision(body);
+            if (expectedRevision === null) {
+              json(res, 400, { error: 'field "expectedRevision" must be a number' });
+              return;
+            }
             try {
-              json(res, 200, sessions.editDraft(sessionId, text));
+              json(res, 200, sessions.editDraft(sessionId, text, { expectedRevision }));
             } catch (err: unknown) {
-              json(res, 400, { error: err instanceof Error ? err.message : "draft failed" });
+              if (isStaleRevision(err)) {
+                json(res, 409, { error: err.message, state: sessions.getState(sessionId) });
+              } else {
+                json(res, 400, { error: err instanceof Error ? err.message : "draft failed" });
+              }
             }
             return;
           }
@@ -468,12 +562,48 @@ export function createWebServer(deps?: WebServerDeps) {
               json(res, 400, { error: 'fields "sessionId" and "text" must be strings' });
               return;
             }
+            const expectedRevision = readExpectedRevision(body);
+            if (expectedRevision === null) {
+              json(res, 400, { error: 'field "expectedRevision" must be a number' });
+              return;
+            }
             try {
-              json(res, 200, sessions.approveDraft(sessionId, text));
+              json(res, 200, sessions.approveDraft(sessionId, text, { expectedRevision }));
             } catch (err: unknown) {
+              if (isStaleRevision(err)) {
+                json(res, 409, { error: err.message, state: sessions.getState(sessionId) });
+                return;
+              }
               const msg = err instanceof Error ? err.message : "approve failed";
               const status = msg === "draft changed; review again" ? 409 : 400;
               json(res, status, { error: msg });
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/invalidate") {
+            const sessionId = body?.["sessionId"];
+            const scope = body?.["scope"] ?? "preview";
+            if (typeof sessionId !== "string") {
+              json(res, 400, { error: 'field "sessionId" must be a string' });
+              return;
+            }
+            if (scope !== "transcript" && scope !== "preview") {
+              json(res, 400, { error: 'field "scope" must be "transcript" or "preview"' });
+              return;
+            }
+            const expectedRevision = readExpectedRevision(body);
+            if (expectedRevision === null) {
+              json(res, 400, { error: 'field "expectedRevision" must be a number' });
+              return;
+            }
+            try {
+              json(res, 200, sessions.invalidate(sessionId, scope, { expectedRevision }));
+            } catch (err: unknown) {
+              if (isStaleRevision(err)) {
+                json(res, 409, { error: err.message, state: sessions.getState(sessionId) });
+              } else {
+                json(res, 404, { error: err instanceof Error ? err.message : "unknown session" });
+              }
             }
             return;
           }
@@ -483,10 +613,54 @@ export function createWebServer(deps?: WebServerDeps) {
               json(res, 400, { error: 'field "sessionId" must be a string' });
               return;
             }
+            const expectedRevision = readExpectedRevision(body);
+            if (expectedRevision === null) {
+              json(res, 400, { error: 'field "expectedRevision" must be a number' });
+              return;
+            }
             try {
-              json(res, 200, sessions.rejectDraft(sessionId));
+              json(res, 200, sessions.rejectDraft(sessionId, { expectedRevision }));
             } catch (err: unknown) {
-              json(res, 404, { error: err instanceof Error ? err.message : "reject failed" });
+              if (isStaleRevision(err)) {
+                json(res, 409, { error: err.message, state: sessions.getState(sessionId) });
+              } else {
+                json(res, 404, { error: err instanceof Error ? err.message : "reject failed" });
+              }
+            }
+            return;
+          }
+          if (url.pathname === "/api/session/pressure-review") {
+            const sessionId = body?.["sessionId"];
+            const itemId = body?.["itemId"];
+            if (typeof sessionId !== "string" || typeof itemId !== "string") {
+              json(res, 400, { error: 'fields "sessionId" and "itemId" must be strings' });
+              return;
+            }
+            const expectedRevision = readExpectedRevision(body);
+            if (expectedRevision === null) {
+              json(res, 400, { error: 'field "expectedRevision" must be a number' });
+              return;
+            }
+            const assessmentId = body?.["assessmentId"];
+            if (typeof assessmentId !== "string") {
+              json(res, 400, { error: 'field "assessmentId" must be a string' });
+              return;
+            }
+            const reviewed = body?.["reviewed"] ?? true;
+            if (typeof reviewed !== "boolean") {
+              json(res, 400, { error: 'field "reviewed" must be a boolean when present' });
+              return;
+            }
+            try {
+              json(res, 200, reviewed
+                ? sessions.reviewPressure(sessionId, itemId, { expectedRevision, assessmentId })
+                : sessions.unreviewPressure(sessionId, itemId, { expectedRevision, assessmentId }));
+            } catch (err: unknown) {
+              if (isStaleRevision(err)) {
+                json(res, 409, { error: err.message, state: sessions.getState(sessionId) });
+              } else {
+                json(res, 404, { error: err instanceof Error ? err.message : "review failed" });
+              }
             }
             return;
           }
