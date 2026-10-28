@@ -33,6 +33,16 @@ const EXPECTED = new Set([
   ...expand("D5", 1, 5),
   ...expand("D6", 1, 5),
 ]);
+// G5 extension: canonical set grew by 51 G IDs (G ledger rows live in
+// c9-readiness.md). D6-2 stays on the C/D set below; only D6-1 uses G_IDS.
+const G_IDS = new Set([
+  ...expand("G1", 1, 9),
+  ...expand("G2", 1, 8),
+  ...expand("G3", 1, 12),
+  ...expand("G4", 1, 8),
+  ...expand("G5", 1, 6),
+  ...expand("G6", 1, 8),
+]);
 
 function canonicalIds(): string[] {
   const m = REGISTRY.match(/```json\s*(\{[\s\S]*?\})\s*```/);
@@ -79,8 +89,8 @@ function ledgerRows(): LedgerRow[] {
 describe("D6 acceptance ledger", () => {
   it("D6-1: registry canonical ID set equals the exact expected set, including C1-9, C2-7, C4-7..C4-11, C6-7 (and all D1-D6 IDs).", () => {
     const ids = canonicalIds();
-    expect(new Set(ids)).toEqual(EXPECTED);
-    expect(ids).toHaveLength(EXPECTED.size);
+    expect(new Set(ids)).toEqual(new Set([...EXPECTED, ...G_IDS]));
+    expect(ids).toHaveLength(EXPECTED.size + G_IDS.size);
     for (const must of [
       "C1-9",
       "C2-7",
@@ -101,6 +111,7 @@ describe("D6 acceptance ledger", () => {
     }
     // The readiness doc restores the same complete set: no truncated ranges.
     for (const id of EXPECTED) expect(READINESS, id).toContain(id);
+    for (const id of G_IDS) expect(READINESS, id).toContain(id);
     expect(READINESS).toMatch(/C1-9/);
     expect(READINESS).toMatch(/C2-7/);
     expect(READINESS).toMatch(/C4-11/);

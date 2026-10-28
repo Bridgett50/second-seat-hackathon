@@ -39,7 +39,14 @@ const RESTACKED = [
 
 describe("E6 ledger correction", () => {
   it("E6-1 no stale pre-restack SHAs or TBD-head remain in the four docs", () => {
-    for (const s of STALE) expect(FOUR, s).not.toContain(s);
+    // G5 reconciliation labels observed run heads as historical CI; a stale
+    // SHA may appear only on a line that carries the historical-CI label.
+    for (const s of STALE)
+      for (const line of FOUR.split("\n"))
+        if (line.includes(s))
+          expect(line, `stale ${s} outside historical-CI context`).toMatch(
+            /historical CI/i,
+          );
     expect(FOUR).not.toContain("TBD-head");
   });
 
