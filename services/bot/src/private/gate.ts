@@ -12,6 +12,7 @@ import {
   GlimmerClient,
   MOCK_LABEL,
   MockRedactor,
+  maskText,
   validateGlimmerReply,
   type Redactor,
   type TextSpan,
@@ -237,6 +238,23 @@ const CARD_LONG_RE = /\b\d{13,19}\b/;
 const IBAN_RE = /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/;
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/;
 
+/**
+ * Deterministic phone/email backstop: spans for every phone- or email-shaped
+ * run in `text` (the same patterns the residual-PII check refuses on), in
+ * order. Live prepare() masks these even when the model missed or misaligned
+ * them, so a model slip on contact details cannot leave a fragment behind.
+ */
+export function backstopContactSpans(text: string): TextSpan[] {
+  const out: TextSpan[] = [];
+  for (const [re, label] of [
+    [new RegExp(PHONE_RE.source, "g"), "phone"],
+    [new RegExp(EMAIL_RE.source, "g"), "email"],
+  ] as const) {
+    for (const m of text.matchAll(re)) out.push({ start: m.index, end: m.index + m[0].length, label });
+  }
+  return out.sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
 /** Residual-pattern scan over candidate send text. Returns a hit kind or null. */
 export function findResidualPII(text: string, rawNames: readonly string[] = []): string | null {
   const cardGroup = CARD_GROUP_RE.exec(text);
@@ -308,8 +326,20 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
       // Raw text goes ONLY to the Glimmer redactor. Timeout or an
       // invalid reply throws here, before any further calls.
       const redacted = await withFetch(fetchImpl, () => redactor.redactText(rawText));
+      let maskedText = redacted.maskedText;
+      let spans = redacted.spans;
       if (mode === "live") {
         validateGlimmerReply(rawText, { spans: redacted.spans, boxes: [] });
+        // Regex backstop before any residual-PII check: add phone/email spans
+        // the model did not fully cover and re-mask from the raw text. This
+        // only ever masks more; the residual check in send() stays strict.
+        const extra = backstopContactSpans(rawText).filter(
+          (b) => !redacted.spans.some((s) => s.start <= b.start && s.end >= b.end),
+        );
+        if (extra.length > 0) {
+          spans = [...redacted.spans, ...extra];
+          maskedText = maskText(rawText, spans);
+        }
       }
       const runId = randomUUID();
       const rawNames = [
@@ -322,16 +352,16 @@ export function createPrivacyGate(options: PrivacyGateOptions): PrivacyGate {
       ];
       runs.set(runId, {
         revision: 0,
-        currentText: redacted.maskedText,
-        spans: redacted.spans,
+        currentText: maskedText,
+        spans,
         rawNames,
         approval: null,
         receipts: [],
       });
       return {
         runId,
-        redactedText: redacted.maskedText,
-        spans: redacted.spans,
+        redactedText: maskedText,
+        spans,
         needsReview: redacted.spans.length === 0,
         piiFree: false,
       };

@@ -334,8 +334,11 @@ describe("privacy gate live flow", () => {
       const gate = createPrivacyGate({ mode: "live" });
       const leaked = "follow up with bob@example.com tomorrow";
       const prepared = await gate.prepare(leaked);
-      expect(prepared.redactedText).toContain("bob@example.com");
-      const token = gate.approve(prepared.runId, prepared.redactedText);
+      // The live phone/email regex backstop masks what the model missed...
+      expect(prepared.redactedText).not.toContain("bob@example.com");
+      // ...and residual PII put back into the reviewed text is still refused.
+      gate.correct(prepared.runId, leaked);
+      const token = gate.approve(prepared.runId, leaked);
       await expect(sendViaSpark(gate, prepared.runId, token)).rejects.toThrow(ResidualPIIError);
       expect(sparkCalls(calls)).toHaveLength(0);
     } finally {

@@ -232,8 +232,11 @@ describe("glimmer system prompt", () => {
     const system = (sent.messages as Array<{ role: string; content: string }>).find((m) => m.role === "system")!.content;
     expect(system).not.toContain('"start":n');
     expect(system).toContain("Call Ana at 555-0100");
-    expect(system).toContain('"start":5,"end":8,"label":"person"');
+    // Entity-text contract: the model returns the entity text + type and code
+    // computes positions (model offsets landed a few characters off live).
+    expect(system).toContain('{"text":"Ana","label":"person"},{"text":"555-0100","label":"phone"}');
+    expect(system).not.toContain('"start":');
     for (const label of ALLOWED_LABELS) expect(system).toContain(label);
-    expect(system).toContain("UTF-16");
+    expect(system).toContain("copied exactly");
   });
 });

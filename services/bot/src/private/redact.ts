@@ -159,7 +159,7 @@ export function normalizeGlimmerLabel(label: string): string {
  * fetchBody sends exactly GLIMMER_SYSTEM_PROMPT for text requests; image
  * requests send the same string with only the "for text." kind marker
  * swapped. */
-export const GLIMMER_SYSTEM_MESSAGE = { role: "system", content: `Return JSON only for text. Example: for input "Call Ana at 555-0100" return {"spans":[{"start":5,"end":8,"label":"person"},{"start":12,"end":20,"label":"phone"}],"boxes":[]}. Fields: start is the 0-based UTF-16 code unit offset inclusive, end is exclusive, label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth, and input.slice(start,end) must equal the entity text. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` };
+export const GLIMMER_SYSTEM_MESSAGE = { role: "system", content: `Return JSON only for text. Example: for input "Call Ana at 555-0100" return {"spans":[{"text":"Ana","label":"person"},{"text":"555-0100","label":"phone"}],"boxes":[]}. Fields: text is the entity copied exactly, character for character, from the input (never reformat or shorten it), label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth. Do not give character offsets; list each distinct entity once and every occurrence of it is masked. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` };
 
 /** Frozen inline system prompt string: the exact message content fetchBody
  * sends for kind "text". */
@@ -177,11 +177,10 @@ export const GLIMMER_RESPONSE_SCHEMA: { name: string; schema: unknown } = {
         items: {
           type: "object",
           properties: {
-            start: { type: "integer" },
-            end: { type: "integer" },
+            text: { type: "string" },
             label: { type: "string", enum: ALLOWED_LABELS },
           },
-          required: ["start", "end", "label"],
+          required: ["text", "label"],
         },
       },
       boxes: {
@@ -205,13 +204,79 @@ export const GLIMMER_RESPONSE_SCHEMA: { name: string; schema: unknown } = {
 export interface ValidatedSpan extends TextSpan {
   /** Raw label as the model returned it, before aliasing. */
   originalLabel: string;
+  /** Entity text the model returned (entity-text replies only); input.slice(start, end) === text. */
+  text?: string;
+}
+
+/** An entity the model named whose text is not in the input (never masked, never trusted). */
+export interface RejectedGlimmerEntity {
+  text: string;
+  label: string;
+  reason: string;
+}
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+function isWordChar(ch: string | undefined): boolean {
+  return ch !== undefined && ch !== "" && WORD_CHAR.test(ch);
+}
+
+/** A match must not start or end inside a word ("Ana" never matches inside "Banana"). */
+function onTokenBoundary(input: string, start: number, end: number): boolean {
+  if (isWordChar(input[start]) && isWordChar(input[start - 1])) return false;
+  if (isWordChar(input[end - 1]) && isWordChar(input[end])) return false;
+  return true;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Phone-shaped runs: digits joined by common separators, optional leading "+" or "(". */
+const PHONE_CANDIDATE_RE = /[+(]?\d(?:[\d().-]|\s(?=[\d(]))*\d/g;
+
+/**
+ * Every position of an entity in the input, computed in code from the entity
+ * TEXT (never from model offsets). Case-sensitive exact match on token
+ * boundaries, with runs of whitespace inside the entity allowed to differ.
+ * Phones also match by digits across formatting (an optional leading country
+ * code 1 is tolerated); emails match case-insensitively. Results are sorted
+ * and de-duplicated. UTF-16 code unit offsets, end exclusive.
+ */
+export function findEntityOccurrences(
+  input: string,
+  text: string,
+  label: string,
+): Array<{ start: number; end: number }> {
+  const trimmed = text.trim();
+  if (trimmed === "") return [];
+  const kind = normalizeGlimmerLabel(label);
+  const found = new Map<string, { start: number; end: number }>();
+  const add = (start: number, end: number): void => {
+    if (end > start && onTokenBoundary(input, start, end)) found.set(`${start}:${end}`, { start, end });
+  };
+  const pattern = trimmed.split(/\s+/).map(escapeRegExp).join("\\s+");
+  const re = new RegExp(pattern, kind === "email" ? "giu" : "gu");
+  for (const m of input.matchAll(re)) add(m.index, m.index + m[0].length);
+  if (kind === "phone") {
+    const digits = trimmed.replace(/\D/g, "");
+    if (digits.length >= 7) {
+      for (const m of input.matchAll(PHONE_CANDIDATE_RE)) {
+        const d = m[0].replace(/\D/g, "");
+        if (d === digits || d === `1${digits}` || `1${d}` === digits) add(m.index, m.index + m[0].length);
+      }
+    }
+  }
+  return [...found.values()].sort((a, b) => a.start - b.start || a.end - b.end);
 }
 
 export interface ValidateGlimmerReplyResult {
   spans: ValidatedSpan[];
   boxes: ImageBox[];
-  /** True when the model found nothing (empty spans list is valid but needs a human look). */
+  /** True when the model found nothing, or named an entity not in the input; needs a human look. */
   needsReview: boolean;
+  /** Entities whose text is not in the input; dropped, never masked. */
+  rejected: RejectedGlimmerEntity[];
 }
 
 /**
@@ -226,9 +291,28 @@ export function validateGlimmerReply(input: string, parsed: unknown): ValidateGl
   const v = parsed as { spans?: unknown; boxes?: unknown };
   if (!Array.isArray(v.spans)) throw new Error("glimmer: spans must be an array");
   if (!Array.isArray(v.boxes)) throw new Error("glimmer: boxes must be an array");
-  const spans: ValidatedSpan[] = v.spans.map((s) => {
+  const rejected: RejectedGlimmerEntity[] = [];
+  const spans: ValidatedSpan[] = v.spans.flatMap((s): ValidatedSpan[] => {
     if (typeof s !== "object" || s === null) throw new Error("glimmer: span must be an object");
     const { start, end, label } = s as { start?: unknown; end?: unknown; label?: unknown };
+    if (Object.hasOwn(s, "text")) {
+      // Entity-text reply: positions are computed here from the text. Any
+      // model offsets are ignored, so a slice that does not match the entity
+      // is realigned, and every occurrence is masked, not only the first.
+      const text = (s as { text?: unknown }).text;
+      if (typeof text !== "string" || text.trim() === "") throw new Error("glimmer: span text must be a non-empty string");
+      if (typeof label !== "string" || label === "") throw new Error("glimmer: span label must be a string");
+      const normalized = normalizeGlimmerLabel(label);
+      if (!(ALLOWED_LABELS as readonly string[]).includes(normalized)) {
+        throw new Error(`glimmer: unknown label "${label}"`);
+      }
+      const hits = findEntityOccurrences(input, text, normalized);
+      if (hits.length === 0) {
+        rejected.push({ text, label: normalized, reason: "entity text not found in input" });
+        return [];
+      }
+      return hits.map((h) => ({ start: h.start, end: h.end, label: normalized, originalLabel: label, text: input.slice(h.start, h.end) }));
+    }
     // Rejects placeholder values: "n"/"s" and any other non-numbers/non-strings.
     if (!Number.isInteger(start) || !Number.isInteger(end)) throw new Error("glimmer: span start/end must be integers");
     if (typeof label !== "string" || label === "") throw new Error("glimmer: span label must be a string");
@@ -251,7 +335,7 @@ export function validateGlimmerReply(input: string, parsed: unknown): ValidateGl
     if (!(ALLOWED_LABELS as readonly string[]).includes(normalized)) {
       throw new Error(`glimmer: unknown label "${label}"`);
     }
-    return { start: st, end: en, label: normalized, originalLabel: label };
+    return [{ start: st, end: en, label: normalized, originalLabel: label }];
   });
   const boxes: ImageBox[] = v.boxes.map((b) => {
     if (typeof b !== "object" || b === null) throw new Error("glimmer: box must be an object");
@@ -260,7 +344,14 @@ export function validateGlimmerReply(input: string, parsed: unknown): ValidateGl
     if (typeof label !== "string" || label === "") throw new Error("glimmer: box label must be a string");
     return { x: x as number, y: y as number, w: w as number, h: h as number, label: label as string };
   });
-  return { spans, boxes, needsReview: spans.length === 0 };
+  const seen = new Set<string>();
+  const unique = spans.filter((sp) => {
+    const key = `${sp.start}:${sp.end}:${sp.label}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { spans: unique, boxes, needsReview: unique.length === 0 || rejected.length > 0, rejected };
 }
 
 export function validateGlimmerOutput(text: string, value: unknown): { spans: TextSpan[]; boxes: ImageBox[] } {
@@ -594,6 +685,27 @@ export class GateConfigError extends Error {
   override name = "GateConfigError";
 }
 
+/**
+ * Adds every other occurrence of each span's entity (legacy offset replies
+ * name one position only). A span that does not sit on token boundaries is
+ * kept as-is but not expanded, since its slice may not be the entity.
+ */
+export function withEveryOccurrence(
+  input: string,
+  spans: Array<TextSpan & { originalLabel: string }>,
+): Array<TextSpan & { originalLabel: string }> {
+  const out = new Map<string, TextSpan & { originalLabel: string }>();
+  for (const s of spans) {
+    out.set(`${s.start}:${s.end}:${s.label}`, s);
+    if (!onTokenBoundary(input, s.start, s.end)) continue;
+    for (const h of findEntityOccurrences(input, input.slice(s.start, s.end), s.label)) {
+      const key = `${h.start}:${h.end}:${s.label}`;
+      if (!out.has(key)) out.set(key, { start: h.start, end: h.end, label: s.label, originalLabel: s.originalLabel });
+    }
+  }
+  return [...out.values()].sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
 export class GlimmerClient implements Redactor {
   readonly label = `Glimmer: ${GLIMMER_MODEL}`;
   private baseUrl: string;
@@ -624,6 +736,11 @@ export class GlimmerClient implements Redactor {
     this.decoding = opts?.decoding;
     this.contextTokens = opts?.contextTokens;
     if (opts?.receiptContext !== undefined) this.receiptContext = { ...opts.receiptContext };
+  }
+
+  /** Per-request timeout this client uses (explicit option, else GLIMMER_TIMEOUT_MS / default). */
+  get requestTimeoutMs(): number {
+    return this.timeoutMs ?? glimmerTimeoutMs();
   }
 
   /** Key the next receipts by run/case (used by the eval runner; optional). */
@@ -707,7 +824,10 @@ export class GlimmerClient implements Redactor {
       // Single parser: content only, never reasoning.
       const { spans } = parseGlimmerAnswer(text, content, finishReason);
       this.writeReceipt(this.replyReceipt("text", body, 200, Date.now() - started, undefined, text));
-      const validated = spans.map((s) => ({ start: s.start, end: s.end, label: s.label, originalLabel: s.original_label }));
+      const validated = withEveryOccurrence(
+        text,
+        spans.map((s) => ({ start: s.start, end: s.end, label: s.label, originalLabel: s.original_label })),
+      );
       return { maskedText: maskText(text, validated), spans: validated };
     } catch (err) {
       this.writeReceipt(
