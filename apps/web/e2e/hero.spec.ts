@@ -40,7 +40,7 @@ test("copy gating: disabled until reviewed + approved, no requests fired", async
   page.on("request", (r) => requests.push(r.url()));
   await page.goto(DEMO);
   const nonLocal = requests.filter(
-    (u) => !u.startsWith("http://localhost:4173"),
+    (u) => !u.startsWith("http://127.0.0.1:4173"),
   );
   expect(nonLocal).toEqual([]);
 
@@ -63,7 +63,7 @@ test("copy gating: disabled until reviewed + approved, no requests fired", async
   await expect(page.locator("#draft-note")).toContainText("Copied locally");
   expect(requests.length).toBe(before);
   expect(
-    requests.filter((u) => !u.startsWith("http://localhost:4173")),
+    requests.filter((u) => !u.startsWith("http://127.0.0.1:4173")),
   ).toEqual([]);
 });
 
@@ -89,7 +89,7 @@ test("loads with only localhost allowed on the network", async ({
   const blocked: string[] = [];
   await context.route("**", (route) => {
     const url = route.request().url();
-    if (url.startsWith("http://localhost:4173")) {
+    if (url.startsWith("http://127.0.0.1:4173")) {
       void route.continue();
     } else {
       blocked.push(url);
@@ -99,12 +99,12 @@ test("loads with only localhost allowed on the network", async ({
   const page = await context.newPage();
   const requests: string[] = [];
   page.on("request", (r) => requests.push(r.url()));
-  await page.goto(`http://localhost:4173${DEMO}`);
+  await page.goto(`http://127.0.0.1:4173${DEMO}`);
   await expect(page.locator("h1")).toBeVisible();
   await expect(page.locator("#transcript-lines li").first()).toBeVisible();
   expect(blocked).toEqual([]);
   expect(
-    requests.filter((u) => !u.startsWith("http://localhost:4173")),
+    requests.filter((u) => !u.startsWith("http://127.0.0.1:4173")),
   ).toEqual([]);
   await context.close();
 });

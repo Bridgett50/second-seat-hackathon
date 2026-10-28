@@ -6,12 +6,12 @@ export default defineConfig({
   // parallel specs made exact analyzer-call assertions racy.
   workers: 1,
   use: {
-    baseURL: "http://localhost:4173",
+    baseURL: "http://127.0.0.1:4173",
   },
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   webServer: {
     command: "node dist/src/server.js",
-    port: 4173,
+    url: "http://127.0.0.1:4173/briefs/demo",
     reuseExistingServer: !process.env.CI,
     env: {
       PORT: "4173",
