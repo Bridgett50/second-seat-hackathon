@@ -88,10 +88,10 @@ describe("C7a honest pressure states", () => {
       classify: async () => [{ segmentId: "seg-2", tactic: "scarcity", ask, target: "owner", span: "last chance", source: "fixture" }],
     });
     // valid: ask appears in the approved text and is not the whole sentence
-    const ok = pOf((await run(PRESSURE_TEXT, { pressureClassifier: label("net-45 terms") })).s)!;
-    expect(ok.items[0]!.unresolvedTerm).toBe("net-45 terms");
+    const ok = pOf((await run(PRESSURE_TEXT, { pressureClassifier: label("the discount") })).s)!;
+    expect(ok.items[0]!.unresolvedTerm).toBe("the discount");
     // invented term, and whole-sentence default: not shown as a term
-    for (const bad of ["net-90 terms", "This is the last chance, the discount expires tonight"]) {
+    for (const bad of ["net-90 terms", "This is the last chance, the discount expires tonight", "net-45 terms"]) {
       const p = pOf((await run(PRESSURE_TEXT, { pressureClassifier: label(bad) })).s)!;
       expect(p.items[0]!.unresolvedTerm, bad).toBe("");
     }
