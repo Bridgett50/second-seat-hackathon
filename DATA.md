@@ -9,3 +9,5 @@ Attribution: this evaluation slice derives from the AMI Meeting Corpus
 Machine Learning for Multimodal Interaction, 2006), used under
 CC BY 4.0. The sealed held-out subset is run once via
 `eval/heldout-run.mjs`; see `eval/results/heldout-score.md` after the run.
+
+`services/bot/fixtures/sample-pos-quote/transcript.txt` — synthetic, made-up POS vendor call for manual demos; not used in any score.
