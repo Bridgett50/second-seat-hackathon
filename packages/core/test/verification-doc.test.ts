@@ -29,4 +29,8 @@ describe("VERIFICATION.md", () => {
   it("says claim feedback does not repeat the qualifier text", () => {
     expect(doc).toMatch(/does not repeat the qualifier text/);
   });
+
+  it("says verify-run reads the approved redaction and does not invent one", () => {
+    expect(doc).toMatch(/does not run a fresh redactor/);
+  });
 });

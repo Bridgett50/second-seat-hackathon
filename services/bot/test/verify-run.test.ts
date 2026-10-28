@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { MockRedactor } from "../src/private/redact.js";
 
 const botDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const heroInput = join(botDir, "fixtures", "hero-input");
@@ -29,12 +30,21 @@ function claimsFile(verdicts: Record<string, unknown>): string {
   writeFileSync(p, JSON.stringify(verdicts));
   return p;
 }
+async function heroApproved(): Promise<{ redactedText: string; spans: Array<{ start: number; end: number; label: string }> }> {
+  const transcript = readFileSync(join(heroInput, "transcript.txt"), "utf8");
+  const redacted = await new MockRedactor().redactText(transcript);
+  return {
+    redactedText: redacted.maskedText,
+    spans: redacted.spans.map((s) => ({ start: s.start, end: s.end, label: s.label })),
+  };
+}
 
 describe("verify-run", () => {
   it("verifies the hero run when every check passes, and writes verification.json", async () => {
     const out = tmp();
     const claims = claimsFile(Object.fromEntries(heroIds.map((id) => [id, supported])));
-    const report = await verifyRun({ input: heroInput, brief: heroBrief, meetingId: "hero-input", claims, out });
+    const approved = await heroApproved();
+    const report = await verifyRun({ input: heroInput, brief: heroBrief, meetingId: "hero-input", claims, out, ...approved });
     expect(report.checks.redaction).toMatchObject({ passed: true, ownerReviewRequired: true });
     expect(report.checks.brief.passed).toBe(true);
     expect(report.checks.brief.entries).toBe(9);
@@ -47,6 +57,47 @@ describe("verify-run", () => {
     const report = await verifyRun({ input: heroInput, brief: heroBrief, skipClaims: true });
     expect(report.checks.brief.escalations.length).toBeGreaterThan(0);
     expect(report.checks.brief.escalations).toContainEqual({ entryId: "e4", reason: "request_not_accepted" });
+  });
+
+  it("blocks when the approved redaction is missing or still contains the source text", async () => {
+    const missing = await verifyRun({ input: heroInput, brief: heroBrief, skipClaims: true });
+    expect(missing.checks.redaction.passed).toBe(false);
+    expect(missing.checks.redaction.feedback[0]).toMatch(/not supplied/);
+    expect(missing.passed).toBe(false);
+    const transcript = readFileSync(join(heroInput, "transcript.txt"), "utf8");
+    const approved = await heroApproved();
+    const leaked = await verifyRun({
+      input: heroInput,
+      brief: heroBrief,
+      skipClaims: true,
+      redactedText: transcript,
+      spans: approved.spans,
+    });
+    expect(leaked.checks.redaction.passed).toBe(false);
+    expect(leaked.checks.redaction.feedback.join("\n")).not.toContain("Dana Okafor");
+    const dir = tmp();
+    const redactedPath = join(dir, "redacted.txt");
+    const spansPath = join(dir, "spans.json");
+    writeFileSync(redactedPath, approved.redactedText);
+    writeFileSync(spansPath, JSON.stringify(approved.spans));
+    const fromFiles = await verifyRun({
+      input: heroInput,
+      brief: heroBrief,
+      skipClaims: true,
+      redacted: redactedPath,
+      spans: spansPath,
+    });
+    expect(fromFiles.checks.redaction.passed).toBe(true);
+    writeFileSync(spansPath, "not json");
+    const badSpans = await verifyRun({
+      input: heroInput,
+      brief: heroBrief,
+      skipClaims: true,
+      redacted: redactedPath,
+      spans: spansPath,
+    });
+    expect(badSpans.checks.redaction.passed).toBe(false);
+    expect(badSpans.checks.redaction.feedback[0]).toMatch(/unreadable/);
   });
 
   it("fails closed when no judge output is supplied or claims are skipped", async () => {

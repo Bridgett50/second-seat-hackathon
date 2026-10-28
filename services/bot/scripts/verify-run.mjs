@@ -5,12 +5,15 @@
 //
 // Usage:
 //   node scripts/verify-run.mjs --input <dir with transcript.txt [frames.txt]>
-//        --brief <recorded brief .json> [--meeting-id <id>]
+//        --brief <recorded brief .json>
+//        --redacted <approved masked text> --spans <span JSON array>
+//        [--meeting-id <id>]
 //        (--claims <entryId -> raw judge output .json> | --skip-claims)
 //        [--out <dir>]
 //
-// Checks, in pipeline order: verifyRedaction (fixture MockRedactor + the
-// gate's findResidualPII), verifyBrief, verifyClaims. Writes
+// Checks, in pipeline order: verifyRedaction on the supplied approved
+// text and spans (not a fresh mock redaction), verifyBrief, verifyClaims.
+// A missing redaction artifact is a block. Writes
 // <out>/verification.json. Exit 0 = every check ran and passed; 1 = a check
 // blocked or claims were not run; 2 = usage or refused path.
 // Never calls a model or the network (fetch is replaced by a throwing guard),
@@ -27,7 +30,6 @@ import {
   verifyRedaction,
 } from "@second-seat/core";
 import { findResidualPII } from "../dist/src/private/gate.js";
-import { MockRedactor } from "../dist/src/private/redact.js";
 
 let fetchCount = 0;
 globalThis.fetch = async () => {
@@ -62,11 +64,35 @@ export function parseArgs(argv) {
     else if (a === "--claims") opts.claims = next();
     else if (a === "--out") opts.out = next();
     else if (a === "--meeting-id") opts.meetingId = next();
+    else if (a === "--redacted") opts.redacted = next();
+    else if (a === "--spans") opts.spans = next();
     else if (a === "--skip-claims") opts.skipClaims = true;
     else throw new VerifyRunUsageError(`unknown argument ${a}`);
   }
   if (opts.claims !== undefined && opts.skipClaims) throw new VerifyRunUsageError("--claims and --skip-claims are exclusive");
   return opts;
+}
+
+/** Approved redaction from --redacted/--spans or the in-process fields.
+ * Missing or unreadable input blocks. It never re-redacts the transcript. */
+function loadSuppliedRedaction(rawOpts) {
+  const missing = "redaction: approved redacted text or spans were not supplied: blocked (fail-closed)";
+  let redactedText = rawOpts.redactedText;
+  let spans = rawOpts.spans;
+  if (typeof rawOpts.redacted === "string") {
+    redactedText = readFileSync(guardPath("--redacted", rawOpts.redacted), "utf8");
+  }
+  if (typeof rawOpts.spans === "string") {
+    try {
+      spans = JSON.parse(readFileSync(guardPath("--spans", rawOpts.spans), "utf8"));
+    } catch {
+      return { ok: false, feedback: "redaction: spans file unreadable: blocked (fail-closed)" };
+    }
+  }
+  if (typeof redactedText !== "string" || !Array.isArray(spans)) {
+    return { ok: false, feedback: missing };
+  }
+  return { ok: true, redactedText, spans };
 }
 
 /** A recorded brief file holds { rawText } (the model's JSON text) or the brief itself. */
@@ -97,12 +123,20 @@ export async function verifyRun(rawOpts) {
       ? []
       : resolveFrames({ files: parseFramesSidecar(sidecar).map((r) => r.file), sidecarText: sidecar });
 
-  // 1. Redaction (fixture redactor; offline).
-  const redacted = await new MockRedactor().redactText(transcript);
-  const redaction = verifyRedaction(
-    { rawText: transcript, spans: redacted.spans, residualScan: findResidualPII },
-    { maskedText: redacted.maskedText },
-  );
+  // 1. Redaction of the approved preview. Missing input is a block:
+  // the script does not invent a redaction with MockRedactor.
+  const supplied = loadSuppliedRedaction(rawOpts);
+  const redaction = supplied.ok
+    ? verifyRedaction(
+        { rawText: transcript, spans: supplied.spans, residualScan: findResidualPII },
+        { maskedText: supplied.redactedText },
+      )
+    : {
+        passed: false,
+        feedback: [supplied.feedback],
+        ownerReviewRequired: true,
+      };
+  const spanCount = supplied.ok ? supplied.spans.length : 0;
 
   // 2. Brief.
   const work = loadBrief(briefPath);
@@ -143,7 +177,7 @@ export async function verifyRun(rawOpts) {
     passed: redaction.passed && brief.passed && claims.passed,
     complete: claims.status === "ran",
     checks: {
-      redaction: { passed: redaction.passed, feedback: redaction.feedback, spans: redacted.spans.length, ownerReviewRequired: true },
+      redaction: { passed: redaction.passed, feedback: redaction.feedback, spans: spanCount, ownerReviewRequired: true },
       brief: { passed: brief.passed, feedback: brief.feedback, entries: entryIds.length, escalations: brief.escalations },
       claims,
     },
