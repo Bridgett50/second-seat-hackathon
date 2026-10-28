@@ -979,5 +979,71 @@ G19WHY=""
 if [ -z "$G19WHY" ]; then ok G1-9; else bad G1-9 "missing-identity $G19WHY v=$G19V"; fi
 g1_rm "$G1ROOT"
 
+# ---------- CR3 helpers (bash scope-check; guard under test is overridable) ----------
+CR3GUARD="${MUSE_GUARD_UNDER_TEST:-$REPO/.muse/guard.sh}"
+cr3run() {
+  _cmd="$1"
+  _tn="${2:-bash}"
+  CMD="$_cmd" TN="$_tn" CR3CWD="$CR3R" python3 -c 'import json,os; print(json.dumps({"hook_event_name":"PreToolUse","tool_name":os.environ["TN"],"tool_input":{"command":os.environ["CMD"]},"cwd":os.environ["CR3CWD"]}))' | bash "$CR3GUARD" pre
+}
+cr3mk() {
+  CR3R="$(mktemp -d)"; gitinit "$CR3R"
+  mkdir -p "$CR3R/.muse" "$CR3R/src" "$CR3R/docs"
+  printf '%s\n' "forbidden-fix""tures/" > "$CR3R/$SEALED_FILE"
+}
+
+# ---------- CR3-redirect ----------
+cr3mk
+printf 'src/a.sh\n' > "$CR3R/.muse/scope.txt"
+CR3_D1="$(cr3run 'echo x > src/b.sh')"
+CR3_A1="$(cr3run 'echo x > src/a.sh')"
+CR3_A2="$(cr3run 'echo x > /tmp/zz')"
+CR3_D2="$(cr3run 'cd src && echo x > b.sh')"
+CR3OK=1
+printf '%s' "$CR3_D1" | grep -q '"deny"' || CR3OK=0
+printf '%s' "$CR3_D1" | grep -q 'out of scope' || CR3OK=0
+[ -z "$CR3_A1" ] || CR3OK=0
+[ -z "$CR3_A2" ] || CR3OK=0
+printf '%s' "$CR3_D2" | grep -q '"deny"' || CR3OK=0
+if [ "$CR3OK" = "1" ]; then ok CR3-redirect; else bad CR3-redirect "bash-write-allowed deny1=$CR3_D1 allow1=$CR3_A1 allow2=$CR3_A2 deny2=$CR3_D2"; fi
+rm -rf "$CR3R"
+
+# ---------- CR3-tools ----------
+cr3mk
+printf 'src/a.sh\n' > "$CR3R/.muse/scope.txt"
+CR3FAIL=""
+cr3_deny() { _o="$(cr3run "$1")"; printf '%s' "$_o" | grep -q '"deny"' || CR3FAIL="${CR3FAIL} deny-missed[$1]=>[$_o];"; }
+cr3_allow() { _o="$(cr3run "$1")"; [ -z "$_o" ] || CR3FAIL="${CR3FAIL} allow-missed[$1]=>[$_o];"; }
+cr3_deny 'sed -i s/a/b/ src/b.sh'
+cr3_deny 'cp src/a.sh src/b.sh'
+cr3_deny 'mv src/a.sh docs/x'
+cr3_deny 'rm src/b.sh'
+cr3_deny 'tee src/b.sh < /dev/null'
+cr3_deny 'touch src/b.sh'
+cr3_deny 'git checkout -- src/b.sh'
+cr3_deny 'git apply x.patch'
+cr3_deny 'python3 -c "open('"'"'src/b.sh'"'"','"'"'w'"'"')"'
+cr3_deny 'bash -c "echo x > src/b.sh"'
+cr3_deny 'echo x > "$OUT"'
+cr3_allow 'cat src/b.sh'
+cr3_allow 'git diff'
+cr3_allow 'ls -la'
+cr3_allow 'npx vitest run test/x.test.ts'
+cr3_allow 'sed -i s/a/b/ src/a.sh'
+cr3_allow 'cp src/b.sh /tmp/q'
+if [ -z "$CR3FAIL" ]; then ok CR3-tools; else bad CR3-tools "bash-write-allowed $CR3FAIL"; fi
+rm -rf "$CR3R"
+
+# ---------- CR3-noscope ----------
+cr3mk
+rm -f "$CR3R/.muse/scope.txt"
+CR3_D="$(cr3run 'echo x > src/a.sh')"
+CR3_A="$(cr3run 'git status')"
+CR3OK=1
+printf '%s' "$CR3_D" | grep -q '"deny"' || CR3OK=0
+[ -z "$CR3_A" ] || CR3OK=0
+if [ "$CR3OK" = "1" ]; then ok CR3-noscope; else bad CR3-noscope "bash-write-allowed deny=$CR3_D allow=$CR3_A"; fi
+rm -rf "$CR3R"
+
 if [ "$FAIL" -ne 0 ]; then printf '%s\n' "SELF-TEST FAILED"; exit 1; fi
 printf '%s\n' "SELF-TEST OK"
