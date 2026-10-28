@@ -44,4 +44,4 @@ Acme Cloud renewal call. Dana (buyer, invented) meets Lee (vendor, invented).
 Offline demo (`#offline-label` visible throughout). No live model call was
 performed in this session. Live verification of this walkthrough: not performed.
 A separate live end-to-end passed 3/3 on Oct 28, 2026 at 0365fdb. The public
-link is demo mode. Video URL, founder story, and user observations stay pending.
+link is demo mode. Video URL and user observations stay pending. Founder story: done.

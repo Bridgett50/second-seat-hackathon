@@ -14,7 +14,7 @@ Second Seat is a text-input meeting decision assistant. The connected workflow, 
 
 The deterministic pattern layer runs by default in both offline and live modes and surfaces pressure items under the source label "deterministic pattern detection"; each item quotes a substring of a current segment. Each item carries a status of `not_run`, `failed`, `valid_negative`, or `valid_positive`; not run and failed items are shown explicitly and block Copy until resolved. The unresolved term is shown only when it is a verbatim substring of the cited segment (not the whole segment), else the item shows "term not identified". In live mode the structured assessment is carried inside the single Spark analysis request. Every pressure item must be reviewed before Copy.
 
-The status table below is the per-PR ledger from when those PRs were tested. A cell that says live not performed describes that head, not the later Oct 28 session. Since then, verification is wired into the session (#113). Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it (#114/#115). That held-out run is not opened by this note. Video URL, founder story, and user observations stay pending in the section below.
+The status table below is the per-PR ledger from when those PRs were tested. A cell that says live not performed describes that head, not the later Oct 28 session. Since then, verification is wired into the session (#113). Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it (#114/#115). That held-out run is not opened by this note. The founder story is done in the README. Video URL and user observations stay pending in the section below.
 
 ## Statuses
 
@@ -67,7 +67,7 @@ Draft PRs with fail-before/pass-after tests: E1 (D1-1/F1), E2 (D4-4/D4-6/F7), E3
 
 TARGET figures only: none yet. I have not written down my time-per-call or risk numbers. Until I do, there is nothing here but a TARGET label.
 
-Founder story: PENDING — not yet supplied. User observations: PENDING — not yet supplied. Video URLs: PENDING — not yet supplied.
+Founder story: done — supplied in the README founder section. User observations: PENDING — not yet supplied. Video URLs: PENDING — not yet supplied.
 
 ## Agent loop
 

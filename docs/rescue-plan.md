@@ -151,7 +151,7 @@ Acceptance criteria:
 - Correct timeout, model/provider identity, and spending-limit descriptions.
 - Remove screenshot upload, SAM, and timed 2x replay from the core video script.
 - The video follows one meeting through paste, review, analysis, correction, draft approval, and copy.
-- Founder story, user observations, and video URLs remain explicitly pending until supplied. Invent nothing.
+- Founder story: done — supplied in the README. User observations and video URLs remain explicitly pending until supplied. Invent nothing.
 
 Per-PR report: 1) which acceptance criteria passed, 2) exact tests and commit tested, 3) remaining limitations, 4) whether any real model was invoked (expected: no).
 Rescue is not complete until: privacy and approval regressions pass; one same-session paste-to-copy test passes in CI; fake-transport tests exercise the actual live-adapter path; partial-run scoring retains the full planned denominator; saved evaluation records can be rescored without inference; documentation matches the final implementation.

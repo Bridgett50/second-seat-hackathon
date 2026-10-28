@@ -74,7 +74,7 @@ describe("B7 claims reconciliation", () => {
     expect(README).toContain("http://localhost:4173/session");
   });
   it("B7-11 founder story, observations, URLs remain pending", () => {
-    expect(README).toMatch(/Founder story: PENDING/);
+    expect(README).toMatch(/Founder story: done/);
     expect(README).toMatch(/User observations: PENDING/);
     expect(README).toMatch(/Video URLs: PENDING/);
   });

@@ -36,7 +36,7 @@ existing evidence-run facts from [runbook-holdout-run.md](../runbook-holdout-run
   Status: pending.
 - [ ] **Criterion 5 — Use only supplied founder facts and observed user evidence.**
   How to verify: demo narration uses only founder-supplied facts and directly observed
-  user evidence. Founder story: PENDING. User observations: PENDING. Video URLs:
+  user evidence. Founder story: done. User observations: PENDING. Video URLs:
   PENDING. No TARGET figures (none supplied — time-per-call / risk numbers not
   written down). Status: pending.
 - [ ] **Criterion 6 — Every performance number links to the matching run and configuration.**
@@ -77,7 +77,7 @@ before Copy is enabled. Show one such behavior the build actually has; do not in
 | Seeded-error suite files + links | ____ |
 | Load / prompt-freeze files + links | ____ |
 
-Founder story: PENDING — not yet supplied.
+Founder story: done — supplied in the README founder section.
 User observations: PENDING — not yet supplied.
 Video URLs: PENDING — not yet supplied.
 

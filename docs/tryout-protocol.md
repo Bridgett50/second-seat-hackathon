@@ -1,6 +1,6 @@
 # Buyer tryout protocol — Friday, October 30, 2026
 
-Method for the Friday buyer tryouts. This file does not record results. Founder story, user observations, and video URLs stay pending until a session is written up from what actually happened.
+Method for the Friday buyer tryouts. This file does not record results. Founder story: done. User observations and video URLs stay pending until a session is written up from what actually happened.
 
 No mentor is named in this protocol.
 
