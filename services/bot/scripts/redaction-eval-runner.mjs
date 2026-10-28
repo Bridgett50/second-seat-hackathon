@@ -31,7 +31,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // Every supported PII string for span purposes: legacy entities plus the
 // separately annotated names/extra entities.
@@ -41,6 +41,74 @@ export function caseEntities(c) {
 
 export function sha256Hex(text) {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+// Immutable annotation hash: sha256 of JSON.stringify({entities, names,
+// extra_entities}) with undefined fields omitted consistently.
+export function annotationSha256(c) {
+  return sha256Hex(JSON.stringify({ entities: c.entities ?? [], names: c.names, extra_entities: c.extra_entities }));
+}
+
+// Shared scoring: ok record from spans, exactly like runCase (maskText +
+// scoreSpans). Both the runner and offline replay use this helper.
+export function maskSpans(text, spans) {
+  const sorted = [...(spans ?? [])]
+    .filter((s) => Number.isInteger(s.start) && Number.isInteger(s.end) && s.end > s.start)
+    .sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged = [];
+  for (const s of sorted) {
+    const cur = merged[merged.length - 1];
+    if (cur === undefined) merged.push({ start: s.start, end: s.end, label: s.label });
+    else if (s.start < cur.end) {
+      if (s.end > cur.end) cur.end = s.end;
+    } else merged.push({ start: s.start, end: s.end, label: s.label });
+  }
+  let out = "";
+  let cur = 0;
+  for (const s of merged) {
+    if (s.start < 0 || s.end > text.length || s.end <= s.start) throw new Error("maskText: span out of range");
+    out += text.slice(cur, s.start);
+    out += `[REDACTED_${s.label}]`;
+    cur = s.end;
+  }
+  out += text.slice(cur);
+  return out;
+}
+
+export function buildOkRecord(c, text, spans, maskedText) {
+  const masked = typeof maskedText === "string" ? maskedText : maskSpans(text, spans ?? []);
+  let hits = 0;
+  const misses = [];
+  for (const e of c.entities ?? []) {
+    if (!masked.includes(e)) hits += 1;
+    else misses.push(`${c.file}: ${e}`);
+  }
+  const expected = annotateOccurrences(text, caseEntities(c));
+  const scored = scoreSpans(text, expected, spans ?? []);
+  const span = {
+    covered: scored.covered,
+    expected: scored.expected,
+    piiChars: scored.piiChars,
+    piiCharsMasked: scored.piiCharsMasked,
+    nonPii: scored.nonPii,
+    nonPiiMasked: scored.nonPiiMasked,
+  };
+  const span_misses = scored.missed.map((m) => ({
+    file: c.file,
+    start: m.start,
+    end: m.end,
+    text: text.slice(m.start, m.end),
+  }));
+  return { file: c.file, hits, total: (c.entities ?? []).length, status: "ok", misses, span_misses, span };
+}
+
+// Concurrency from a provided run config (services/bot/src/release/runConfig.ts
+// shape): a positive integer modal.concurrency wins, anything else falls back
+// to the historical default of 2.
+export function concurrencyFromRunConfig(runConfig, defaultValue = 2) {
+  const c = runConfig?.modal?.concurrency;
+  if (typeof c === "number" && Number.isInteger(c) && c >= 1) return c;
+  return defaultValue;
 }
 
 // Default run id: UTC timestamp plus randomness, unique per run.
@@ -89,39 +157,31 @@ function notRunRecord(c) {
 
 async function runCase(c, text, redactor) {
   const result = await redactor.redactText(text);
-  let hits = 0;
-  const misses = [];
-  for (const e of c.entities ?? []) {
-    if (!result.maskedText.includes(e)) hits += 1;
-    else misses.push(`${c.file}: ${e}`);
-  }
-  const expected = annotateOccurrences(text, caseEntities(c));
-  const scored = scoreSpans(text, expected, result.spans ?? []);
-  const span = {
-    covered: scored.covered,
-    expected: scored.expected,
-    piiChars: scored.piiChars,
-    piiCharsMasked: scored.piiCharsMasked,
-    nonPii: scored.nonPii,
-    nonPiiMasked: scored.nonPiiMasked,
-  };
-  const span_misses = scored.missed.map((m) => ({
-    file: c.file,
-    start: m.start,
-    end: m.end,
-    text: text.slice(m.start, m.end),
-  }));
-  return { file: c.file, hits, total: (c.entities ?? []).length, status: "ok", misses, span_misses, span };
+  return buildOkRecord(c, text, result.spans ?? [], result.maskedText);
 }
 
 function ratio(k, n) {
   return n ? (k / n).toFixed(3) : "n/a (no positives)";
 }
 
+// Integrity hash over ALL scoring-relevant receipt data (everything
+// parseAnswer/scoring reads: final content, error metadata, finish reason).
+// Written on every record with a raw receipt and verified on strict replay.
+export function receiptIntegrityHash(receipt) {
+  const content = typeof receipt?.content === "string" ? receipt.content : "";
+  const error = typeof receipt?.error === "string" ? receipt.error : "";
+  const finish = typeof receipt?.finish_reason === "string" ? receipt.finish_reason : "";
+  return sha256Hex(JSON.stringify({ content, error, finish_reason: finish }));
+}
+
 // Printable report lines. Completed-case metrics and full-batch (end-to-end)
 // metrics are labelled separately; null recalls print as "n/a (no positives)".
+// The first line is `complete: true|false` (mirrors summary.complete) and
+// `completion:` uses the full planned denominator so missing planned records
+// keep denominators.
 export function formatReport(records, summary, misses, spanMisses) {
   const lines = [];
+  lines.push(`complete: ${summary.complete}`);
   const { k, n } = summary.recall;
   const [lo, hi] = summary.wilson95;
   lines.push(`recall: ${k}/${n} = ${ratio(k, n)}`);
@@ -139,7 +199,11 @@ export function formatReport(records, summary, misses, spanMisses) {
     else lines.push(`case ${r.file}: not_run`);
   }
   const completed = records.filter((r) => r.status === "ok").length;
-  lines.push(`completion: ${completed}/${records.length}`);
+  const plannedCount =
+    typeof summary?.request_completion?.planned === "number"
+      ? summary.request_completion.planned
+      : records.length;
+  lines.push(`completion: ${completed}/${plannedCount}`);
   lines.push(`execution_failures: ${summary.failures.length}`);
   for (const f of summary.failures) lines.push(` - ${f}`);
   lines.push(`not_run: ${summary.not_run.length}`);
@@ -224,6 +288,7 @@ export async function runEval({
       ...(c.names !== undefined ? { names: c.names } : {}),
       ...(c.extra_entities !== undefined ? { extra_entities: c.extra_entities } : {}),
       input_sha256: sha256Hex(text),
+      annotation_sha256: annotationSha256(c),
     });
   }
 
@@ -237,6 +302,12 @@ export async function runEval({
       throw new Error(`runEval: run dir already exists (refusing reuse): ${runDir}`);
     }
     mkdirSync(runDir);
+    mkdirSync(join(runDir, "inputs"), { recursive: true });
+    for (const c of cases) {
+      const dest = join(runDir, "inputs", c.file);
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, texts.get(c.file) ?? "");
+    }
     const manifest = {
       run_id: runId,
       started_at: new Date(startedAt).toISOString(),
@@ -252,11 +323,57 @@ export async function runEval({
   const prevRawDir = process.env["GLIMMER_RAW_DIR"];
   if (runDir !== null) process.env["GLIMMER_RAW_DIR"] = runDir;
 
+  // Deadline already passed while preparing inputs: zero redactor requests
+  // (no canary) and every planned case is recorded not_run.
+  const __finishAllNotRun = () => {
+    const allNotRun = cases.map(notRunRecord);
+    for (const rec of allNotRun) persist(rec);
+    return finish(allNotRun, false);
+  };
+
+  const rawShaOf = (redactor) => {
+    try {
+      const receipt = redactor?.lastReceipt ?? null;
+      if (receipt !== null && typeof receipt === "object" && typeof receipt.content === "string") {
+        return sha256Hex(receipt.content);
+      }
+    } catch {
+      /* no raw evidence */
+    }
+    return undefined;
+  };
+
+  const receiptHashOf = (redactor) => {
+    try {
+      const receipt = redactor?.lastReceipt ?? null;
+      if (receipt !== null && typeof receipt === "object" && typeof receipt.content === "string") {
+        return receiptIntegrityHash(receipt);
+      }
+    } catch {
+      /* no raw evidence */
+    }
+    return undefined;
+  };
+
   // Durable save: append one JSON line per finished case and fsync before
   // proceeding, so an interrupted run stays readable and honestly incomplete.
-  const persist = (rec) => {
+  // File records carry run_id, case_id (=file), input_sha256, raw_sha256,
+  // and receipt_sha256 when the redactor produced a raw receipt; in-memory
+  // records keep the legacy shape so summary/report output is unchanged.
+  const persist = (rec, redactor) => {
     if (recordsFd === null) return;
-    writeSync(recordsFd, `${JSON.stringify(toRecord(rec))}\n`);
+    const base = toRecord(rec);
+    const file = rec.file;
+    const extra = {
+      run_id: runId,
+      case_id: file,
+      input_sha256: sha256Hex(texts.get(file) ?? ""),
+    };
+    const rawSha = redactor !== undefined ? rawShaOf(redactor) : undefined;
+    if (rawSha !== undefined) extra.raw_sha256 = rawSha;
+    const receiptHash = redactor !== undefined ? receiptHashOf(redactor) : undefined;
+    if (receiptHash !== undefined) extra.receipt_sha256 = receiptHash;
+    writeSync(recordsFd, `${JSON.stringify({ ...base, ...extra })}\n`);
     fsyncSync(recordsFd);
   };
 
@@ -286,23 +403,25 @@ export async function runEval({
   };
 
   try {
+    if (Date.now() >= deadline) return __finishAllNotRun();
     // Canary: case 1 runs first; an execution error stops the eval, and every
     // remaining planned case gets an explicit not_run record.
     const records = [];
+    let canaryRedactor;
     try {
-      const redactor = makeRedactor();
-      applyTimeout(redactor);
-      keyRedactor(redactor, {
+      canaryRedactor = makeRedactor();
+      applyTimeout(canaryRedactor);
+      keyRedactor(canaryRedactor, {
         runId,
         caseId: cases[0].file,
         inputSha256: sha256Hex(texts.get(cases[0].file)),
       });
-      const rec = await runCase(cases[0], texts.get(cases[0].file), redactor);
-      persist(rec);
+      const rec = await runCase(cases[0], texts.get(cases[0].file), canaryRedactor);
+      persist(rec, canaryRedactor);
       records.push(rec);
     } catch (err) {
       const rec = errorRecord(cases[0], err);
-      persist(rec);
+      persist(rec, canaryRedactor);
       records.push(rec);
       for (const c of cases.slice(1)) {
         const nr = notRunRecord(c);
@@ -329,16 +448,17 @@ export async function runEval({
           results[i] = nr;
           continue;
         }
+        let redactor;
         try {
-          const redactor = makeRedactor();
+          redactor = makeRedactor();
           applyTimeout(redactor);
           keyRedactor(redactor, { runId, caseId: c.file, inputSha256: sha256Hex(texts.get(c.file)) });
           const rec = await runCase(c, texts.get(c.file), redactor);
-          persist(rec);
+          persist(rec, redactor);
           results[i] = rec;
         } catch (err) {
           const rec = errorRecord(c, err);
-          persist(rec);
+          persist(rec, redactor);
           results[i] = rec;
         }
       }

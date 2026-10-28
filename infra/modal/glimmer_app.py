@@ -3,29 +3,28 @@
 Deploy with `python3 -m modal deploy infra/modal/glimmer_app.py`, stop with
 `python3 -m modal app stop second-seat-glimmer`. Scale-to-zero.
 
-Live eval with `python3 -m modal run --detach infra/modal/glimmer_app.py`
+Live eval with `GLIMMER_EVAL_DATASET=<dataset> python3 -m modal run
+--detach infra/modal/glimmer_app.py --dataset <dataset> --config <config>`
 (ephemeral app, stops when done; build services/bot first).
 """
 
 import datetime
+import hashlib
 import json
 import os
 import signal
 import subprocess
+import sys
 import time
-import urllib.parse
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import launch_contract
 
 import modal
 
 app = modal.App("second-seat-glimmer")
-
-image = (
-    modal.Image.from_registry("vllm/vllm-openai:muse-glimmer")
-    .dockerfile_commands(["RUN ln -sf \"$(command -v python3)\" /usr/local/bin/python"])
-    .entrypoint([])
-)
 
 volume = modal.Volume.from_name("glimmer-weights", create_if_missing=True)
 results = modal.Volume.from_name("glimmer-results", create_if_missing=True)
@@ -33,17 +32,86 @@ results = modal.Volume.from_name("glimmer-results", create_if_missing=True)
 _here = Path(__file__).resolve()
 _repo = _here.parents[2] if len(_here.parents) > 2 else Path("/")  # driver: container path is shallow
 
-eval_in_container_image = (
-    image.run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
-    .add_local_dir(str(_repo / "services/bot/dist"), "/app/services/bot/dist")
-    .add_local_dir(str(_repo / "services/bot/scripts"), "/app/services/bot/scripts")
-    .add_local_dir(
-        str(_repo / "services/bot/fixtures/pii"), "/app/services/bot/fixtures/pii"
+def _sha256_hex(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _read_launcher_identity():
+    """sha256 over glimmer_app.py bytes + launch_contract.py bytes."""
+    try:
+        with open(_here, "rb") as _fh:
+            _app_bytes = _fh.read()
+        with open(_here.parent / "launch_contract.py", "rb") as _fh:
+            _contract_bytes = _fh.read()
+        return _sha256_hex(_app_bytes + _contract_bytes)
+    except Exception:
+        return None
+
+
+# Launch config baked into the images: the raw bytes are read exactly once
+# at import. _LAUNCH_CONFIG is parsed from those same bytes and
+# _LAUNCH_CONFIG_SHA256 identifies them; main() re-reads the file and
+# refuses when the bytes (not just the path) changed since import.
+_LAUNCH_CONFIG_PATH = os.environ.get("GLIMMER_LAUNCH_CONFIG", "")
+_LAUNCH_CONFIG = {}
+_LAUNCH_CONFIG_BYTES = None
+_LAUNCH_CONFIG_SHA256 = None
+if _LAUNCH_CONFIG_PATH:
+    try:
+        with open(_LAUNCH_CONFIG_PATH, "rb") as _fh:
+            _LAUNCH_CONFIG_BYTES = _fh.read()
+        _LAUNCH_CONFIG_SHA256 = _sha256_hex(_LAUNCH_CONFIG_BYTES)
+        _parsed = json.loads(_LAUNCH_CONFIG_BYTES.decode("utf-8"))
+        _LAUNCH_CONFIG = _parsed if isinstance(_parsed, dict) else {}
+    except Exception:
+        _LAUNCH_CONFIG = {}
+        _LAUNCH_CONFIG_BYTES = None
+        _LAUNCH_CONFIG_SHA256 = None
+_MODEL_REVISION = _LAUNCH_CONFIG.get("model_revision", "") if isinstance(_LAUNCH_CONFIG, dict) else ""
+_LAUNCH_IMAGE = _LAUNCH_CONFIG.get("image", "") if isinstance(_LAUNCH_CONFIG, dict) else ""
+
+# Launcher identity at import; main() recomputes it and refuses on drift.
+_LAUNCHER_SHA256 = _read_launcher_identity()
+
+# Latest main() outcome: None until a launch passes every gate (refused
+# attempts reset it to None instead of leaving a stale record).
+_LAST_LAUNCH_RECORD = None
+
+# Dataset baked into the eval image, read at import. When unset the eval
+# image carries no eval fixtures; when set it is built via package_dirs.
+_EVAL_DATASET = os.environ.get("GLIMMER_EVAL_DATASET", "")
+
+if _LAUNCH_IMAGE:
+    image = (
+        modal.Image.from_registry(_LAUNCH_IMAGE)
+        .dockerfile_commands(["RUN ln -sf \"$(command -v python3)\" /usr/local/bin/python"])
+        .entrypoint([])
     )
-    .add_local_file(
+    _node_base = modal.Image.from_registry(_LAUNCH_IMAGE).run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
+else:
+    image = (
+        modal.Image.from_registry("vllm/vllm-openai:muse-glimmer")
+        .dockerfile_commands(["RUN ln -sf \"$(command -v python3)\" /usr/local/bin/python"])
+        .entrypoint([])
+    )
+    _node_base = image.run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
+
+if _EVAL_DATASET:
+    eval_in_container_image = _node_base
+    for _local, _remote in launch_contract.package_dirs(str(_repo), _EVAL_DATASET):
+        eval_in_container_image = eval_in_container_image.add_local_dir(_local, _remote)
+    eval_in_container_image = eval_in_container_image.add_local_file(
         str(_repo / "services/bot/package.json"), "/app/services/bot/package.json"
     )
-)
+else:
+    eval_in_container_image = (
+        _node_base
+        .add_local_dir(str(_repo / "services/bot/dist"), "/app/services/bot/dist")
+        .add_local_dir(str(_repo / "services/bot/scripts"), "/app/services/bot/scripts")
+        .add_local_file(
+            str(_repo / "services/bot/package.json"), "/app/services/bot/package.json"
+        )
+    )
 
 
 @app.function(
@@ -61,6 +129,8 @@ def serve() -> None:
         "vllm",
         "serve",
         "meta-models/Muse-Glimmer-30B",
+        "--revision",
+        _MODEL_REVISION,
         "--served-model-name",
         "meta-models/Muse-Glimmer-30B",
         "--tensor-parallel-size",
@@ -94,13 +164,14 @@ def serve() -> None:
     max_containers=1,
     retries=0,
 )
-def eval_in_container() -> dict:
+def eval_in_container(dataset: str) -> dict:
     func_start = time.monotonic()
-    global_deadline = func_start + 780
     cmd = [
         "vllm",
         "serve",
         "meta-models/Muse-Glimmer-30B",
+        "--revision",
+        _MODEL_REVISION,
         "--served-model-name",
         "meta-models/Muse-Glimmer-30B",
         "--tensor-parallel-size",
@@ -131,24 +202,24 @@ def eval_in_container() -> dict:
     eval_stderr = ""
     run_id = None
     try:
-        ready_deadline = min(func_start + 300, global_deadline)
-        while time.monotonic() < ready_deadline:
-            if vllm.poll() is not None:
-                break
+        def _probe():
             try:
                 with urllib.request.urlopen(health_url, timeout=10) as resp:
-                    health_status = resp.status
-                    if resp.status == 200:
-                        seconds_to_healthy = time.monotonic() - func_start
-                        break
+                    return resp.status
             except Exception:
-                pass
-            time.sleep(5)
-        if health_status != 200:
+                return None
+
+        # Model load and the readiness wait run INSIDE the 780 s work
+        # deadline: they consume it.
+        timing = launch_contract.wait_ready(time.monotonic, time.sleep, _probe, func_start)
+        if timing["ready"]:
+            seconds_to_healthy = time.monotonic() - func_start
+            health_status = 200
+        if not timing["ready"]:
             eval_stderr = "vllm not healthy within 300s; skipping eval"
         else:
-            remaining_ms = int((global_deadline - time.monotonic()) * 1000) - 30_000
-            remaining_s = (global_deadline - time.monotonic()) - 5
+            remaining_ms = timing["remaining_ms"]
+            remaining_s = timing["remaining_s"]
             if remaining_ms <= 0 or remaining_s <= 0:
                 eval_stderr = "no time remaining for eval"
             else:
@@ -160,6 +231,7 @@ def eval_in_container() -> dict:
                     + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
                     + f"-{os.getpid()}"
                 )
+                node_cmd = launch_contract.eval_command(dataset, "/results", run_id)
                 env = {
                     **os.environ,
                     "GLIMMER_BASE_URL": base_url,
@@ -167,14 +239,7 @@ def eval_in_container() -> dict:
                 }
                 try:
                     proc = subprocess.run(
-                        [
-                            "node",
-                            "scripts/redaction-eval.mjs",
-                            "--out-dir",
-                            "/results",
-                            "--run-id",
-                            run_id,
-                        ],
+                        node_cmd,
                         cwd="/app/services/bot",
                         env=env,
                         capture_output=True,
@@ -217,40 +282,102 @@ def eval_in_container() -> dict:
 
 
 @app.local_entrypoint()
-def main() -> None:
-    call = eval_in_container.spawn()
+def main(dataset: str = "", config: str = "") -> None:
+    global _LAST_LAUNCH_RECORD
+    _LAST_LAUNCH_RECORD = None
+    env_dataset = os.environ.get("GLIMMER_EVAL_DATASET", "")
+    env_config = os.environ.get("GLIMMER_LAUNCH_CONFIG", "")
+    cfg = {}
+    cfg_sha256 = None
+    config_read_error = None
+    if config:
+        try:
+            with open(config, "rb") as fh:
+                cfg_bytes = fh.read()
+            cfg_sha256 = _sha256_hex(cfg_bytes)
+            cfg = json.loads(cfg_bytes.decode("utf-8"))
+        except Exception as exc:
+            config_read_error = f"launch config unreadable: {config!r} ({exc})"
+    fixtures_root = str(_repo / "services" / "bot" / "fixtures")
+    blockers = []
+    if not env_config:
+        blockers.append("launch config missing: GLIMMER_LAUNCH_CONFIG is unset")
+    elif not config:
+        blockers.append("launch config missing: --config is empty")
+    else:
+        try:
+            if os.path.realpath(env_config) != os.path.realpath(config):
+                blockers.append(
+                    f"launch config mismatch: GLIMMER_LAUNCH_CONFIG {env_config!r} != --config {config!r}"
+                )
+        except Exception as exc:
+            blockers.append(f"launch config mismatch: cannot compare config paths ({exc})")
+        # Path equality is not enough: the bytes themselves must match what
+        # was loaded at import. An alias path with identical bytes is
+        # accepted; changed bytes are refused with zero spawns.
+        if config_read_error is not None:
+            blockers.append(config_read_error)
+        elif _LAUNCH_CONFIG_SHA256 is None:
+            blockers.append("launch config drift: no launch config was loaded at import")
+        elif cfg_sha256 != _LAUNCH_CONFIG_SHA256:
+            blockers.append("launch config drift: --config bytes changed since import (refusing)")
+    # Launcher drift refuses too: the shipped code must be the imported code.
+    launcher_sha256 = _read_launcher_identity()
+    if launcher_sha256 is None or launcher_sha256 != _LAUNCHER_SHA256:
+        blockers.append("launcher drift: glimmer_app.py/launch_contract.py bytes changed since import (refusing)")
+    blockers = blockers + launch_contract.check_launch(
+        cfg, fixtures_root, invoked_dataset=dataset, repo_root=str(_repo)
+    )
+    if dataset != env_dataset:
+        blockers = [
+            f"dataset mismatch: invoked {dataset!r} != GLIMMER_EVAL_DATASET {env_dataset!r}"
+        ] + blockers
+    if blockers:
+        for b in blockers:
+            print(f"BLOCKED: {b}")
+        raise SystemExit(2)
+    _LAST_LAUNCH_RECORD = {
+        "dataset": dataset,
+        "config": config,
+        "config_sha256": cfg_sha256,
+        "launcher_sha256": _LAUNCHER_SHA256,
+        "image": _LAUNCH_IMAGE,
+        "model_revision": _MODEL_REVISION,
+    }
+    print("LAUNCH_RECORD " + json.dumps(_LAST_LAUNCH_RECORD, sort_keys=True))
+    call = eval_in_container.spawn(dataset)
     print("CALL_ID " + call.object_id)
     return None
 
 
 @app.local_entrypoint()
 def fetch(run_id: str = "") -> None:
+    if not run_id:
+        print("run_id is required", file=sys.stderr)
+        raise SystemExit(2)
     out_dir = (
-        Path(__file__).resolve().parents[2] / "services/bot/fixtures/glimmer-run"
+        Path(__file__).resolve().parents[2] / "services/bot/fixtures/glimmer-run" / run_id
     )
-    if run_id:
-        # Never overwrite the historical flat artifacts: per-run subdirectory.
-        out_dir = out_dir / run_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # NOTE: the live result goes to fixtures/glimmer-run/glimmer-live-eval.json;
-    # services/bot/fixtures/glimmer-live-eval.json must not be overwritten.
-    if run_id:
-        pairs = [
-            (f"{run_id}/glimmer-live-eval.json", "glimmer-live-eval.json"),
-            (f"{run_id}/summary.json", "eval-summary.json"),
-            (f"{run_id}/records.jsonl", "records.jsonl"),
-            (f"{run_id}/glimmer-raw.jsonl", "glimmer-raw.jsonl"),
-        ]
-    else:
-        # Historical flat layout (pre-run-dir results); kept read-only.
-        pairs = [
-            ("glimmer-live-eval.json", "glimmer-live-eval.json"),
-            ("eval-summary.json", "eval-summary.json"),
-            ("raw/glimmer-raw.jsonl", "glimmer-raw.jsonl"),
-        ]
-    for remote, local in pairs:
-        try:
-            data = b"".join(results.read_file(remote))
-        except Exception:
-            continue
-        (out_dir / local).write_bytes(data)
+
+    def list_files(rid):
+        out = []
+        for entry in results.listdir(rid, recursive=True):
+            typ = getattr(entry, "type", None)
+            tname = getattr(typ, "name", None)
+            tvalue = getattr(typ, "value", typ)
+            if tname == "DIRECTORY" or tvalue == 2:
+                continue
+            full = getattr(entry, "path", None)
+            if not isinstance(full, str):
+                continue
+            prefix = f"{rid}/"
+            if not full.startswith(prefix):
+                continue
+            out.append(full[len(prefix):])
+        return out
+
+    def read_file(remote):
+        return b"".join(results.read_file(remote))
+
+    launch_contract.download_run(list_files, read_file, run_id, str(out_dir))
+    print(f"downloaded {run_id} -> {out_dir}")

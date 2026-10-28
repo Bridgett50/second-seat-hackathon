@@ -49,7 +49,7 @@ test("pii flow: redact, approve, analyze, citation resolves", async ({ page }) =
   expect(redacted).not.toContain("Elena Vasquez");
   expect(redacted).not.toContain("555-201-3344");
   await page.locator("#btn-approve").click();
-  await expect(page.locator("#payload-panel")).toContainText("Prepared (not sent)");
+  await expect(page.locator("#payload-panel")).toContainText("Prepared (not dispatched)");
   const payloadText = await page.locator("#payload-text").textContent();
   await page.locator("#btn-analyze").click();
   await expect(page.locator("#payload-panel")).toContainText("Dispatched to");
@@ -122,7 +122,7 @@ test("stale approval blocks analysis", async ({ page }) => {
 test("changed input clears payload and disables analyze", async ({ page }) => {
   const outside = await guardNetwork(page);
   await redactAndApprove(page, BASIC_TRANSCRIPT);
-  await expect(page.locator("#payload-panel")).toContainText("Prepared (not sent)");
+  await expect(page.locator("#payload-panel")).toContainText("Prepared (not dispatched)");
   const before = await readOutbound(page);
   await page.locator("#transcript-input").fill("A completely different transcript line.");
   await expect(page.locator("#payload-panel")).toContainText("Not prepared yet");

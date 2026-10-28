@@ -11,9 +11,12 @@
  * - Retries 429/5xx with backoff + Retry-After; never retries a 400.
  * - Without an API key, only fixture mode is available.
  */
-import { EVIDENCE_BRIEF_JSON_SCHEMA } from "@second-seat/core";
+import { EVIDENCE_BRIEF_JSON_SCHEMA, PRESSURE_TACTICS } from "@second-seat/core";
 import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "./costGuard.js";
-import { requireLiveGatedText, type GatedText } from "../private/gate.js";
+import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
+
+/** The one shared known-tactic list (from `@second-seat/core`). */
+export { PRESSURE_TACTICS };
 
 export const BRIEF_MODEL = "muse-spark-1.3";
 export const BRIEF_PROMPT_VERSION = "brief-v2";
@@ -21,11 +24,78 @@ export const BRIEF_API_URL = "https://api.meta.ai/v1/chat/completions";
 export const BRIEF_MAX_COMPLETION_TOKENS = 16000;
 export const BRIEF_SEED = 42;
 
+/**
+ * Structured pressure label bound to the approved transcript. There is no
+ * free-string assessment channel: the client validates each label (known
+ * tactic, span quoted verbatim from the approved transcript) and renders
+ * the outbound assessment text internally only from validated labels.
+ */
+export interface PressureLabelInput {
+  segmentId: string;
+  tactic: string;
+  span: string;
+}
+
+/** Thrown (with `code "UNBOUND_ASSESSMENT"`) when a pressure label is not bound to the approved transcript. */
+export class UnboundAssessmentError extends Error {
+  override name = "UnboundAssessmentError";
+  readonly code = "UNBOUND_ASSESSMENT";
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+const KNOWN_TACTICS: ReadonlySet<string> = new Set<string>(PRESSURE_TACTICS);
+
+/**
+ * Validate structured pressure labels against the approved transcript
+ * text: every non-"none" label must name a known tactic and carry a
+ * non-empty span that appears verbatim in the approved transcript.
+ * Throws `UnboundAssessmentError` on the first unbound label, before any
+ * fetch and before any dispatch receipt is recorded.
+ */
+export function assertBoundPressureLabels(
+  labels: readonly PressureLabelInput[] | undefined,
+  transcriptText: string,
+): void {
+  for (const label of labels ?? []) {
+    if (typeof label !== "object" || label === null) {
+      throw new UnboundAssessmentError("unbound pressure assessment: label is not an object");
+    }
+    const { tactic, span } = label as { tactic?: unknown; span?: unknown };
+    if (typeof tactic !== "string" || !KNOWN_TACTICS.has(tactic)) {
+      throw new UnboundAssessmentError(
+        `unbound pressure assessment: unknown tactic ${JSON.stringify(tactic) ?? "missing"}`,
+      );
+    }
+    if (tactic === "none") continue;
+    if (typeof span !== "string" || span === "") {
+      throw new UnboundAssessmentError("unbound pressure assessment: span is empty");
+    }
+    if (!transcriptText.includes(span)) {
+      throw new UnboundAssessmentError("unbound pressure assessment: span is not in the approved transcript");
+    }
+  }
+}
+
+/**
+ * Render the outbound assessment text internally from validated labels
+ * only: one {tactic, quote, segmentId} item per non-"none" label. "none"
+ * labels and an empty array render as "[]" (the caller omits the section).
+ */
+export function renderPressureAssessment(labels: readonly PressureLabelInput[] | undefined): string {
+  const items = (labels ?? [])
+    .filter((l): l is PressureLabelInput => typeof l === "object" && l !== null && l.tactic !== "none")
+    .map((l) => ({ tactic: l.tactic, quote: l.span, segmentId: l.segmentId }));
+  return JSON.stringify(items);
+}
+
 export interface BriefSourceInput {
   meetingId: string;
   transcriptText: string;
   framesSidecarText: string;
   fixtureMode: boolean;
+  pressureLabels?: PressureLabelInput[];
 }
 
 /**
@@ -40,6 +110,13 @@ export interface BriefGatedInput {
   // gate-minted GatedText like the transcript.
   framesSidecarText: GatedText | "";
   fixtureMode: boolean;
+  /**
+   * Optional structured pressure labels carried inside the single
+   * owner-approved analysis request. Validated against the approved
+   * transcript (known tactic, verbatim span) before any fetch; rendered
+   * internally only from validated labels. No separate classifier call.
+   */
+  pressureLabels?: PressureLabelInput[];
 }
 
 export interface BriefUsage {
@@ -95,6 +172,10 @@ async function loadDeveloperPrompt(): Promise<string> {
 }
 
 export async function buildUserMessage(input: BriefSourceInput): Promise<string> {
+  // Rendered internally only from structured labels (tactic + quoted
+  // span). There is no free-string channel: stray text never reaches the
+  // wire. (MuseClient validates binding first; this builder only renders.)
+  const assessment = renderPressureAssessment(input.pressureLabels);
   return [
     `meetingId: ${input.meetingId}`,
     `model: ${BRIEF_MODEL}`,
@@ -108,6 +189,7 @@ export async function buildUserMessage(input: BriefSourceInput): Promise<string>
     "frames sidecar (frames.txt):",
     input.framesSidecarText.trim() === "" ? "(no frames)" : input.framesSidecarText,
     "",
+    ...(assessment === "[]" ? [] : ["pressure assessment:", assessment, ""]),
     "transcript (transcript.txt) — the evidence, last:",
     input.transcriptText,
     "</data>",
@@ -162,18 +244,25 @@ function retryAfterMs(header: string | null, attempt: number): number {
 async function postChat(
   body: Record<string, unknown>,
   key: string,
+  gated: readonly GatedText[],
+  transport: "muse",
   fetchImpl?: typeof fetch,
+  maxAttempts = 4,
 ): Promise<Response> {
-  const maxAttempts = 4;
   for (let attempt = 0; ; attempt += 1) {
-    const response = await (fetchImpl ?? fetch)(BRIEF_API_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({ ...body, stream: true }),
-    });
+    // Every attempt (including retries) revalidates approval at the
+    // transport boundary and records a receipt. `fetch` is read here at
+    // call time so a test-installed global applies to every attempt.
+    const response = await dispatchGuarded(transport, gated, attempt + 1, () =>
+      (fetchImpl ?? fetch)(BRIEF_API_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({ ...body, stream: true }),
+      }),
+    );
     if (response.status === 400) {
       const text = await response.text();
       throw new Error(`muse-spark request rejected (400, not retried): ${text.slice(0, 500)}`);
@@ -262,10 +351,24 @@ export class MuseClient {
   readonly mode = "live" as const;
   private readonly fetchImpl: typeof fetch | undefined;
   private readonly labelSegments: boolean;
+  private readonly maxAttempts: number;
+  private readonly preflightHook: (() => Promise<void>) | undefined;
 
-  constructor(opts?: { fetchImpl?: typeof fetch; labelTranscriptSegments?: boolean }) {
+  constructor(opts?: {
+    fetchImpl?: typeof fetch;
+    labelTranscriptSegments?: boolean;
+    maxAttempts?: number;
+    /**
+     * Extra preflight step, awaited after the built-in preflight and
+     * before the approval re-check. Tests use a deferred promise here to
+     * hold the preflight window while revoking approval.
+     */
+    preflight?: () => Promise<void>;
+  }) {
     this.fetchImpl = opts?.fetchImpl;
     this.labelSegments = opts?.labelTranscriptSegments ?? false;
+    this.maxAttempts = opts?.maxAttempts ?? 4;
+    this.preflightHook = opts?.preflight;
   }
 
   /**
@@ -280,19 +383,48 @@ export class MuseClient {
     if (key === null) {
       throw new Error("live mode requires META_API_KEY; without the key, stay fixture-only");
     }
-    const gatedTranscript = requireLiveGatedText(input.transcriptText).text;
+    const gatedTranscriptValue = requireLiveGatedText(input.transcriptText);
+    const gatedTranscript = gatedTranscriptValue.text;
     // The model can only cite seg-N ids it has seen: send the gated text
     // with each non-empty line prefixed by its segment id.
     const transcriptText = this.labelSegments ? labelTranscriptSegments(gatedTranscript) : gatedTranscript;
-    const framesSidecarText =
-      input.framesSidecarText === "" ? "" : requireLiveGatedText(input.framesSidecarText).text;
+    const framesSidecarValue =
+      input.framesSidecarText === "" ? null : requireLiveGatedText(input.framesSidecarText);
+    const framesSidecarText = framesSidecarValue === null ? "" : framesSidecarValue.text;
+    const gatedValues: readonly GatedText[] =
+      framesSidecarValue === null ? [gatedTranscriptValue] : [gatedTranscriptValue, framesSidecarValue];
+    // Bound assessment first: every label must name a known tactic and
+    // quote the approved transcript verbatim. Throws UNBOUND_ASSESSMENT
+    // before any fetch and before any dispatch receipt is recorded. The
+    // input is built explicitly so no free-string channel can reach the
+    // wire.
+    const labels = Array.isArray(input.pressureLabels) ? input.pressureLabels : [];
+    assertBoundPressureLabels(labels, gatedTranscript);
+    const redactedInput: BriefSourceInput = {
+      meetingId: input.meetingId,
+      transcriptText,
+      framesSidecarText,
+      fixtureMode: input.fixtureMode,
+      pressureLabels: labels,
+    };
+    // Preflight order: the static developer prompt loads before the dynamic
+    // caps check reads its state file, so a prompt-read failure refuses the
+    // call before any fetch with no dispatch receipt. Caps and token guards
+    // still run before any network attempt.
+    const [developerPrompt, userMessage] = await Promise.all([loadDeveloperPrompt(), buildUserMessage(redactedInput)]);
     await checkCapsPreCall();
     const { logText } = await import("../private/payloadLog.js");
     logText(`${transcriptText}\n${framesSidecarText}`);
-    const redactedInput: BriefSourceInput = { ...input, transcriptText, framesSidecarText };
-    const [developerPrompt, userMessage] = await Promise.all([loadDeveloperPrompt(), buildUserMessage(redactedInput)]);
     // Rough pre-call guard: ~4 chars per token.
     checkPerCallTokenCap(Math.ceil((developerPrompt.length + userMessage.length) / 4), BRIEF_MAX_COMPLETION_TOKENS);
+    await this.preflightHook?.();
+    // Re-check gate approval immediately before fetch, after every awaited
+    // preflight step: a revoke or edit during a held preflight throws here
+    // with zero requests. (dispatchGuarded revalidates again per attempt.)
+    requireLiveGatedText(gatedTranscriptValue);
+    if (framesSidecarValue !== null) {
+      requireLiveGatedText(framesSidecarValue);
+    }
     const startedAt = Date.now();
     void startedAt;
     const response = await postChat(
@@ -315,7 +447,10 @@ export class MuseClient {
         ],
       },
       key,
+      gatedValues,
+      "muse",
       this.fetchImpl,
+      this.maxAttempts,
     );
     const { content, usage } = await readStreamedChat(response);
     const result: BriefResult = {
