@@ -7,7 +7,9 @@ import { runEval } from "../scripts/redaction-eval-runner.mjs";
 // @ts-expect-error untyped helper module
 import { rescoreRun } from "../scripts/rescore-glimmer-run.mjs";
 import { GlimmerClient } from "../src/private/redact.js";
+import { toLaunchConfig } from "../src/release/runConfig.js";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -100,6 +102,10 @@ function headSha(r: string): string {
   return git(r, "rev-parse", "HEAD");
 }
 
+function shaFile(p: string): string {
+  return createHash("sha256").update(readFileSync(p)).digest("hex");
+}
+
 // A throwaway repo that IS a real git checkout: real infra/modal sources
 // copied in, dummy bot tree, everything committed so launch (bound to the
 // git commit) can succeed from a clean tree.
@@ -157,14 +163,23 @@ function goodConfig(r: string, over: Record<string, unknown> = {}) {
     `out = {"ds": lc.dataset_sha256(ds), "src": lc.packaged_source_sha256(${JSON.stringify(r)}, "dummyx")}`,
   ].join("\n"));
   const cfg = {
-    dataset: "dummyx",
-    dataset_sha256: res.out.ds,
-    source_sha: headSha(r),
-    source_sha256: res.out.src,
-    image: DIGEST,
-    model: "meta-models/Muse-Glimmer-30B",
-    model_revision: REV,
+    configVersion: 1,
+    sourceSha: headSha(r),
+    sourceSha256: res.out.src,
+    dataset: { id: "dummyx", sha256: res.out.ds },
+    model: { name: "meta-models/Muse-Glimmer-30B", revision: REV },
+    image: { ref: DIGEST, digest: `sha256:${"b".repeat(64)}` },
+    prompt: { sha256: "c".repeat(64) },
+    schema: { sha256: "d".repeat(64) },
+    scorer: { sha256: "f".repeat(64) },
+    decoding: { temperature: 0, seed: 1, reasoning: "low" },
+    tokenLimits: { maxTokens: 512 },
+    timeouts: { requestMs: 60000, workDeadlineS: 700, functionTimeoutS: 840 },
+    retry: { maxAttempts: 1 },
+    modal: { allocations: 1, concurrency: 1, maxConcurrency: 2, scoredCanary: true, teardown: true, evidenceDownload: "complete" },
     review: { status: "reviewed", reviewer: "Dummy Reviewer", reviewed_at: "2026-10-27", dataset_sha256: res.out.ds },
+    glimmerDemoRequests: 0,
+    budget: { status: "PROPOSED", modalUsd: 2, sparkUsd: 0.1, totalUsd: 2.1 },
     ...over,
   };
   const p = join(r, `cfg-${Math.random().toString(36).slice(2)}.json`);
@@ -197,7 +212,7 @@ _tmp = tempfile.mkdtemp()
 _orig = pathlib.Path
 ga.Path = lambda p, *a: _orig(_tmp) / str(p).lstrip("/") if str(p).startswith("/results") else _orig(p, *a)
 ga.serve.f()
-ga.eval_in_container.f("dummyx")
+ga.eval_in_container.f("dummyx", ga._LAUNCH_CONFIG_SHA256)
 out = CMDS
 `;
 
@@ -229,8 +244,8 @@ describe("C5 launch/download wiring through an inert modal stub", () => {
     const ok = goodConfig(r);
     const good = app(r, env(ok.path), MAIN("dummyx", ok.path));
     expect(good.out).toBe(null);
-    expect(good.rec.spawn).toEqual([[["dummyx"], {}]]);
-    const bad = goodConfig(r, { source_sha256: "d".repeat(64) });
+    expect(good.rec.spawn).toEqual([[[ "dummyx", shaFile(ok.path) ], {}]]);
+    const bad = goodConfig(r, { sourceSha256: "d".repeat(64) });
     const blocked = app(r, env(bad.path), MAIN("dummyx", bad.path));
     expect(blocked.out).toBe(2);
     expect(blocked.rec.spawn).toEqual([]);
@@ -247,7 +262,7 @@ describe("C5 launch/download wiring through an inert modal stub", () => {
     const res = app(r, { GLIMMER_EVAL_DATASET: "dummyx", GLIMMER_LAUNCH_CONFIG: path }, MAIN("dummyx", path));
     const fx = res.rec.local_dirs.filter(([l]: string[]) => String(l).includes("/fixtures/"));
     expect(fx).toEqual([[join(r, "services/bot/fixtures/dummyx"), "/app/services/bot/fixtures/dummyx"]]);
-    expect(res.rec.spawn).toEqual([[["dummyx"], {}]]);
+    expect(res.rec.spawn).toEqual([[[ "dummyx", shaFile(path) ], {}]]);
     for (const [ds, envDs] of [["devy", "dummyx"], ["devy", "devy"], ["dummyx", "devy"]]) {
       const b = app(r, { GLIMMER_EVAL_DATASET: envDs!, GLIMMER_LAUNCH_CONFIG: path }, MAIN(ds!, path));
       expect(b.out).toBe(2);
@@ -274,24 +289,25 @@ describe("C5 launch/download wiring through an inert modal stub", () => {
   it("C5-6: one attestation contract rejects placeholders, mutable refs, blank reviewer, bad dates", () => {
     const r = fakeRepo();
     const { cfg } = goodConfig(r);
+    const flat = toLaunchConfig(cfg);
     const fx = join(r, "services", "bot", "fixtures");
     const check = (c: unknown) =>
       app(r, {}, `out = lc.check_launch(json.loads(${JSON.stringify(JSON.stringify(c))}), ${JSON.stringify(fx)}, invoked_dataset="dummyx")`).out as string[];
     const ok = (rev: unknown) =>
-      app(r, {}, `out = lc.review_status_ok(json.loads(${JSON.stringify(JSON.stringify(rev))}), ${JSON.stringify(cfg.dataset_sha256)})`).out;
-    expect(check(cfg)).toEqual([]);
-    expect(ok(cfg.review)).toBe(true);
+      app(r, {}, `out = lc.review_status_ok(json.loads(${JSON.stringify(JSON.stringify(rev))}), ${JSON.stringify(flat.dataset_sha256)})`).out;
+    expect(check(flat)).toEqual([]);
+    expect(ok(flat.review)).toBe(true);
     for (const bad of [
       { model_revision: "0".repeat(40) },
       { image: "registry.example/vllm-openai:latest" },
       { image: `registry.example/vllm-openai@sha256:${"0".repeat(64)}` },
       { image: `registry.example/vllm-openai:latest@sha256:${"b".repeat(64)}x` },
       { source_sha: "0".repeat(40) },
-    ]) expect(check({ ...cfg, ...bad }).length, JSON.stringify(bad)).toBeGreaterThan(0);
+    ]) expect(check({ ...flat, ...bad }).length, JSON.stringify(bad)).toBeGreaterThan(0);
     for (const rv of [{ reviewer: "   " }, { reviewer: "\t\n" }, { reviewed_at: "not-a-date" }, { reviewed_at: "2026-13-45" }, { reviewed_at: " " }]) {
-      const review = { ...cfg.review, ...rv };
+      const review = { ...flat.review, ...rv };
       expect(ok(review), JSON.stringify(rv)).toBe(false);
-      expect(check({ ...cfg, review }).length, JSON.stringify(rv)).toBeGreaterThan(0);
+      expect(check({ ...flat, review }).length, JSON.stringify(rv)).toBeGreaterThan(0);
     }
   });
 
@@ -464,7 +480,7 @@ await runEval({
     const L = parse(launch!);
     const res = app(r, L.env, `out = None\ntry:\n    ga.${L.fn}(**json.loads(${JSON.stringify(JSON.stringify(L.kwargs))}))\nexcept SystemExit as e:\n    out = e.code`);
     expect(res.out).toBe(null);
-    expect(res.rec.spawn).toEqual([[["dummyx"], {}]]);
+    expect(res.rec.spawn).toEqual([[[ "dummyx", shaFile(path) ], {}]]);
     for (const ref of res.rec.registry) expect(ref).toBe(DIGEST);
     const F = parse(fetchCmd!);
     const fr = app(r, F.env, `Volume.FILES = {"run-12/manifest.json": b"{}"}\nga.${F.fn}(**json.loads(${JSON.stringify(JSON.stringify(F.kwargs))}))\nout = 1`);

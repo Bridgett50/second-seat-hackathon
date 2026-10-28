@@ -49,8 +49,8 @@ Budget approval must cover the whole allocation, not just 780 s.
 2. Record the source SHA in the table above.
 3. Build: `cd services/bot && pnpm build`.
 4. Deploy: `python3 -m modal deploy infra/modal/glimmer_app.py`; record the image digest.
-5. Launch the bounded run: `GLIMMER_LAUNCH_CONFIG=<config> GLIMMER_EVAL_DATASET=<dataset> python3 -m modal run --detach infra/modal/glimmer_app.py --dataset <dataset> --config <config>`.
-6. Container eval command: `node scripts/redaction-eval.mjs --cases <dataset> --out-dir /results --run-id <run_id>`.
+5. Launch the bounded run: `GLIMMER_LAUNCH_CONFIG=<config> GLIMMER_EVAL_DATASET=<dataset> python3 -m modal run --detach infra/modal/glimmer_app.py --dataset <dataset> --config <config>`. Here `<config>` is the canonical nested run config (runConfig.ts shape, configVersion 1).
+6. Container eval command: `node scripts/redaction-eval.mjs --cases <dataset> --out-dir /results --run-id <run_id> --run-config <config> --run-config-sha256 <config_sha256>`.
 7. Fetch results: `python3 -m modal run infra/modal/glimmer_app.py::fetch --run-id <run_id>`.
 8. Offline rescore without inference: `node services/bot/scripts/rescore-glimmer-run.mjs --run-dir <run_dir>`; the rescore must reproduce `summary.json`/`report.txt` exactly for a complete run.
 

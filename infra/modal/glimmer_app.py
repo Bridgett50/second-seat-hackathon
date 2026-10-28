@@ -49,13 +49,18 @@ def _read_launcher_identity():
 
 
 # Launch config baked into the images: the raw bytes are read exactly once
-# at import. _LAUNCH_CONFIG is parsed from those same bytes and
-# _LAUNCH_CONFIG_SHA256 identifies them; main() re-reads the file and
-# refuses when the bytes (not just the path) changed since import.
+# at import. _LAUNCH_CONFIG is the canonical nested run config parsed from
+# those same bytes and _LAUNCH_CONFIG_SHA256 identifies them; main()
+# re-reads the file and refuses when the bytes (not just the path) changed
+# since import. _LAUNCH_PROJECTION is the explicit bound flat projection
+# computed from the canonical config; _MODEL_REVISION/_LAUNCH_IMAGE come
+# from the projection (empty when the projection fails).
 _LAUNCH_CONFIG_PATH = os.environ.get("GLIMMER_LAUNCH_CONFIG", "")
 _LAUNCH_CONFIG = {}
 _LAUNCH_CONFIG_BYTES = None
 _LAUNCH_CONFIG_SHA256 = None
+_LAUNCH_PROJECTION = None
+_LAUNCH_PROJECTION_ERRORS = ["launch config missing: GLIMMER_LAUNCH_CONFIG is unset"]
 if _LAUNCH_CONFIG_PATH:
     try:
         with open(_LAUNCH_CONFIG_PATH, "rb") as _fh:
@@ -63,12 +68,21 @@ if _LAUNCH_CONFIG_PATH:
         _LAUNCH_CONFIG_SHA256 = _sha256_hex(_LAUNCH_CONFIG_BYTES)
         _parsed = json.loads(_LAUNCH_CONFIG_BYTES.decode("utf-8"))
         _LAUNCH_CONFIG = _parsed if isinstance(_parsed, dict) else {}
+        _LAUNCH_PROJECTION, _LAUNCH_PROJECTION_ERRORS = launch_contract.project_launch(_LAUNCH_CONFIG)
     except Exception:
         _LAUNCH_CONFIG = {}
         _LAUNCH_CONFIG_BYTES = None
         _LAUNCH_CONFIG_SHA256 = None
-_MODEL_REVISION = _LAUNCH_CONFIG.get("model_revision", "") if isinstance(_LAUNCH_CONFIG, dict) else ""
-_LAUNCH_IMAGE = _LAUNCH_CONFIG.get("image", "") if isinstance(_LAUNCH_CONFIG, dict) else ""
+        _LAUNCH_PROJECTION = None
+        _LAUNCH_PROJECTION_ERRORS = ["launch config unreadable: cannot parse GLIMMER_LAUNCH_CONFIG bytes"]
+if isinstance(_LAUNCH_PROJECTION, dict):
+    _proj_model_revision = _LAUNCH_PROJECTION.get("model_revision", "")
+    _proj_image = _LAUNCH_PROJECTION.get("image", "")
+    _MODEL_REVISION = _proj_model_revision if isinstance(_proj_model_revision, str) else ""
+    _LAUNCH_IMAGE = _proj_image if isinstance(_proj_image, str) else ""
+else:
+    _MODEL_REVISION = ""
+    _LAUNCH_IMAGE = ""
 
 # Launcher identity at import; main() recomputes it and refuses on drift.
 _LAUNCHER_SHA256 = _read_launcher_identity()
@@ -142,8 +156,39 @@ def serve() -> None:
     max_containers=1,
     retries=0,
 )
-def eval_in_container(dataset: str) -> dict:
+def eval_in_container(dataset: str, config_sha256: str) -> dict:
     func_start = time.monotonic()
+    # Identity gate first: the eval runs only when the frozen launch-config
+    # bytes are present and their sha256 equals the bound config_sha256.
+    # Otherwise an explicit error is recorded and the eval does NOT run
+    # (no unconfigured fallback).
+    identity_error = None
+    if not _LAUNCH_CONFIG_BYTES:
+        identity_error = "run config missing: no frozen launch config bytes staged at import (refusing unconfigured eval)"
+    elif not isinstance(config_sha256, str) or config_sha256 == "" or _sha256_hex(_LAUNCH_CONFIG_BYTES) != config_sha256:
+        identity_error = (
+            f"run config identity mismatch: config_sha256 {config_sha256!r} != "
+            "sha256(frozen launch config bytes) (refusing)"
+        )
+    if identity_error is not None:
+        result = {
+            "health": None,
+            "seconds_to_healthy": None,
+            "eval_returncode": None,
+            "eval_stdout": "",
+            "eval_stderr": identity_error[-2000:],
+            "ran_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "run_id": None,
+        }
+        live_eval_path = Path("/results/glimmer-live-eval.json")
+        live_eval_path.parent.mkdir(parents=True, exist_ok=True)
+        live_eval_path.write_text(json.dumps(result, indent=2))
+        try:
+            results.commit()
+        except Exception:
+            pass
+        print("GLIMMER_RESULT_JSON " + json.dumps(result))
+        return result
     # Same contract builder as serve(): the frozen config's revision and
     # token limit drive the server, never hardcoded values.
     cmd = launch_contract.vllm_argv(_LAUNCH_CONFIG, host="127.0.0.1", port=8000)
@@ -189,19 +234,15 @@ def eval_in_container(dataset: str) -> dict:
                 )
                 # Materialize the frozen launch-config bytes beside the run so
                 # the eval consumes the frozen config (retry/token/decoding
-                # settings) instead of defaults. Best effort: when the
-                # bytes cannot be staged, the eval runs unconfigured as
-                # before rather than failing the whole run.
-                run_config_path = None
-                try:
-                    if _LAUNCH_CONFIG_BYTES:
-                        run_config_path = f"/results/{run_id}/run-config.json"
-                        os.makedirs(os.path.dirname(run_config_path), exist_ok=True)
-                        with open(run_config_path, "wb") as _fh:
-                            _fh.write(_LAUNCH_CONFIG_BYTES)
-                except Exception:
-                    run_config_path = None
-                node_cmd = launch_contract.eval_command(dataset, "/results", run_id, run_config_path)
+                # settings) instead of defaults. The identity gate above
+                # guarantees the bytes are present here.
+                run_config_path = f"/results/{run_id}/run-config.json"
+                os.makedirs(os.path.dirname(run_config_path), exist_ok=True)
+                with open(run_config_path, "wb") as _fh:
+                    _fh.write(_LAUNCH_CONFIG_BYTES)
+                node_cmd = launch_contract.eval_command(
+                    dataset, "/results", run_id, run_config_path, config_sha256
+                )
                 env = {
                     **os.environ,
                     "GLIMMER_BASE_URL": base_url,
@@ -295,9 +336,27 @@ def main(dataset: str = "", config: str = "") -> None:
     launcher_sha256 = _read_launcher_identity()
     if launcher_sha256 is None or launcher_sha256 != _LAUNCHER_SHA256:
         blockers.append("launcher drift: glimmer_app.py/launch_contract.py bytes changed since import (refusing)")
+    # The canonical nested config projects to the explicit flat launch
+    # dict; projection errors are blockers and every downstream gate runs
+    # on the projection, never on the raw dict.
+    try:
+        projection, projection_errors = launch_contract.project_launch(cfg)
+    except Exception as exc:
+        projection, projection_errors = None, [f"projection: cannot project launch config ({exc})"]
+    blockers = blockers + list(projection_errors)
+    launch_cfg = projection if isinstance(projection, dict) else cfg
     blockers = blockers + launch_contract.check_launch(
-        cfg, fixtures_root, invoked_dataset=dataset, repo_root=str(_repo)
+        launch_cfg, fixtures_root, invoked_dataset=dataset, repo_root=str(_repo)
     )
+    if isinstance(projection, dict):
+        if dataset != projection.get("dataset"):
+            blockers.append(
+                f"dataset mismatch: invoked {dataset!r} != projected {projection.get('dataset')!r}"
+            )
+        if env_dataset != projection.get("dataset"):
+            blockers.append(
+                f"dataset mismatch: GLIMMER_EVAL_DATASET {env_dataset!r} != projected {projection.get('dataset')!r}"
+            )
     # Git binding: the launch is bound to the recorded commit. HEAD must
     # equal the frozen source_sha and the working tree must hold no tracked
     # modifications and no untracked files besides the --config file itself
@@ -315,7 +374,7 @@ def main(dataset: str = "", config: str = "") -> None:
             _cfg_paths.append(os.path.relpath(os.path.realpath(config), _real_repo))
     except Exception:
         _cfg_paths = []
-    _frozen_sha = cfg.get("source_sha") if isinstance(cfg, dict) else None
+    _frozen_sha = launch_cfg.get("source_sha") if isinstance(launch_cfg, dict) else None
     blockers = blockers + launch_contract.git_binding_blockers(
         str(_repo), _frozen_sha, allow_untracked=tuple(_cfg_paths)
     )
@@ -331,12 +390,16 @@ def main(dataset: str = "", config: str = "") -> None:
         "dataset": dataset,
         "config": config,
         "config_sha256": cfg_sha256,
+        "projection": projection,
+        "projection_sha256": _sha256_hex(
+            json.dumps(projection, sort_keys=True).encode("utf-8")
+        ),
         "launcher_sha256": _LAUNCHER_SHA256,
         "image": _LAUNCH_IMAGE,
         "model_revision": _MODEL_REVISION,
     }
     print("LAUNCH_RECORD " + json.dumps(_LAST_LAUNCH_RECORD, sort_keys=True))
-    call = eval_in_container.spawn(dataset)
+    call = eval_in_container.spawn(dataset, cfg_sha256)
     print("CALL_ID " + call.object_id)
     return None
 

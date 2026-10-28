@@ -3,10 +3,12 @@
 // SDK-shaped `modal` stub (injected via sys.modules, never the real SDK).
 // Dummy datasets in tmp git repos only; no Modal, no network, no models.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -125,6 +127,10 @@ function headSha(r: string): string {
   return git(r, "rev-parse", "HEAD");
 }
 
+function shaFile(p: string): string {
+  return createHash("sha256").update(readFileSync(p)).digest("hex");
+}
+
 // Run python: stub modal, optional env, import the real app from the fake
 // repo, then run body; body assigns `out`. The launch record (if any) is
 // reported alongside the spawn records.
@@ -155,14 +161,23 @@ function goodConfig(r: string, over: Record<string, unknown> = {}) {
     `out = {"ds": lc.dataset_sha256(ds), "src": lc.packaged_source_sha256(${JSON.stringify(r)}, "dummyx")}`,
   ].join("\n"));
   const cfg = {
-    dataset: "dummyx",
-    dataset_sha256: res.out.ds,
-    source_sha: headSha(r),
-    source_sha256: res.out.src,
-    image: DIGEST,
-    model: "meta-models/Muse-Glimmer-30B",
-    model_revision: REV,
+    configVersion: 1,
+    sourceSha: headSha(r),
+    sourceSha256: res.out.src,
+    dataset: { id: "dummyx", sha256: res.out.ds },
+    model: { name: "meta-models/Muse-Glimmer-30B", revision: REV },
+    image: { ref: DIGEST, digest: `sha256:${"b".repeat(64)}` },
+    prompt: { sha256: "c".repeat(64) },
+    schema: { sha256: "d".repeat(64) },
+    scorer: { sha256: "f".repeat(64) },
+    decoding: { temperature: 0, seed: 1, reasoning: "low" },
+    tokenLimits: { maxTokens: 512 },
+    timeouts: { requestMs: 60000, workDeadlineS: 700, functionTimeoutS: 840 },
+    retry: { maxAttempts: 1 },
+    modal: { allocations: 1, concurrency: 1, maxConcurrency: 2, scoredCanary: true, teardown: true, evidenceDownload: "complete" },
     review: { status: "reviewed", reviewer: "Dummy Reviewer", reviewed_at: "2026-10-27", dataset_sha256: res.out.ds },
+    glimmerDemoRequests: 0,
+    budget: { status: "PROPOSED", modalUsd: 2, sparkUsd: 0.1, totalUsd: 2.1 },
     ...over,
   };
   const p = join(r, `cfg-${Math.random().toString(36).slice(2)}.json`);
@@ -185,13 +200,13 @@ describe("E8 launch bound to the git commit", () => {
     const env = { GLIMMER_EVAL_DATASET: "dummyx", GLIMMER_LAUNCH_CONFIG: path };
     const ok = app(r, env, MAIN("dummyx", path));
     expect(ok.out).toBe(null);
-    expect(ok.rec.spawn).toEqual([[["dummyx"], {}]]);
+    expect(ok.rec.spawn).toEqual([[[ "dummyx", shaFile(path) ], {}]]);
     expect(ok.record).not.toBe(null);
   });
 
   it("E8-2: fabricated source_sha (valid hex, not HEAD) is refused", () => {
     const r = fakeRepo();
-    const { path } = goodConfig(r, { source_sha: "a".repeat(40) });
+    const { path } = goodConfig(r, { sourceSha: "a".repeat(40) });
     const env = { GLIMMER_EVAL_DATASET: "dummyx", GLIMMER_LAUNCH_CONFIG: path };
     const blocked = app(r, env, MAIN("dummyx", path));
     expect(blocked.out).toBe(2);
