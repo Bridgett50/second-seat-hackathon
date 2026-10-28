@@ -32,7 +32,7 @@ add_problem() {
 }
 
 emit_json() {
-JSON_OUT="$(BASE_SHA="$BASE_SHA" PROBLEMS="$PROBLEMS" TESTSTATUS="$TESTSTATUS" python3 - <<'EOF'
+JSON_OUT="$(BASE_SHA="$BASE_SHA" HEAD_SHA="$HEAD_SHA" HEAD_TREE="$HEAD_TREE" PROBLEMS="$PROBLEMS" TESTSTATUS="$TESTSTATUS" CASES="$WORK/cases.jsonl" python3 - <<'EOF'
 import json, os
 probs = []
 with open(os.environ["PROBLEMS"]) as f:
@@ -40,6 +40,15 @@ with open(os.environ["PROBLEMS"]) as f:
         line = line.strip()
         if line:
             probs.append(json.loads(line))
+cases = []
+try:
+    with open(os.environ["CASES"]) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                cases.append(json.loads(line))
+except OSError:
+    pass
 tests = []
 crit = {}
 try:
@@ -57,7 +66,12 @@ for t in crit.get("tests", []) or []:
             return default
     tests.append({"id": tid, "head": rd("head", "fail"), "base": rd("base", "fail")})
 print(json.dumps({"passed": len(probs) == 0, "base": os.environ["BASE_SHA"],
-                  "problems": probs, "tests": tests}))
+                  "parent_sha": os.environ.get("BASE_SHA", ""),
+                  "head_sha": os.environ.get("HEAD_SHA", ""),
+                  "head_tree": os.environ.get("HEAD_TREE", ""),
+                  "problems": probs, "tests": tests, "cases": cases,
+                  "limitations": ["case status comes from the declared report format; the verifier does not prove an assertion is semantically equivalent to the criterion",
+                                  "removed-line check is textual, not semantic"]}))
 EOF
 )"
 printf '%s\n' "$JSON_OUT"
@@ -89,21 +103,21 @@ SEALED_RX="$(sealed_regex)"
 BASE="$BASE_OVERRIDE"
 PREPARE=""
 if [ ! -f .muse/criteria.json ]; then
-  add_problem "no_criteria" ".muse/criteria.json is missing"
+  add_problem "empty_criteria" ".muse/criteria.json is missing"
 else
   eval "$(python3 - <<'EOF'
 import json
 try:
     c = json.load(open(".muse/criteria.json"))
 except Exception as e:
-    print('CRIT_ERR=%s' % e)
+    print('CRIT_ERR=%s' % "bad criteria.json")
 else:
     import shlex
     print('CRIT_BASE=%s' % shlex.quote(str(c.get("base", ""))))
     print('CRIT_PREPARE=%s' % shlex.quote(str(c.get("prepare", "") or "")))
 EOF
 )"
-  if [ -n "${CRIT_ERR:-}" ]; then add_problem "no_criteria" "bad criteria.json: $CRIT_ERR"; fi
+  if [ -n "${CRIT_ERR:-}" ]; then add_problem "empty_criteria" "bad criteria.json"; fi
   if [ -z "$BASE" ]; then BASE="${CRIT_BASE:-}"; fi
   PREPARE="${CRIT_PREPARE:-}"
 fi
@@ -113,6 +127,59 @@ if [ -z "$BASE_SHA" ]; then
   add_problem "bad_base" "cannot resolve base ref: $BASE"
   BASE_SHA="HEAD"
 fi
+HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo "")"
+TMPIDX="$(mktemp "${TMPDIR:-/tmp}/muse-idx-XXXXXX")"
+HEAD_TREE=""
+if GIT_INDEX_FILE="$TMPIDX" git read-tree HEAD 2>/dev/null || GIT_INDEX_FILE="$TMPIDX" git read-tree --empty 2>/dev/null; then
+  if GIT_INDEX_FILE="$TMPIDX" git add -A 2>/dev/null; then
+    HEAD_TREE="$(GIT_INDEX_FILE="$TMPIDX" git write-tree 2>/dev/null || echo "")"
+  fi
+fi
+rm -f "$TMPIDX"
+CRIT_OK=1
+CRIT_PROB=""
+CRIT_DETAIL=""
+eval "$(python3 - <<'EOF'
+import json, shlex
+try:
+    c = json.load(open(".muse/criteria.json"))
+except Exception:
+    print("CRIT_OK=0")
+    print("CRIT_PROB=%s" % shlex.quote("empty_criteria"))
+    print("CRIT_DETAIL=%s" % shlex.quote("missing or invalid criteria.json"))
+else:
+    tests = c.get("tests")
+    if not tests:
+        print("CRIT_OK=0")
+        print("CRIT_PROB=%s" % shlex.quote("empty_criteria"))
+        print("CRIT_DETAIL=%s" % shlex.quote("tests is empty"))
+    else:
+        bad = ""
+        for t in tests:
+            t = t or {}
+            cases = t.get("cases")
+            if not cases:
+                bad = "test %s has no cases" % (t.get("id", "t"))
+                break
+            for cs in cases:
+                if not isinstance(cs, dict) or not cs.get("id"):
+                    bad = "test %s has a case without id" % (t.get("id", "t"))
+                    break
+                if cs.get("kind") not in ("regression", "guard"):
+                    bad = "case %s has bad kind" % (cs.get("id"))
+                    break
+                if cs.get("kind") == "regression" and not cs.get("expect"):
+                    bad = "regression case %s has no expect" % (cs.get("id"))
+                    break
+            if bad:
+                break
+        if bad:
+            print("CRIT_OK=0")
+            print("CRIT_PROB=%s" % shlex.quote("no_cases"))
+            print("CRIT_DETAIL=%s" % shlex.quote(bad))
+EOF
+)"
+if [ "$CRIT_OK" != "1" ]; then add_problem "$CRIT_PROB" "$CRIT_DETAIL"; fi
 
 # --- sealed policy first: no test command and no worktree before this passes ---
 POLICY_FILE="$ROOT/.sealed-paths"
@@ -271,6 +338,7 @@ while IFS= read -r p; do
   [ -n "$p" ] || continue
   if ! is_testfile "$p"; then continue; fi
   if grep -qxF "$p" "$DELETED" 2>/dev/null; then continue; fi
+  if grep -qxF "$p" "$TESTFILES" 2>/dev/null && git cat-file -e "$BASE_SHA:$p" 2>/dev/null; then continue; fi  # per-test removed-line check covers it
   if ! git cat-file -e "$BASE_SHA:$p" 2>/dev/null; then continue; fi  # new file
   if [ ! -f "$p" ]; then continue; fi
   before="$(count_its "$p" 1)"; after="$(count_its "$p" 0)"
@@ -280,11 +348,217 @@ while IFS= read -r p; do
   fi
 done < "$CHANGED"
 
-# --- d) per-test fail-then-pass ---
-WEAK_RX='Cannot find module|ERR_MODULE_NOT_FOUND|Failed to load|No test files found|does not provide an export named|is not a function|SyntaxError'
+# --- d) per-test fail-then-pass (per-case evidence) ---
 NTESTS="$(python3 -c 'import json
 try: print(len(json.load(open(".muse/criteria.json")).get("tests", []) or []))
 except Exception: print(0)')"
+if [ "${CRIT_OK:-1}" != "1" ]; then NTESTS=0; fi
+: > "$WORK/cases.jsonl"
+
+parse_cases() {
+  # Reads CASES_JSON, MODE (lines|vitest-json), LOG, REPJSON; writes OUT.
+  python3 - <<'EOF'
+import json, os, re
+cases = json.load(open(os.environ["CASES_JSON"]))
+mode = os.environ.get("MODE", "lines")
+def blank():
+    return {str(c.get("id")): {"status": "missing", "message": ""} for c in cases}
+out = None
+if mode == "vitest-json":
+    try:
+        d = json.load(open(os.environ["REPJSON"]))
+    except Exception:
+        out = blank()
+    else:
+        tr = d.get("testResults")
+        if not isinstance(tr, list):
+            out = blank()
+        else:
+            bad_suite = False
+            for e in tr:
+                if isinstance(e, dict) and e.get("status") == "failed" and not e.get("assertionResults"):
+                    bad_suite = True
+                    break
+            if bad_suite:
+                out = blank()
+            else:
+                asserts = []
+                for e in tr:
+                    if isinstance(e, dict):
+                        ar = e.get("assertionResults") or []
+                        if isinstance(ar, list):
+                            asserts.extend(a for a in ar if isinstance(a, dict))
+                out = {}
+                for c in cases:
+                    cid = str(c.get("id"))
+                    m = [a for a in asserts if a.get("fullName") == cid]
+                    if not m:
+                        m = [a for a in asserts if a.get("title") == cid]
+                    fails = [a for a in m if a.get("status") == "failed"]
+                    passes = [a for a in m if a.get("status") == "passed"]
+                    if fails:
+                        msgs = []
+                        for a in fails:
+                            fm = a.get("failureMessages")
+                            if isinstance(fm, list):
+                                msgs.extend(str(x) for x in fm)
+                            elif fm:
+                                msgs.append(str(fm))
+                        out[cid] = {"status": "fail", "message": "\n".join(msgs)}
+                    elif passes:
+                        out[cid] = {"status": "pass", "message": ""}
+                    else:
+                        out[cid] = {"status": "missing", "message": ""}
+else:
+    try:
+        text = open(os.environ["LOG"], errors="replace").read()
+    except OSError:
+        text = ""
+    found = {}
+    for line in text.splitlines():
+        m = re.match(r"^PASS\s+(\S+)\s*$", line)
+        if m:
+            found.setdefault(m.group(1), []).append(("pass", ""))
+            continue
+        m = re.match(r"^FAIL\s+(\S+?)\s*(?::\s?(.*))?$", line)
+        if m:
+            found.setdefault(m.group(1), []).append(("fail", m.group(2) or ""))
+    out = {}
+    for c in cases:
+        cid = str(c.get("id"))
+        evs = found.get(cid, [])
+        fails = [m for s, m in evs if s == "fail"]
+        passes = [m for s, m in evs if s == "pass"]
+        if fails:
+            out[cid] = {"status": "fail", "message": fails[0]}
+        elif passes:
+            out[cid] = {"status": "pass", "message": ""}
+        else:
+            out[cid] = {"status": "missing", "message": ""}
+json.dump(out, open(os.environ["OUT"], "w"))
+EOF
+}
+
+classify_cases() {
+  # Reads WORK, TESTSTATUS, PROBLEMS, TID, TCMD, REPORT, SID, WEAKENED.
+  # Appends case rows to cases.jsonl, problems, and per-test head/base aggregates.
+  python3 - <<'EOF'
+import json, os, re
+work = os.environ["WORK"]
+ts = os.environ["TESTSTATUS"]
+tid = os.environ["TID"]
+tcmd = os.environ["TCMD"]
+report = os.environ["REPORT"]
+sid = os.environ["SID"]
+weakened = [w for w in os.environ.get("WEAKENED", "").split(" ") if w]
+cases = json.load(open(os.path.join(work, "cases-%s.json" % sid)))
+head = json.load(open(os.path.join(work, "parsed-%s.head.json" % sid)))
+def readf(p, d=""):
+    try:
+        return open(p).read().strip() or d
+    except OSError:
+        return d
+setup_failed = readf(os.path.join(ts, sid + ".setup_failed")) == "1"
+prep_failed = readf(os.path.join(ts, sid + ".prep_failed")) == "1"
+try:
+    base_exit = int(readf(os.path.join(ts, sid + ".base_exit"), "1"))
+except ValueError:
+    base_exit = 1
+base = {}
+if not (setup_failed or prep_failed):
+    try:
+        base = json.load(open(os.path.join(work, "parsed-%s.base.json" % sid)))
+    except Exception:
+        base = {}
+probs = []
+rows = []
+head_all = True
+base_all = True
+for c in cases:
+    cid = str(c.get("id"))
+    kind = c.get("kind")
+    expect = c.get("expect") or ""
+    disc = c.get("disclosure") or ""
+    hc = head.get(cid)
+    if isinstance(hc, dict) and hc.get("status") in ("pass", "fail", "missing"):
+        h = hc.get("status")
+        hm = str(hc.get("message") or "")
+    else:
+        h, hm = "missing", ""
+    if setup_failed:
+        br, obs = "setup-failed", ""
+    elif prep_failed:
+        br, obs = "prepare-failed", ""
+    elif base_exit == 124:
+        br, obs = "timeout", ""
+    else:
+        b = base.get(cid)
+        if not isinstance(b, dict):
+            br, obs = "missing", ""
+        elif b.get("status") == "pass":
+            br, obs = "passed", ""
+        elif b.get("status") == "missing":
+            br, obs = "missing", ""
+        else:
+            msg = str(b.get("message") or "")
+            try:
+                matched = bool(expect) and re.search(expect, msg) is not None
+            except re.error:
+                matched = False
+            if matched:
+                br, obs = "assertion", msg[:500]
+            else:
+                br, obs = "unexpected-failure", msg[:500]
+    if h != "pass":
+        head_all = False
+    if br != "passed":
+        base_all = False
+    weak = bool(weakened) and kind == "regression"
+    if weak:
+        if disc:
+            cl, cert = "uncertified-disclosed", False
+        else:
+            cl, cert = "uncertified", False
+            probs.append({"code": "test_modified_uncertified",
+                          "detail": "%s.%s: %s has removed lines vs base" % (tid, cid, " ".join(weakened))})
+    elif h != "pass":
+        cl, cert = "fails-on-head", False
+        d = "%s.%s: head %s" % (tid, cid, h)
+        if hm:
+            d += ": %s" % hm[:200]
+        probs.append({"code": "fails_on_head", "detail": d})
+    elif kind == "regression":
+        if br == "assertion":
+            cl, cert = "certified-regression", True
+        elif br == "passed":
+            cl, cert = "passes-on-base", False
+            probs.append({"code": "passes_on_base", "detail": "%s.%s passed on base" % (tid, cid)})
+        else:
+            cl, cert = "invalid-before", False
+            d = "%s.%s: base %s" % (tid, cid, br)
+            if obs:
+                d += ": %s" % obs[:200]
+            probs.append({"code": "invalid_before", "detail": d})
+    else:
+        cl, cert = "guard", False
+        if br in ("assertion", "unexpected-failure"):
+            d = "%s.%s: guard failed on base (%s)" % (tid, cid, br)
+            if obs:
+                d += ": %s" % obs[:200]
+            probs.append({"code": "guard_failed_on_base", "detail": d})
+    rows.append({"test": tid, "id": cid, "kind": kind, "command": tcmd, "report": report,
+                 "head": h, "base_reason": br, "classification": cl, "certified": cert,
+                 "expected": expect, "observed": obs})
+open(os.path.join(ts, sid + ".head"), "w").write("pass" if head_all else "fail")
+open(os.path.join(ts, sid + ".base"), "w").write("pass" if base_all else "fail")
+with open(os.path.join(work, "cases.jsonl"), "a") as f:
+    for r in rows:
+        f.write(json.dumps(r) + "\n")
+with open(os.environ["PROBLEMS"], "a") as f:
+    for p in probs:
+        f.write(json.dumps(p) + "\n")
+EOF
+}
 
 i=0
 while [ "$i" -lt "$NTESTS" ]; do
@@ -293,25 +567,57 @@ import json, shlex, sys
 t = json.load(open(".muse/criteria.json"))["tests"][int(sys.argv[1])]
 print("TID=%s" % shlex.quote(str(t.get("id", "t"))))
 print("TCMD=%s" % shlex.quote(str(t.get("cmd", ""))))
+print("REPORT=%s" % shlex.quote(str(t.get("report") or "lines")))
+ts = t.get("timeout_s", 600)
+try:
+    ts = int(ts)
+except Exception:
+    ts = 600
+if ts <= 0:
+    ts = 600
+print("TTIMEOUT=%d" % ts)
 import os
 files = t.get("files", []) or []
 print("TFILES_N=%d" % len(files))
 for n, f in enumerate(files):
     print("TFILE_%d=%s" % (n, shlex.quote(str(f))))
+cases = t.get("cases", []) or []
+print("TCASES_N=%d" % len(cases))
+print("TCASES_JSON=%s" % shlex.quote(json.dumps(cases)))
 EOF
 )"
   sid="$(printf '%s' "$TID" | tr -c 'A-Za-z0-9_.-' '_')"
-  # head run
+  printf '%s' "$TCASES_JSON" > "$WORK/cases-$sid.json"
+  # weakening for this test: removed lines vs base in listed files that exist at base
+  WEAKENED=""
+  n=0
+  while [ "$n" -lt "${TFILES_N:-0}" ]; do
+    eval "f=\$TFILE_$n"
+    if git cat-file -e "$BASE_SHA:$f" 2>/dev/null; then
+      if git diff "$BASE_SHA" -- "$f" 2>/dev/null | grep -qE '^-[^-]'; then
+        WEAKENED="${WEAKENED:+$WEAKENED }$f"
+      fi
+    fi
+    n=$((n + 1))
+  done
+  # head run (every cmd under timeout; fresh case report for vitest-json)
+  HEADREP=""
+  if [ "$REPORT" = "vitest-json" ]; then HEADREP="$(mktemp "${TMPDIR:-/tmp}/muse-cases-XXXXXX")"; fi
   set +e
-  (sh -c "$TCMD" >"$TESTLOGS/$sid.head.log" 2>&1)
-  head_st=$?
-  set -e
-  if [ "$head_st" -eq 0 ]; then head_res="pass"; else
-    head_res="fail"
-    tail20="$(tail -n 20 "$TESTLOGS/$sid.head.log")"
-    add_problem "fails_on_head" "$TID: $tail20"
+  if [ -n "$HEADREP" ]; then
+    (MUSE_CASE_REPORT="$HEADREP" timeout "$TTIMEOUT" sh -c "$TCMD" >"$TESTLOGS/$sid.head.log" 2>&1)
+    head_st=$?
+  else
+    (env -u MUSE_CASE_REPORT timeout "$TTIMEOUT" sh -c "$TCMD" >"$TESTLOGS/$sid.head.log" 2>&1)
+    head_st=$?
   fi
-  printf '%s' "$head_res" > "$TESTSTATUS/$sid.head"
+  set -e
+  printf '%s' "$head_st" > "$TESTSTATUS/$sid.head_exit"
+  if [ -n "$HEADREP" ]; then
+    cp "$HEADREP" "$WORK/report-$sid.head.json" 2>/dev/null || true
+    rm -f "$HEADREP"
+  fi
+  CASES_JSON="$WORK/cases-$sid.json" MODE="$REPORT" LOG="$TESTLOGS/$sid.head.log" REPJSON="$WORK/report-$sid.head.json" OUT="$WORK/parsed-$sid.head.json" parse_cases
   # base worktree
   WT="$(mktemp -d "${TMPDIR:-/tmp}/muse-base-XXXXXX")"
   base_res="fail"
@@ -365,7 +671,10 @@ EOF
     git worktree remove --force "$WT" >/dev/null 2>&1 || true
     git worktree prune >/dev/null 2>&1 || true
     rm -rf "$WT" || true
-    base_res="fail"
+    printf '1' > "$TESTSTATUS/$sid.setup_failed"
+    printf '0' > "$TESTSTATUS/$sid.prep_failed"
+    printf '1' > "$TESTSTATUS/$sid.base_exit"
+    WORK="$WORK" TESTSTATUS="$TESTSTATUS" PROBLEMS="$PROBLEMS" TID="$TID" TCMD="$TCMD" REPORT="$REPORT" SID="$sid" WEAKENED="$WEAKENED" classify_cases
   else
     # copy the test's files from the working tree
     n=0
@@ -378,28 +687,45 @@ EOF
       n=$((n + 1))
     done
     if [ -n "$PREPARE" ]; then
-      (cd "$WT" && sh -c "$PREPARE" >>"$TESTLOGS/$sid.base.log" 2>&1) || true
-    fi
-    set +e
-    (cd "$WT" && sh -c "$TCMD" >>"$TESTLOGS/$sid.base.log" 2>&1)
-    base_st=$?
-    set -e
-    if [ "$base_st" -eq 0 ]; then
-      base_res="pass"
-      add_problem "passes_on_base" "$TID"
+      set +e
+      (cd "$WT" && sh -c "$PREPARE" >>"$TESTLOGS/$sid.base.log" 2>&1)
+      prep_st=$?
+      set -e
     else
-      if grep -qE "$WEAK_RX" "$TESTLOGS/$sid.base.log" 2>/dev/null; then
-        base_res="weak"
-        add_problem "weak_before" "$TID"
+      prep_st=0
+    fi
+    if [ -n "$PREPARE" ] && [ "$prep_st" -ne 0 ]; then
+      printf '1' > "$TESTSTATUS/$sid.prep_failed"
+    else
+      printf '0' > "$TESTSTATUS/$sid.prep_failed"
+    fi
+    if [ "$(cat "$TESTSTATUS/$sid.prep_failed")" = "1" ]; then
+      base_st=1
+    else
+      BASEREP=""
+      if [ "$REPORT" = "vitest-json" ]; then BASEREP="$(mktemp "${TMPDIR:-/tmp}/muse-cases-XXXXXX")"; fi
+      set +e
+      if [ -n "$BASEREP" ]; then
+        (cd "$WT" && MUSE_CASE_REPORT="$BASEREP" timeout "$TTIMEOUT" sh -c "$TCMD" >>"$TESTLOGS/$sid.base.log" 2>&1)
+        base_st=$?
       else
-        base_res="fail"
+        (cd "$WT" && env -u MUSE_CASE_REPORT timeout "$TTIMEOUT" sh -c "$TCMD" >>"$TESTLOGS/$sid.base.log" 2>&1)
+        base_st=$?
+      fi
+      set -e
+      if [ -n "$BASEREP" ]; then
+        cp "$BASEREP" "$WORK/report-$sid.base.json" 2>/dev/null || true
+        rm -f "$BASEREP"
       fi
     fi
+    printf '%s' "$base_st" > "$TESTSTATUS/$sid.base_exit"
+    CASES_JSON="$WORK/cases-$sid.json" MODE="$REPORT" LOG="$TESTLOGS/$sid.base.log" REPJSON="$WORK/report-$sid.base.json" OUT="$WORK/parsed-$sid.base.json" parse_cases
+    printf '0' > "$TESTSTATUS/$sid.setup_failed"
+    WORK="$WORK" TESTSTATUS="$TESTSTATUS" PROBLEMS="$PROBLEMS" TID="$TID" TCMD="$TCMD" REPORT="$REPORT" SID="$sid" WEAKENED="$WEAKENED" classify_cases
     git worktree remove --force "$WT" >/dev/null 2>&1 || true
     git worktree prune >/dev/null 2>&1 || true
     rm -rf "$WT" || true
   fi
-  printf '%s' "$base_res" > "$TESTSTATUS/$sid.base"
   printf '%s\n' "$TID" >> "$WORK/tids.txt"
   i=$((i + 1))
 done
