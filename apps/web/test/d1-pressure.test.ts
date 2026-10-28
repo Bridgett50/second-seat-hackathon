@@ -88,7 +88,7 @@ describe("D1 rejected labels fail loudly", () => {
     neg.store.approveDraft(neg.id, DRAFT);
     expect(neg.store.getState(neg.id).draft?.approved).toBe(true);
 
-    const noneOnly = await run(TEXT, cls([{ ...validLabel(), tactic: "none" }]));
+    const noneOnly = await run(TEXT, cls([{ ...validLabel(), tactic: "none", span: "" }]));
     expect(noneOnly.s.pressure?.status).toBe("valid_negative");
     expect(noneOnly.s.pressure?.items).toEqual([]);
   });

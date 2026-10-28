@@ -168,9 +168,13 @@ function assertValidMeetingId(meetingId: unknown): void {
 
 /**
  * Validate structured pressure labels against the approved transcript
- * text: every label must carry only known keys and name a known tactic;
- * every non-"none" label must name a `seg-N` segment id that refers to an
- * existing transcript segment, and carry a span (minimum length 2,
+ * text: every label must carry only known keys and name a known tactic.
+ * G4a negative-result contract: a "none" label is an assessment-level
+ * explicit negative. It is valid only when (a) it is the ONLY label in the
+ * array, (b) its span is exactly "", and (c) its segmentId names an existing
+ * seg-N segment. Any other "none" throws `UnboundAssessmentError` naming
+ * "none". Every non-"none" label must name a `seg-N` segment id that refers
+ * to an existing transcript segment, and carry a span (minimum length 2,
  * word-bounded) quoted verbatim from THAT segment — a substring of the
  * whole transcript is not enough.
  * Throws `UnboundAssessmentError` on the first unbound label, before any
@@ -184,7 +188,8 @@ export function assertBoundPressureLabels(
     throw new UnboundAssessmentError("unbound pressure assessment: transcript is not a string");
   }
   const segments = transcriptSegments(transcriptText);
-  for (const label of labels ?? []) {
+  const list = labels ?? [];
+  for (const label of list) {
     if (typeof label !== "object" || label === null) {
       throw new UnboundAssessmentError("unbound pressure assessment: label is not an object");
     }
@@ -199,7 +204,26 @@ export function assertBoundPressureLabels(
         `unbound pressure assessment: unknown tactic ${JSON.stringify(tactic) ?? "missing"}`,
       );
     }
-    if (tactic === "none") continue;
+    if (tactic === "none") {
+      if (list.length !== 1) {
+        throw new UnboundAssessmentError(
+          'unbound pressure assessment: invalid "none" assessment: a "none" label must be the only label',
+        );
+      }
+      if (typeof span !== "string" || span !== "") {
+        throw new UnboundAssessmentError(
+          'unbound pressure assessment: invalid "none" assessment: span must be exactly ""',
+        );
+      }
+      const noneMatch = typeof segmentId === "string" ? SEGMENT_ID_RE.exec(segmentId) : null;
+      const noneIndex = noneMatch === null ? -1 : Number(noneMatch[1]) - 1;
+      if (noneMatch === null || !(noneIndex >= 0 && noneIndex < segments.length)) {
+        throw new UnboundAssessmentError(
+          `unbound pressure assessment: invalid "none" assessment: unknown segment ${JSON.stringify(segmentId) ?? "missing"}`,
+        );
+      }
+      continue;
+    }
     const match = typeof segmentId === "string" ? SEGMENT_ID_RE.exec(segmentId) : null;
     const index = match === null ? -1 : Number(match[1]) - 1;
     if (match === null || !(index >= 0 && index < segments.length)) {

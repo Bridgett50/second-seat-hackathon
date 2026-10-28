@@ -233,10 +233,16 @@ function detectPressurePatterns(text: string, segmentId = ""): PressureLabel[] {
 }
 
 /**
- * ApplyPressure-style span verification against the current approved
- * segments: tactic "none" is skipped (never rejected); a label is accepted
- * only when its segmentId names a current approved segment and its span is
- * non-empty and a substring of that segment's text.
+ * G4a negative-result contract: a "none" label is an assessment-level
+ * explicit negative. It is valid only when (a) it is the ONLY label in the
+ * array, (b) its span is exactly "", and (c) its segmentId names an existing
+ * approved segment. Any other "none" (nonempty span, unknown/missing
+ * segment, mixed with any other label, malformed field) is invalid and
+ * rejects the assessment. An empty array stays a valid negative.
+ *
+ * A non-"none" label is accepted only when its segmentId names a current
+ * approved segment and its span is non-empty and a substring of that
+ * segment's text.
  */
 /**
  * An unresolved term is shown only with validated provenance: label.ask
@@ -282,6 +288,28 @@ function pressureLabelProblem(label: PressureLabel, byId: Map<string, string>): 
   return null;
 }
 
+/**
+ * Why a "none" label fails verification, or null when it is a valid explicit
+ * negative: it must be the only label, carry span exactly "", and name an
+ * existing approved segment. Anything else is an invalid "none".
+ */
+function pressureNoneProblem(
+  label: PressureLabel,
+  onlyLabel: boolean,
+  byId: Map<string, string>,
+): string | null {
+  if (!onlyLabel) {
+    return 'invalid "none" assessment: a "none" label must be the only label';
+  }
+  if (typeof label.span !== "string" || label.span !== "") {
+    return 'invalid "none" assessment: span must be exactly ""';
+  }
+  if (typeof label.segmentId !== "string" || !byId.has(label.segmentId)) {
+    return `invalid "none" assessment: unknown segment ${JSON.stringify(label.segmentId)}`;
+  }
+  return null;
+}
+
 function verifyPressureLabels(
   labels: PressureLabel[],
   segments: Segment[],
@@ -293,10 +321,14 @@ function verifyPressureLabels(
   const items: PressureItem[] = [];
   let rejected = 0;
   let firstCause = "";
+  let firstNoneCause = "";
   for (const label of labels) {
-    if (label.tactic === "none") continue;
-    const problem = pressureLabelProblem(label, byId);
+    const problem =
+      label.tactic === "none"
+        ? pressureNoneProblem(label, labels.length === 1, byId)
+        : pressureLabelProblem(label, byId);
     if (problem === null) {
+      if (label.tactic === "none") continue;
       const text = byId.get(label.segmentId) as string;
       items.push({
         id: `p${items.length + 1}`,
@@ -308,12 +340,17 @@ function verifyPressureLabels(
     } else {
       rejected += 1;
       if (firstCause === "") firstCause = problem;
+      if (label.tactic === "none" && firstNoneCause === "") firstNoneCause = problem;
     }
   }
-  // Any rejected non-"none" label fails the whole assessment: never an
-  // invisible valid_negative, and items [] so Copy gating stays disabled.
-  // valid_negative happens only for an empty array or only-"none" labels.
+  // Any rejected label — including an invalid "none" — fails the whole
+  // assessment: never an invisible valid_negative, and items [] so Copy
+  // gating stays disabled. A mixed valid positive + invalid "none" is
+  // "failed", never valid_positive. valid_negative happens only for an empty
+  // array or one valid explicit "none". The reason names "none" whenever an
+  // invalid "none" is present.
   if (rejected > 0) {
+    const cause = firstNoneCause !== "" ? firstNoneCause : firstCause;
     return {
       assessmentId: randomUUID(),
       status: "failed",
@@ -323,7 +360,7 @@ function verifyPressureLabels(
       allReviewed: false,
       source,
       offline,
-      reason: `pressure verification failed: rejected ${rejected} of ${rejected + items.length} label(s): ${firstCause}`,
+      reason: `pressure verification failed: rejected ${rejected} of ${rejected + items.length} label(s): ${cause}`,
     };
   }
   const status: PressureAssessment["status"] = items.length > 0 ? "valid_positive" : "valid_negative";
