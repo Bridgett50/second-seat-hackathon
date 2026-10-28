@@ -631,7 +631,7 @@ export type SessionPageSnapshot = {
   draft?: { text: string; origin: string; approved: boolean } | null;
   pressure?: PressureAssessment | null;
   verification?: {
-    status: "verified" | "needs_owner_review";
+    status: "verified" | "needs_owner_review" | "structural" | "redaction_checked";
     blocked: boolean;
     title: string;
     message: string;

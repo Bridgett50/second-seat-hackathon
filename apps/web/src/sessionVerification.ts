@@ -19,9 +19,9 @@ export interface VerificationCheck {
 }
 
 export interface SessionVerification {
-  status: "verified" | "needs_owner_review";
+  status: "verified" | "needs_owner_review" | "structural" | "redaction_checked";
   blocked: boolean;
-  title: "Verified" | "Needs owner review";
+  title: "Verified" | "Needs owner review" | "Structural checks passed" | "Redaction check passed";
   message: string;
   checks: VerificationCheck[];
 }
@@ -103,7 +103,14 @@ export function verifyApprovedRedaction(
     { id: "brief", label: "Brief", result: "not_run" },
     { id: "claims", label: "Claims", result: "not_run" },
   ];
-  return view(!result.passed, false, checks);
+  if (!result.passed) return view(true, false, checks);
+  return {
+    status: "redaction_checked",
+    blocked: false,
+    title: "Redaction check passed",
+    message: "Brief and claim support not checked.",
+    checks,
+  };
 }
 
 export function verifySessionBrief(
@@ -136,7 +143,22 @@ export function verifySessionBrief(
   const claimsRan = verdicts !== null && verdicts !== undefined && entryIds.length > 0;
   if (!claimsRan) {
     checks.push({ id: "claims", label: "Claims", result: "not_run" });
-    return view(false, brief.escalations.length > 0, checks);
+    if (brief.escalations.length > 0) {
+      return {
+        status: "needs_owner_review",
+        blocked: false,
+        title: "Needs owner review",
+        message: `${VERIFICATION_WARN_MESSAGE} Claim support not checked.`,
+        checks,
+      };
+    }
+    return {
+      status: "structural",
+      blocked: false,
+      title: "Structural checks passed",
+      message: "Claim support not checked.",
+      checks,
+    };
   }
   const claims = verifyClaims({ entryIds }, { verdicts });
   checks.push({
