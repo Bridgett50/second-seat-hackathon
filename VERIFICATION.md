@@ -1,0 +1,126 @@
+# Verification layer
+
+Every check below has one entry point with the same shape,
+`runVerification(ctx, work) -> { passed, feedback }`, and is meant to run at a
+fixed point in the pipeline so the model cannot skip it. `passed` is true only
+when `feedback` is empty. Each feedback line names the item and the rule that
+fired, and never repeats raw PII.
+
+**Every check fails closed.** If a check cannot read its input (malformed
+JSON, a missing verdict, no residual scanner configured, a scanner that
+throws), it blocks and says why. It never passes silently.
+
+| When | File | Check | Built by | On failure |
+|---|---|---|---|---|
+| After redaction, before the owner's approval preview | `packages/core/src/verification/verifyRedaction.ts` | `verifyRedaction` | Second Seat (pattern adapted from Meta legal-agent-workshop) | Blocked: nothing is shown for approval or sent; feedback names span index and label |
+| After the brief is generated, before it is presented as source-backed | `packages/core/src/verification/verifyBrief.ts` | `verifyBrief` | Second Seat (pattern adapted from Meta legal-agent-workshop) | Blocked on structure or dangling citations; heuristic findings escalate the entry to the owner |
+| After the support judge grades each entry, before an entry is marked verified | `packages/core/src/verification/verifyClaims.ts` | `verifyClaims` | Second Seat (pattern adapted from Meta legal-agent-workshop) | Blocked: partial/unsupported, missing, or unreadable verdicts (fail-closed) |
+
+The table mirrors `VERIFICATION_POINTS` in
+`packages/core/src/verification/index.ts`, and
+`packages/core/test/verification-doc.test.ts` keeps the two in sync.
+
+## What each check refuses
+
+- **verifyRedaction** (`ctx = { rawText, spans, residualScan }`, `work = { maskedText }`).
+  It blocks when:
+  - no residual scanner is injected (core has no dependency on the bot, so
+    callers pass the gate's `findResidualPII`);
+  - a span is out of range;
+  - the original text of a span still appears in the masked text;
+  - the scanner reports a hit or throws.
+
+  A pass never replaces the owner's approval: `ownerReviewRequired` is always
+  `true`.
+- **verifyBrief** (`ctx = { segments, frames, expectedMeetingId? }`, `work` = the brief as untrusted JSON).
+  - **Blocks** on:
+    - structure, checked by walking `EVIDENCE_BRIEF_JSON_SCHEMA`, which is
+      read as data and not changed;
+    - a meetingId for a different meeting;
+    - a citation to a segment or frame that does not exist, or a citation
+      with no id for its kind;
+    - an uncited entry that is not flagged `missing_source`;
+    - duplicate entry ids;
+    - `flagged` naming an unknown entry.
+  - **Escalates** the entry to the owner without blocking for:
+    - the existing `validateBrief` flags (unchanged);
+    - one rule that only verification applies: `ungrounded_number:N`, a
+      number in the entry text that none of the entry's cited segments
+      state.
+  - The work under review is never mutated.
+- **verifyClaims** (`ctx = { entryIds }`, `work = { verdicts: entryId -> raw judge output }`).
+  - Reads the judge's raw output in the strict support shape
+    `{grade, missing_qualifier}`.
+  - It blocks an entry when:
+    - its grade is `partial` (the feedback names the missing qualifier) or
+      `unsupported`;
+    - it has no verdict;
+    - its output is empty, not JSON, not an object, has a missing or extra
+      key, or has a grade outside the enum.
+
+## Run it
+
+```bash
+pnpm --filter @second-seat/bot build
+node services/bot/scripts/verify-run.mjs \
+  --input services/bot/fixtures/hero-input \
+  --brief services/bot/fixtures/hero-brief.recorded.json \
+  --meeting-id hero-input --skip-claims --out /tmp/verify
+```
+
+The script:
+- writes `verification.json`;
+- exits 0 only when every check ran and passed, 1 when a check blocked or
+  claims were not run, and 2 when the arguments are invalid or a path was
+  refused;
+- makes no model or network calls (`fetch` is replaced by a guard that
+  throws);
+- refuses any path containing `heldout`, `holdout` or `sealed`.
+
+If you supply no judge output, claims are reported as `not_run` and the run
+is **not verified**. `--skip-claims` records that the operator chose to skip
+them, and the run is still not verified.
+
+## Where this differs from the workshop
+
+The workshop's claims check, `agent/verification/verify_claims.py` (at
+2a8efc8, L50-54), fails open: an unreadable judgement does not block the
+memo. Second Seat's `verifyClaims` does the opposite. A judge that cannot
+answer cannot vouch for a claim, so an unreadable verdict is a refusal.
+The tests cover this: see the "blocks malformed judge output" cases in
+`packages/core/test/verification.test.ts`.
+
+## Status and known findings
+
+- **Not wired into the live session yet.** `apps/web` and `session.ts` are
+  untouched on purpose, because other open PRs change them. Today the checks
+  run through `verify-run.mjs` and the tests. Wiring them in is a follow-up,
+  and the table's **When** column says where each call belongs.
+- **The four recorded briefs** (hero, dev01-03):
+  - all pass the hard rules;
+  - `ungrounded_number` produces zero false alarms on them;
+  - `validateBrief`'s heuristic flags are noisy: 8 of the 9 hero entries
+    escalate.
+- **The synthetic `fixtures/long-meeting/brief.recorded.json`** fails the
+  structure check because it uses the categories `action` and `note`, which
+  are not in the schema. It is a load fixture and is left unchanged.
+
+## Attribution
+
+The pattern is adapted from Meta's **legal-agent-workshop**
+(<https://github.com/meta-models/legal-agent-workshop>, commit `2a8efc8`), the
+Agents 102 session "Best Practices for Verifiable Agents". The ideas reused
+are:
+- one entry point per check;
+- calls at fixed points;
+- refuse with feedback;
+- the When / File / Check / Built by / On failure table;
+- a `verify RUN` helper.
+
+The specific sources are `agent/VERIFICATION.md`, `agent/verification/*` and
+`./helper verify`.
+
+That repository publishes no license file (checked 2026-10-28; GitHub reports
+no license). So **no code or prose is copied**. This is an independent
+TypeScript implementation of the publicly described pattern, credited here
+and in each module header.
