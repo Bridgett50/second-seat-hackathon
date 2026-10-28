@@ -82,6 +82,7 @@ The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-ru
 - Models and settings: [docs/models.md](docs/models.md)
 - Failure modes: [docs/failure-modes.md](docs/failure-modes.md)
 - Recording script: [RECORDING_SCRIPT.md](RECORDING_SCRIPT.md)
+- Friday buyer tryouts: [docs/tryout-protocol.md](docs/tryout-protocol.md)
 
 Built with Muse Code (Meta's coding agent) as the build agent. Grok Bot drove and verified.
 
