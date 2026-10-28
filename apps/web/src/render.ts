@@ -472,6 +472,7 @@ export function renderBriefPage(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brief demo — Second Seat</title>
+<link rel="icon" href="data:,">
 <style>
 *{box-sizing:border-box}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;max-width:60rem;margin:0 auto;padding:1rem;line-height:1.5;color:#1a1a1a;background:#f7f7f5}
@@ -498,6 +499,7 @@ pre{white-space:pre-wrap;word-break:break-word}
 button{margin:.25rem;padding:.4rem .9rem;font:inherit}
 footer{margin-top:2rem;border-top:1px solid #999;padding-top:.5rem}
 [hidden]{display:none!important}
+body.demo #glimmer-runs,body.demo #scores-glimmer-previous,body.demo #scores-glimmer-meta,body.demo #frames{display:none}
 @media (max-width:45rem){#hero{grid-template-columns:1fr}}
 </style>
 </head>
@@ -540,6 +542,7 @@ ${renderCacheRatio(opts.cacheUsage ?? [])}
 <script type="application/json" id="transcript-data">${transcriptJson}</script>
 <script>
 (function(){
+try{if(/[?&]demo=1(&|$)/.test(location.search))document.body.classList.add("demo");}catch(e){}
 function hashDraft(text){var h=0x811c9dc5;for(var i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,0x01000193);}return (h>>>0).toString(16);}
 var section=document.getElementById("draft");
 var meetingSelect=document.getElementById("meeting-select");
@@ -767,6 +770,30 @@ const DEMO_STEPS: readonly [string, string][] = [
   ["copy", "Copy"],
 ];
 
+/** Loading-state labels for the two slow calls, by analysis mode. Live labels
+ * name the real backends; Offline labels never claim a GPU or a model call. */
+export const PROGRESS_LABELS: Readonly<Record<"offline" | "live", { redact: string; analyze: string; redactHint: string; analyzeHint: string }>> = {
+  live: {
+    redact: "Redacting on Meta Glimmer (GPU)\u2026",
+    analyze: "Writing brief with Meta Muse Spark\u2026",
+    redactHint: "Private GPU on Modal \u00b7 usually ~12 s when warm",
+    analyzeHint: "Approved redacted text only \u00b7 usually ~13\u201320 s",
+  },
+  offline: {
+    redact: "Redacting locally (offline demo)\u2026",
+    analyze: "Writing brief (offline demo, recorded fixture)\u2026",
+    redactHint: "Offline demo \u00b7 no model call",
+    analyzeHint: "Offline demo \u00b7 no model call",
+  },
+};
+
+function sessionProgressHtml(view: SessionPageView): string {
+  return `<div id="progress" role="status" aria-live="polite" data-mode="${view.mode === "live" ? "live" : "offline"}" hidden>` +
+    `<span class="spinner" aria-hidden="true"></span>` +
+    `<span><span id="progress-label"></span> <span id="progress-elapsed" aria-hidden="true"></span><br><span id="progress-hint"></span></span>` +
+    `<span id="progress-bar" aria-hidden="true"><span></span></span></div>`;
+}
+
 function sessionHeaderHtml(snap: SessionPageSnapshot, view: SessionPageView): string {
   const mode = view.mode ?? "offline";
   const live = view.liveAvailable === true;
@@ -784,10 +811,10 @@ function sessionHeaderHtml(snap: SessionPageSnapshot, view: SessionPageView): st
     `<nav id="mode-select" aria-label="Analysis mode"><span class="mode-title">Mode</span>` +
     `<a id="mode-offline" href="/session"${cur("offline")}>Offline</a>` +
     `<a id="mode-live" href="/session?mode=live"${liveAttrs}>Live (Glimmer + Spark)</a></nav>` +
-    `<label id="demo-mode-toggle"><input type="checkbox" id="demo-mode"> Demo Mode</label>` +
+    `<label id="demo-mode-toggle" title="Demo Mode streamlines the screen for recording; approvals stay on"><input type="checkbox" id="demo-mode" role="switch" aria-describedby="demo-mode-note"> <span class="demo-mode-text">Demo Mode</span> <span id="demo-mode-state" aria-hidden="true">OFF</span></label>` +
     `</header>` +
     note +
-    `<p id="demo-mode-note" hidden>Demo Mode streamlines the screen for recording. Owner approval is unchanged: you still approve the redacted text and the draft yourself.</p>` +
+    `<p id="demo-mode-note" hidden><strong>Demo Mode is on.</strong> Demo Mode streamlines the screen for recording. Owner approval is unchanged: you still approve the redacted text and the draft yourself.</p>` +
     `<ol id="steps" aria-label="Steps" hidden>${steps}</ol>`;
 }
 
@@ -803,6 +830,7 @@ export function renderSessionPage(snap: SessionPageSnapshot, view: SessionPageVi
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Session — Second Seat</title>
+<link rel="icon" href="data:,">
 <style>
 *{box-sizing:border-box}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;max-width:60rem;margin:0 auto;padding:1rem;line-height:1.5;color:#1a1a1a;background:#f7f7f5}
@@ -824,7 +852,22 @@ button:disabled{opacity:.45;cursor:not-allowed}
 #mode-select a{padding:.35rem .8rem;border:1px solid #c8c8c8;border-radius:999px;text-decoration:none;color:#1a1a1a;background:#fff}
 #mode-select a.active{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
 #mode-select a.unavailable{color:#888;border-style:dashed}
-#demo-mode-toggle{font-weight:600}
+#demo-mode-toggle{display:inline-flex;align-items:center;gap:.45rem;font-weight:700;font-size:1.05rem;padding:.45rem .95rem;border:2px solid #1f4fd1;border-radius:999px;background:#fff;color:#1f4fd1;cursor:pointer;user-select:none}
+#demo-mode-toggle input{width:1.25rem;height:1.25rem;accent-color:#0f7a4a;margin:0;cursor:pointer}
+#demo-mode-state{font-size:.75rem;letter-spacing:.06em;padding:.1rem .45rem;border-radius:999px;background:#eceff3;color:#555}
+body.demo #demo-mode-toggle{border-color:#0f7a4a;background:#0f7a4a;color:#fff}
+body.demo #demo-mode-state{background:#fff;color:#0f7a4a}
+#demo-mode-note{margin:0 0 .75rem;padding:.5rem .8rem;border-left:4px solid #0f7a4a;background:#e9f5ee;border-radius:0 .5rem .5rem 0;color:#0f4a2e}
+#progress{display:flex;align-items:center;gap:.75rem;margin:0 0 1rem;padding:.8rem 1rem;border:1px solid #c9d6f5;border-radius:.75rem;background:#eef3ff;color:#16307a;font-weight:600}
+#progress[hidden]{display:none}
+#progress .spinner{flex:none;width:1.4rem;height:1.4rem;border:3px solid #c9d6f5;border-top-color:#1f4fd1;border-radius:50%;animation:ss-spin .8s linear infinite}
+#progress-elapsed{font-variant-numeric:tabular-nums;font-weight:400;color:#33405a}
+#progress-hint{font-weight:400;font-size:.85rem;color:#4a5a80}
+#progress-bar{flex:1;min-width:6rem;height:.35rem;border-radius:999px;background:#d6e0f7;overflow:hidden}
+#progress-bar span{display:block;height:100%;width:40%;border-radius:999px;background:#1f4fd1;animation:ss-slide 1.4s ease-in-out infinite}
+@keyframes ss-spin{to{transform:rotate(360deg)}}
+@keyframes ss-slide{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+@media (prefers-reduced-motion:reduce){#progress .spinner,#progress-bar span{animation:none}}
 #offline-label,#live-label{display:inline-block;padding:.2rem .7rem;border-radius:999px;font-size:.85rem;font-weight:600}
 #offline-label{background:#eef1f6;color:#33405a}
 #live-label{background:#fff4e0;color:#7a4b00}
@@ -833,6 +876,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 #steps li.done{background:#dff3e8;color:#0f5a37}
 #steps li.current{background:#1f4fd1;color:#fff;font-weight:600}
 body.demo #payload-panel{display:none}
+body.demo #btn-approve,body.demo #btn-draft-approve{box-shadow:0 0 0 3px #bfe6d1}
 body.demo #btn-redact,body.demo #btn-approve,body.demo #btn-analyze,body.demo #btn-draft-approve,body.demo #btn-copy{font-size:1.1rem;padding:.75rem 1.6rem}
 </style>
 </head>
@@ -841,6 +885,7 @@ ${sessionHeaderHtml(snap, view)}
 <h1>Vendor brief — session</h1>
 ${snap.offline ? `<p id="offline-label">Offline demo</p>` : ""}
 <p id="session-state" role="status">${esc(sessionStateLabel(snap))}</p>
+${sessionProgressHtml(view)}
 <section id="input-section" aria-label="Transcript input">
 <h2>Transcript</h2>
 <label>Paste transcript:<textarea id="transcript-input" rows="4" cols="60"></textarea></label>
@@ -870,7 +915,14 @@ var draftStatus=document.getElementById("draft-status"),draftNote=document.getEl
 var btnDraftApprove=document.getElementById("btn-draft-approve"),btnDraftReject=document.getElementById("btn-draft-reject"),btnCopy=document.getElementById("btn-copy");
 var PAGE_MODE=${JSON.stringify(view.mode ?? "offline")};
 var demoBox=document.getElementById("demo-mode"),stepsEl=document.getElementById("steps"),demoNote=document.getElementById("demo-mode-note");
-function setDemo(on){document.body.classList.toggle("demo",on);if(stepsEl)stepsEl.hidden=!on;if(demoNote)demoNote.hidden=!on;if(demoBox)demoBox.checked=on;try{localStorage.setItem("secondSeatDemo",on?"1":"0");}catch(e){}}
+var demoState=document.getElementById("demo-mode-state");
+var PROGRESS=${JSON.stringify(PROGRESS_LABELS[view.mode === "live" ? "live" : "offline"])};
+var progEl=document.getElementById("progress"),progLabel=document.getElementById("progress-label"),progElapsed=document.getElementById("progress-elapsed"),progHint=document.getElementById("progress-hint"),progKind=null,progT0=0,progTimer=null;
+function progTick(){if(progElapsed)progElapsed.textContent=Math.floor((Date.now()-progT0)/1000)+" s";}
+function showProgress(kind){if(!progEl)return;if(progKind!==kind){progKind=kind;progT0=Date.now();progLabel.textContent=PROGRESS[kind];progHint.textContent=PROGRESS[kind+"Hint"];progEl.setAttribute("data-kind",kind);}progEl.hidden=false;progTick();if(progTimer===null)progTimer=setInterval(progTick,250);}
+function hideProgress(){progKind=null;if(progTimer!==null){clearInterval(progTimer);progTimer=null;}if(progEl){progEl.hidden=true;progEl.removeAttribute("data-kind");}}
+function syncProgress(s){if(s.state==="redaction_pending")showProgress("redact");else if(s.state==="analysis_pending")showProgress("analyze");else if(!pending)hideProgress();}
+function setDemo(on){document.body.classList.toggle("demo",on);if(demoState)demoState.textContent=on?"ON":"OFF";if(stepsEl)stepsEl.hidden=!on;if(demoNote)demoNote.hidden=!on;if(demoBox)demoBox.checked=on;try{localStorage.setItem("secondSeatDemo",on?"1":"0");}catch(e){}}
 function stepFor(s){var d=s.draft||null;if(d&&d.approved)return 5;if(d)return 4;switch(s.state){case "redaction_pending":return 1;case "review_required":return 2;case "approved":return 3;case "analysis_pending":return 3;case "completed":return 4;default:return input&&input.value.trim()?1:0;}}
 function syncSteps(s){if(!stepsEl)return;var k=stepFor(s),items=stepsEl.getElementsByTagName("li");for(var i=0;i<items.length;i++){items[i].className=i<k?"done":(i===k?"current":"");}}
 if(demoBox){demoBox.addEventListener("change",function(){setDemo(demoBox.checked);});}
@@ -885,6 +937,7 @@ function render(s){
   if(s.pressure&&typeof s.pressure.assessmentId==="string")serverAssessment=s.pressure.assessmentId;
   stateEl.textContent=labelFor(s);
   syncSteps(s);
+  syncProgress(s);
   if(offlineLabel)offlineLabel.hidden=!s.offline;
   var serverPreview=s.redactedText||"";
   if(redacted.value===lastRedacted||redacted.value===serverPreview){redacted.value=serverPreview;lastRedacted=serverPreview;}
@@ -1075,7 +1128,7 @@ input.addEventListener("input",function(){
 redacted.addEventListener("input",function(){
   invalidateLocal("preview");
 });
-btnRedact.addEventListener("click",function(){if(btnRedact.disabled||!sessionId)return;if(deb){clearTimeout(deb);deb=null;}dirty=false;pending=true;updateButtons();run(call("/api/session/transcript",{sessionId:sessionId,text:input.value}).then(function(t){if(!t.ok)return t;return call("/api/session/redact",{sessionId:sessionId});}));});
+btnRedact.addEventListener("click",function(){if(btnRedact.disabled||!sessionId)return;if(deb){clearTimeout(deb);deb=null;}dirty=false;pending=true;updateButtons();showProgress("redact");run(call("/api/session/transcript",{sessionId:sessionId,text:input.value}).then(function(t){if(!t.ok)return t;return call("/api/session/redact",{sessionId:sessionId});})).then(hideProgress,hideProgress);});
 /* corrections are sent with Approve (avoids blur/click race); the chained
    approve is skipped when the preview changed — or was invalidated — after the click */
 btnApprove.addEventListener("click",function(){
@@ -1089,7 +1142,7 @@ btnApprove.addEventListener("click",function(){
     return mut("/api/session/approve",{},{});
   }));
 });
-btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;if(dirty)return;if(redacted.value!==lastRedacted)return;stateEl.textContent=LABELS["analysis_pending"];startPoll();run(call("/api/session/analyze",{sessionId:sessionId})).then(function(){stopPoll();});});
+btnAnalyze.addEventListener("click",function(){if(btnAnalyze.disabled)return;if(dirty)return;if(redacted.value!==lastRedacted)return;stateEl.textContent=LABELS["analysis_pending"];showProgress("analyze");startPoll();run(call("/api/session/analyze",{sessionId:sessionId})).then(function(){stopPoll();hideProgress();},function(){stopPoll();hideProgress();});});
 var draftDeb=null,draftGen=0,serverDraftApproved=false,draftApproveInflight=false,draftRejectSent=false;
 draftText.addEventListener("input",function(){
   draftGen++;
