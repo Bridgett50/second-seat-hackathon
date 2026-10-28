@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOfflineBrief, createSessionStore } from "../src/session.js";
+import { TRANSPORT_FAILURE_REASON, buildOfflineBrief, createSessionStore } from "../src/session.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -111,6 +111,28 @@ describe("analysis session", () => {
     expect(s.result?.offline).toBe(true);
   });
 
+  it("stores a fixed line for transport failures and does not keep the provider body", async () => {
+    const bodies = [
+      new Error("muse-spark request rejected (400, not retried): SECRET-PROVIDER-BODY"),
+      new SyntaxError("Unexpected token 'S', \"SECRET-PROVIDER-BODY\" is not valid JSON"),
+    ];
+    for (const err of bodies) {
+      const store = createSessionStore({
+        analyzer: async () => {
+          throw err;
+        },
+      });
+      const id = store.createSession();
+      store.setTranscript(id, "hello world");
+      await store.redact(id);
+      store.approve(id);
+      const s = await store.analyze(id);
+      expect(s.state).toBe("error");
+      expect(s.reason).toBe(TRANSPORT_FAILURE_REASON);
+      expect(s.reason).not.toContain("SECRET-PROVIDER-BODY");
+    }
+  });
+
   it("stale approval blocks without calling transport", async () => {
     const analyzerCounter = { calls: 0 };
     const store = createSessionStore({
@@ -127,7 +149,8 @@ describe("analysis session", () => {
     store.correct(id, "hello changed world");
     const s = await store.analyze(id);
     expect(s.state).toBe("blocked");
-    expect(s.reason).toBeTypeOf("string");
+    expect(s.reason).toMatch(/approval/i);
+    expect(s.reason).not.toBe(TRANSPORT_FAILURE_REASON);
     expect(analyzerCounter.calls).toBe(0);
   });
 
