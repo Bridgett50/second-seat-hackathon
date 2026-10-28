@@ -23,9 +23,9 @@
     "sha256": "ba0a0756298c98c0eb95cf57709d8ac5080e7243e7774e06e8bee85330bf6481"
   },
   "review": {
-    "status": "PENDING-BRIDGETT-CONFIRMATION",
-    "reviewer": "",
-    "reviewed_at": "",
+    "status": "reviewed",
+    "reviewer": "Bridgett Sanders",
+    "reviewed_at": "2026-10-28",
     "dataset_sha256": "eb3da376443bd66aba9fd4e4eb345620b64cdba6078a4bfbece82ff0027bde43"
   },
   "decoding": {

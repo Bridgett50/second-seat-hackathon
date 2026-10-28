@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 import { validateRunConfig } from "../src/release/runConfig.js";
 
 // H4: the drafted live launch config pins the verified model revision and
-// image digest, projects cleanly through launch_contract, and stays
-// unusable (validator refuses) until Bridgett records the review.
+// image digest, projects cleanly through launch_contract, and validates now
+// that Bridgett has recorded the review (2026-10-28).
 const repo = join(__dirname, "..", "..", "..");
 const cfgPath = join(repo, "config", "live", "glimmer-launch-config.json");
 const REV = "cec94fcfd6512f2cfe708138c32533b346ea4f69";
@@ -24,13 +24,16 @@ describe("h4 live launch config", () => {
     expect(cfg.image.ref).toBe(`vllm/vllm-openai@${DIGEST}`);
   });
 
-  it("H4-2 is refused only for the pending review until Bridgett confirms", () => {
+  it("H4-2 validates with Bridgett's recorded review (confirmed 2026-10-28)", () => {
     const cfg = load();
-    const errors = validateRunConfig(cfg);
-    expect(errors.length, "pending config must not validate").toBeGreaterThan(0);
+    expect(cfg.review.status).toBe("reviewed");
+    expect(cfg.review.reviewer).toBe("Bridgett Sanders");
+    expect(cfg.review.reviewed_at).toBe("2026-10-28");
+    expect(validateRunConfig(cfg)).toEqual([]);
+    const pending = { ...cfg, review: { ...cfg.review, status: "PENDING-BRIDGETT-CONFIRMATION", reviewer: "", reviewed_at: "" } };
+    const errors = validateRunConfig(pending);
+    expect(errors.length, "pending review must not validate").toBeGreaterThan(0);
     expect(errors.every((e) => e.startsWith("review.")), `only review errors expected: ${errors.join("; ")}`).toBe(true);
-    const confirmed = { ...cfg, review: { ...cfg.review, status: "reviewed", reviewer: "Reviewer Placeholder", reviewed_at: "2026-10-28" } };
-    expect(validateRunConfig(confirmed)).toEqual([]);
   });
 
   it("H4-3 projects through launch_contract with the pinned revision and image", () => {

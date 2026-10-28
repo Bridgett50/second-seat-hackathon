@@ -1,4 +1,4 @@
-# Live launch config (PENDING Bridgett's confirmation)
+# Live launch config (confirmed by Bridgett Sanders, 2026-10-28)
 
 `glimmer-launch-config.json` is the canonical nested run config (`services/bot/src/release/runConfig.ts` shape, configVersion 1) for the live Glimmer deploy:
 
@@ -8,9 +8,9 @@ GLIMMER_LAUNCH_CONFIG=config/live/glimmer-launch-config.json python3 -m modal de
 
 With #99 (H3), the deploy ships these exact bytes into the container as `/root/glimmer-launch-config.json`.
 
-**Status: draft, PENDING Bridgett's confirmation.** `review.status` is `PENDING-BRIDGETT-CONFIRMATION` and `review.reviewer`/`review.reviewed_at` are blank on purpose, so `validateRunConfig` rejects this file until Bridgett confirms. To confirm, set `"status": "reviewed"`, `"reviewer": "Bridgett Sanders"`, and `"reviewed_at": "<YYYY-MM-DD>"`. Grok Bot did not attest the review.
+**Status: confirmed.** Bridgett Sanders confirmed the pinned revision and image digest on 2026-10-28, so `review.status` is `reviewed`, `review.reviewer` is `Bridgett Sanders` and `review.reviewed_at` is `2026-10-28`. `validateRunConfig` now accepts this file. (It was drafted by Grok Bot as `PENDING-BRIDGETT-CONFIRMATION`; the review was recorded on Bridgett's explicit approval.)
 
-Note: `serve()` reads only `model.revision`, the image ref/digest and `tokenLimits.contextTokens`, so a deploy would *not* stop on the pending review. Validate before deploying (step 2 of the morning runbook):
+Note: `serve()` reads only `model.revision`, the image ref/digest and `tokenLimits.contextTokens`, so a deploy would *not* stop on an unreviewed config. Validate before deploying (step 2 of the morning runbook):
 
 ```sh
 node -e 'import("./services/bot/dist/src/release/runConfig.js").then(m=>{const e=m.validateRunConfig(JSON.parse(require("fs").readFileSync("config/live/glimmer-launch-config.json","utf8")));console.log(e.length?e:"VALID");process.exit(e.length?1:0)})'
