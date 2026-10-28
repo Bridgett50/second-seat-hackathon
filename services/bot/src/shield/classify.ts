@@ -375,9 +375,12 @@ export class FixturePressureClassifier implements PressureClassifier {
   }
 }
 
-export function defaultPressureClassifier(recordedPath: string): PressureClassifier | SparkPressureClassifier {
+export function defaultPressureClassifier(
+  recordedPath: string,
+  opts?: { maxAttempts?: number; fetchImpl?: typeof fetch },
+): PressureClassifier | SparkPressureClassifier {
   if (shieldMode() === "live") {
-    return new SparkPressureClassifier();
+    return new SparkPressureClassifier(opts);
   }
   return new FixturePressureClassifier(recordedPath);
 }

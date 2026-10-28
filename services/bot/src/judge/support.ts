@@ -433,10 +433,14 @@ export class FixtureSupportJudge implements SupportJudge {
   }
 }
 
-/** Default judge: live only with an API key and explicit opt-in; else fixture. */
-export function defaultSupportJudge(fixturePath: string): SupportJudge | SparkSupportJudge {
+/** Default judge: live only with an API key and explicit opt-in; else fixture.
+ * `opts` (e.g. `sparkProofClientOptions(runConfig)`) is forwarded to the live client. */
+export function defaultSupportJudge(
+  fixturePath: string,
+  opts?: { maxAttempts?: number; fetchImpl?: typeof fetch },
+): SupportJudge | SparkSupportJudge {
   if (supportMode() === "live") {
-    return new SparkSupportJudge();
+    return new SparkSupportJudge(opts);
   }
   return new FixtureSupportJudge(fixturePath);
 }
