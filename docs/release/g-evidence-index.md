@@ -99,7 +99,7 @@ Limitation: parent sources plus head tests; full suites web 222/222, bot 309/309
 |----|------|--------|------|
 | #90 | G4b | f655a1502bfe2e8e56b29a45e58b6496aa40dda5 | 9c8a4b0419ab2178da7164deb272a909033aca56 |
 
-Cases: G4-4r (fails-on-head), G4-6 (fails-on-head), G4-7 (fails-on-head), G4-8g (guard) (all three `verify-*.json` attempts agree; run 1 evidence in `evidence/G4b-run1`).
+Cases: G4-4r (certified-regression), G4-6 (certified-regression), G4-7 (certified-regression), G4-8g (guard), per `evidence/G4b/verify-1.json` and `evidence/G4b-run1/verify-1.json`/`verify-2.json`. `evidence/G4b/verify-2.json` and `verify-3.json` (fails-on-head) are run 2's automatic retries after the out-of-scope revert disclosed in `evidence/G4b/NOTES.md`; the sources were restored and the independent before/after in NOTES.md (before: 3 FAIL with tokens, guard passes; after: 4/4) is the final result.
 
 Limitation: head test with parent session.ts and render.ts.
 
