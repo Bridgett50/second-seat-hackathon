@@ -70,7 +70,7 @@ describe("E6 ledger correction", () => {
 
   it("E6-5 E-series draft note with E1/E2/E4/E5, E3 not fixed, review link, no invented PR/SHA or founder facts", () => {
     for (const e of ["E1", "E2", "E4", "E5"]) expect(FOUR, e).toContain(e);
-    expect(FOUR).toMatch(/E3[^.\n]*not fixed/i);
+    expect(FOUR).toMatch(/E3[^.\n]*fixed in draft E7[^.\n]*#73[^.\n]*pending review/i);
     expect(FOUR).toContain("docs/codex/cursor-D-review.md");
     expect(FOUR).toMatch(/fail-before\/pass-after/i);
   });

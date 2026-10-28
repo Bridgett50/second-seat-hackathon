@@ -53,13 +53,13 @@ The deterministic pattern layer runs by default in both offline and live modes a
 
 ### Ledger corrections (E6) and current limitations
 
-Current limitations match [docs/codex/cursor-D-review.md](docs/codex/cursor-D-review.md): F4 partly open (in the open page an A->B->A edit keeps Copy disabled, but a reload after an A->B->A edit during a held approval can still show Copy enabled because approveDraft does not revoke on input); F5 closed; F6 closed (old build failure fixed at de50552).
+Current limitations match [docs/codex/cursor-D-review.md](docs/codex/cursor-D-review.md): F4 partly open (in the open page an A->B->A edit keeps Copy disabled, but a reload after an A->B->A edit during a held approval can still show Copy enabled because approveDraft does not revoke on input; a fix is in draft PR E7 (#73, unmerged, unreviewed) pending review/merge: editing while a draft is approved or an approval is in flight revokes server approval immediately, so a reload after an A->B->A edit keeps Copy disabled, tested fail-before/pass-after by apps/web/e2e/e3-reload.spec.ts; F4 remains partly open on the reviewed baseline until review and merge); F5 closed; F6 closed (old build failure fixed at de50552).
 
 Superseded wording (no longer claimed): "any edit to the draft or transcript clears the approval" — replaced by the open-page plus reload-caveat statement above.
 
 ### E-series fixes (draft, unmerged)
 
-Draft PRs with fail-before/pass-after tests: E1 (D1-1/F1), E2 (D4-4/D4-6/F7), E4 (D5-1/D5-2/D5-3/F8), E5 (D3-2/D3-4/F9). E3 (F4 reload) not fixed. See [docs/codex/cursor-D-review.md](docs/codex/cursor-D-review.md).
+Draft PRs with fail-before/pass-after tests: E1 (D1-1/F1), E2 (D4-4/D4-6/F7), E3 (F4 reload) fixed in draft E7 (#73, unmerged, unreviewed) pending review/merge (tested fail-before/pass-after by apps/web/e2e/e3-reload.spec.ts), E4 (D5-1/D5-2/D5-3/F8), E5 (D3-2/D3-4/F9), E8 (D4-3) in draft PR (#74, unmerged, unreviewed) pending review/merge binding launch to git HEAD == source_sha with a clean working tree with changes outside the packaged hash refusing with zero spawns (tested by services/bot/test/e8-gitsha.test.ts). On the reviewed baseline F4 remains partly open and D4-3 remains partly open until review and merge. See [docs/codex/cursor-D-review.md](docs/codex/cursor-D-review.md).
 
 ## Why it matters
 
