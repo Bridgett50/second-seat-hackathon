@@ -26,8 +26,8 @@ existing evidence-run facts from [runbook-holdout-run.md](../runbook-holdout-run
   How to verify: demonstrate exactly one supported behavior from the current build,
   e.g. editing the draft clears approval so `#btn-copy` disables until the exact
   current text is re-approved; or pressure items must each finish review before Copy
-  is enabled; or Shield flags a draft matching the commitment checks we test
-  (advisory only — copying still requires explicit approval of that exact text).
+  is enabled. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it.
+  Do not present that layer as a finished result. Copying still requires explicit approval of that exact text.
   Do not stage a capability the build does not have. Status: pending.
 - [ ] **Criterion 4 — Show the approved payload, resolving citation, draft approval, and exact clipboard result.**
   How to verify: on camera, show the approved text, its resolving citation(s),

@@ -40,6 +40,10 @@ Then choose **Live** in the header, or open http://localhost:4173/session?mode=l
 
 The image / SAM path is experimental. It is hidden from the UI and makes no calls unless `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`.
 
+## Security
+
+The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-run sessions and stopped right after (`modal app stop second-seat-glimmer -y`, 0 containers). The public link is demo-only.
+
 ## How We Use Meta's Models
 
 **Glimmer: private redaction on open weights.** `meta-models/Muse-Glimmer-30B` runs as open weights, self-hosted with vLLM on Modal (one A100-80GB, scale-to-zero, `infra/modal/glimmer_app.py`). It is served from the `vllm/vllm-openai:muse-glimmer` image with `--reasoning-parser muse_glimmer`. Raw meeting text goes only here. Redaction runs at **temperature 0.0** with no top_p/top_k and low reasoning strength, and returns strict JSON spans (`{"spans":[],"boxes":[]}` when there is nothing to mask, plus "never guess"). That follows the cookbook structured-output recipe. We knowingly depart from the vLLM guide's advice against greedy decoding, because redaction has to be repeatable and auditable. Glimmer requests carry a 90 s timeout and a 2048 max-token default. A request that fails counts as a miss, never as a pass.
@@ -53,7 +57,7 @@ The image / SAM path is experimental. It is hidden from the UI and makes no call
 - *Sending raw text to Spark.* Rejected. Personal details are masked on our own GPU first, and a human approves the redacted text before anything reaches Spark.
 - *One shared cache key for every call.* Rejected. Different prompts under one key fragment the cache, so we use one key per call family.
 - *Default sampling for redaction.* Rejected. Temperature 0 gives the same masks for the same input.
-- *A model-based pressure classifier in the live session.* Rejected for now. The session uses deterministic patterns, and you must review every flagged item before Copy unlocks. The Spark Shield classifier is a standalone path and isn't credited in the demo.
+- *A model-based pressure classifier in the live session.* Rejected for now. The session uses deterministic patterns, and you must review every flagged item before Copy unlocks. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. It isn't credited in the demo.
 - *Recursive JSON schemas.* Rejected. The API returns HTTP 400 on a `$ref` cycle, so the brief schema is flattened to a fixed depth.
 - *Images and SAM in the core flow.* Rejected. The core flow is text-only, and images stay behind an explicit experimental flag.
 - *Auto-sending replies.* Rejected. Copy is the only exit, and only after you approve the exact draft.
@@ -64,8 +68,7 @@ The image / SAM path is experimental. It is hidden from the UI and makes no call
 - Glimmer redaction, historical Modal run (Oct 26): 6/8 requests completed, `complete: false`. It's shown with its limits, not as a headline (`services/bot/fixtures/glimmer-run/`).
 - Live end-to-end (Oct 28, 2026, `main` `0365fdb`): 3/3 runs passed. Glimmer on Modal A100 redaction about 12.5 s, Spark `muse-spark-1.3` brief 13–19 s, all names/phones/emails masked, about $0.22 GPU (owner's private run summary).
 - Seeded-error support judge: caught 9/9 with 0/4 false alarms on a small synthetic suite (`eval/results/support-score.json`).
-- Resistance table (`node eval/resistance-table.mjs --split dev`, #115): off, pattern-only, and pattern+Spark on the public dev fixtures. pattern+Spark uses the recorded Spark labels already in the repo. The sealed held-out run is scheduled for Nov 2 and is not run here.
-- Persuasion Shield dev report (`node eval/shield-report.mjs --split dev`, #114): pattern, recorded Spark, and the approval gate, each as N/M with a Wilson 95% interval, plus a mutation check. The sealed held-out run is scheduled for Nov 2 and is not run here.
+- Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it (`node eval/resistance-table.mjs --split dev` and `node eval/shield-report.mjs --split dev`, #114/#115).
 
 ## Known Issues
 
@@ -79,6 +82,7 @@ The image / SAM path is experimental. It is hidden from the UI and makes no call
 - Models and settings: [docs/models.md](docs/models.md)
 - Failure modes: [docs/failure-modes.md](docs/failure-modes.md)
 - Recording script: [RECORDING_SCRIPT.md](RECORDING_SCRIPT.md)
+- Friday buyer tryouts: [docs/tryout-protocol.md](docs/tryout-protocol.md)
 
 Built with Muse Code (Meta's coding agent) as the build agent. Grok Bot drove and verified.
 
