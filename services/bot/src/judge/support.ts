@@ -26,6 +26,9 @@ import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/cos
 import { PROMPT_CACHE_KEYS } from "../promptCache.js";
 import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
+/** Development ceiling. The omitted default is 1, the proof cap. */
+export const SUPPORT_MAX_ATTEMPTS = 4;
+
 export const SUPPORT_MODEL = "muse-spark-1.3";
 export const SUPPORT_PROMPT_VERSION = "support-v1";
 export const SUPPORT_SEED = BRIEF_SEED;
@@ -299,9 +302,9 @@ export class SparkSupportJudge {
   private readonly fetchImpl: typeof fetch | undefined;
 
   constructor(opts?: { maxAttempts?: number; fetchImpl?: typeof fetch }) {
-    const maxAttempts = opts?.maxAttempts ?? 4;
-    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
-      throw new Error("maxAttempts must be an integer >= 1");
+    const maxAttempts = opts?.maxAttempts ?? 1;
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > SUPPORT_MAX_ATTEMPTS) {
+      throw new Error(`maxAttempts must be an integer >= 1 and <= ${SUPPORT_MAX_ATTEMPTS}`);
     }
     this.maxAttempts = maxAttempts;
     this.fetchImpl = opts?.fetchImpl;

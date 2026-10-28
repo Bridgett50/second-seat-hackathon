@@ -344,9 +344,15 @@ export function validateRunConfig(cfg: unknown): string[] {
   return errors;
 }
 
-/** Options for the Spark proof client derived from a validated run config. */
+/** Options for the Spark proof client derived from a validated run config.
+ * The proof budget is exactly one HTTP attempt. Any other value is refused
+ * here even if a caller skipped validateRunConfig.
+ */
 export function sparkProofClientOptions(cfg: { retry: { maxAttempts: number } }): { maxAttempts: number } {
-  return { maxAttempts: cfg.retry.maxAttempts };
+  if (cfg?.retry?.maxAttempts !== 1) {
+    throw new Error("retry.maxAttempts must equal 1 for the Spark proof run");
+  }
+  return { maxAttempts: 1 };
 }
 
 /** Structural view of a run config consumed by the mapping functions below. */
