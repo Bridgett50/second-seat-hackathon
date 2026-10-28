@@ -220,6 +220,17 @@ describe("verifyRedaction (fail-closed)", () => {
     expect(r.feedback.join("\n")).not.toContain("Ana");
   });
 
+  it.each([
+    ["different case", "Call ana bell at [REDACTED_phone] today."],
+    ["collapsed whitespace", "Call Ana  Bell at [REDACTED_phone] today."],
+    ["a zero-width character", "Call Ana\u200B Bell at [REDACTED_phone] today."],
+  ])("blocks a span that survives as %s, without echoing the text", (_name, maskedText) => {
+    const r = verifyRedaction({ rawText, spans, residualScan: cleanScan }, { maskedText });
+    expect(r.passed).toBe(false);
+    expect(r.feedback[0]).toBe("span 0 (person): original text still present in masked text");
+    expect(r.feedback.join("\n")).not.toMatch(/ana bell/i);
+  });
+
   it("blocks out-of-range or inverted spans", () => {
     const r = verifyRedaction(
       { rawText, spans: [{ start: 10, end: 5, label: "person" }, { start: 0, end: 999, label: "phone" }], residualScan: cleanScan },

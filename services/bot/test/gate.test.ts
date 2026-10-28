@@ -370,6 +370,31 @@ describe("privacy gate live flow", () => {
     expect(findResidualPII("iban DE89370400440532013000")).toContain("IBAN");
     expect(findResidualPII("ssn 123-45-6789")).toContain("SSN");
   });
+
+  it("detects case, spacing, format-character, digit-only, IBAN, and unicode-hyphen variants without echoing them", () => {
+    const cases: Array<[string, string, string[]?]> = [
+      ["call 5550102202", "phone number"],
+      ["call 555-0102202", "phone number"],
+      ["call \uFF15\uFF15\uFF15\uFF10\uFF11\uFF10\uFF12\uFF12\uFF10\uFF12", "phone number"],
+      ["iban de89370400440532013000", "IBAN"],
+      ["ssn 123\u201145\u20116789", "SSN-like number"],
+      ["mail b\u200Bob@example.com", "email address"],
+    ];
+    for (const [text, kind] of cases) {
+      const hit = findResidualPII(text);
+      expect(hit).toBe(kind);
+      expect(hit ?? "").not.toContain(text);
+    }
+    const lower = findResidualPII("Meet ana bell today", ["Ana Bell"]);
+    expect(lower).toBe("unredacted name from redaction spans");
+    const spaced = findResidualPII("Meet Ana  Bell today", ["Ana Bell"]);
+    expect(spaced).toBe("unredacted name from redaction spans");
+    const zwsp = findResidualPII("Meet Ana\u200B Bell today", ["Ana Bell"]);
+    expect(zwsp).toBe("unredacted name from redaction spans");
+    for (const hit of [lower, spaced, zwsp]) {
+      expect(hit).not.toMatch(/ana bell/i);
+    }
+  });
 });
 
 describe("gated entry points reject plain strings", () => {
