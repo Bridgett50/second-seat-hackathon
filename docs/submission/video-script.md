@@ -6,16 +6,15 @@ Founder story: done — supplied in the README founder section. User observation
 
 ## Opening line (founder-supplied)
 
-> "In September, a vendor and I agreed on seven hundred dollars a month by phone. The written quote said seven-fifty. I caught it, and they fixed it. Second Seat helps the next owner catch it too."
+> "Just last month, on September 7, a vendor and I agreed on seven hundred dollars a month for point-of-sale hardware. The written quote said seven hundred fifty. I caught the difference and he corrected it. I built Second Seat for myself first. The idea predates this hackathon. This week's build is the live engine."
 
 The whole video follows ONE meeting through the connected `/session` flow (`apps/web`, PRs A4–A8): paste transcript text, redaction review, approval, analysis, correction, editable draft, exact-draft approval, copy. No screenshot upload. No SAM. No timed replay. SAM/image features are experimental, outside the core flow, and off by default — they do not appear in this video.
 
 | Time | On screen | Bridgett says |
 |---|---|---|
-| 0:00–0:04 | Disclosure card, held full screen: "Pre-existing: the Second Seat idea and an earlier prototype in a separate repo. Built this week (Oct 26–Nov 4): everything in this repo." | "Pre-existing: the Second Seat idea and an earlier prototype in a separate repo. Built this week (Oct 26 to Nov 4): everything in this repo." |
-| 0:04–0:10 | The `/session` page with the persistent "Offline demo" label (`#offline-label`). Empty `#transcript-input`. | "This is Second Seat, in offline demo mode. One meeting, pasted as text, start to finish. It never joins calls and never sends a reply or message to the vendor." |
-| 0:10–0:30 | Paste: meeting text filled into `#transcript-input`. Click `#btn-redact`. State reads "Review required" (`#session-state`). The redacted text is shown for review. | "I paste in the meeting text. The offline redaction step masks the PII first, and I review the redacted text before anything else happens." |
-| 0:30–0:50 | Review and correction: the redacted text on screen; a correction is made to the redacted text. Click `#btn-approve`. State reads "Approved." | "I check the redaction and fix what it got wrong. Nothing moves forward until I approve this exact text." |
+| 0:00–0:25 | Bridgett on camera. Disclosure card visible: "Pre-existing: the Second Seat idea and an earlier prototype in a separate repo. Built this week (Oct 26–Nov 4): everything in this repo." Story card: on September 7 a vendor agreed $700 a month; the written quote said $750 [README.md]. | "Just last month, on September 7, a vendor and I agreed on seven hundred dollars a month for point-of-sale hardware. The written quote said seven hundred fifty. I caught the difference and he corrected it. I built Second Seat for myself first. The idea predates this hackathon. This week's build is the live engine." |
+| 0:25–0:45 | `/session` with the "Offline demo" label (`#offline-label`). Paste the full text of `demo/synthetic-transcript.txt` into `#transcript-input`. Click `#btn-redact`. State reads "Review required" (`#session-state`). | "I paste that made-up call in. The file is demo/synthetic-transcript.txt. This is an offline demo. It never joins calls and never sends a reply or message to the vendor." |
+| 0:45–0:50 | Review and correction: the redacted text on screen; a correction is made to the redacted text. Click `#btn-approve`. State reads "Approved." | "I check the redaction and fix what it got wrong. Nothing moves forward until I approve this exact text." |
 | 0:50–1:20 | Analysis: click `#btn-analyze`. State reads "Completed." Findings with citations (`#results .result .citations a`, `#seg-N` resolving to `#segments`). Pressure badge quoting exactly the matched pattern substring "last chance" — executed evidence: Playwright test [apps/web/e2e/d2-approval.spec.ts](apps/web/e2e/d2-approval.spec.ts) test "D2-6" (full paste-to-copy flow with exact clipboard bytes, fake transport); scripted walkthrough in [apps/web/proof/d6-public-demo-session.md](apps/web/proof/d6-public-demo-session.md) (screen video pending a human recording). | "Only the text I approved gets analyzed. Every finding cites the exact segment it came from, and pressure items quoting the current transcript are shown as an assessment and must each be reviewed before Copy is enabled." |
 | 1:20–1:35 | Pressure review: tick each `.pressure-review` checkbox (check); `#btn-copy` stays disabled until all are reviewed. | "I review each pressure item first — Copy stays disabled until every item is checked." |
 | 1:35–1:50 | Draft: the editable draft (`#draft-text`). I type the reply, including a yes I should not send yet. `#btn-copy` stays disabled until approval. Approval requires an explicit click on `#btn-draft-approve`; `#draft-status` confirms; `#btn-copy` enables. Click `#btn-copy`. | "I write the reply myself — even a hasty yes. Copy stays disabled until I approve the exact current draft text with an explicit click and review every pressure item; it only writes that text to my clipboard; edits in the open page clear the approval, but a reload after an A->B->A edit during a held approval can still show Copy enabled. The reload fix is in draft E7 (#73, unmerged, unreviewed) pending review/merge, tested fail-before/pass-after by apps/web/e2e/e3-reload.spec.ts; F4 remains partly open on the reviewed baseline until review and merge. Then I copy it out. Second Seat never sends a reply or message to the vendor." |
@@ -38,8 +37,8 @@ The whole video follows ONE meeting through the connected `/session` flow (`apps
 
 ## 30–60 s 9:16 clip cut list
 
-- 0:00–0:03: disclosure card, first line spoken, cropped to vertical.
-- 0:03–0:20: paste into `#transcript-input`, `#btn-redact`, "Review required" state.
+- 0:00–0:20: on camera, September 7 story, disclosure card still visible.
+- 0:20–0:45: paste `demo/synthetic-transcript.txt` into `#transcript-input`, `#btn-redact`, "Review required" state.
 - 0:20–0:35: `#btn-approve`, `#btn-analyze`, findings with citations resolving to `#segments`.
 - 0:35–0:50: `#draft-text` edit, `#btn-draft-approve`, `#btn-copy` enabling, copy.
 - 0:50–1:00: logo and closing line.
