@@ -207,6 +207,10 @@ describe("regex backstop for phone and email (before the residual-PII check)", (
       expect(prepared.redactedText).not.toContain("0187");
       expect(prepared.redactedText).not.toContain("lumenparts");
       expect(prepared.redactedText).not.toContain(NAME);
+      // no leftover tails of a half-masked phone or email (a legacy date
+      // span landing on money over-masks it; that is safe, not a leak)
+      expect(prepared.redactedText).not.toMatch(/\[REDACTED_phone\]\d|\[REDACTED_email\]ample/);
+      expect(prepared.redactedText).toContain("at [REDACTED_phone] or");
       expect(findResidualPII(prepared.redactedText)).toBeNull();
       const token = gate.approve(prepared.runId, prepared.redactedText);
       let sent = "";
