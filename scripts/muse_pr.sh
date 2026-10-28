@@ -3,6 +3,10 @@
 #            --evidence evidence/NAME [--steps 60] [--effort medium] [--attempts 1]
 # Runs one muse session, verifies, exports evidence. One attempt by default:
 # no automatic retry (each retry is a paid call). --attempts N (1-3) opts in.
+# Backend: MUSE_BACKEND=meta (default) or MUSE_BACKEND=baseten (opt-in). Baseten
+# uses meta-models/muse-spark-open-1026 via https://inference.baseten.co/v1 with
+# web tools disabled; BASETEN_API_KEY is exported as META_API_KEY only inside the
+# muse subshell and is never printed.
 set -u
 
 TASK=""; SCOPE=""; CRITERIA=""; EVID=""; STEPS=60; EFFORT="medium"; ATTEMPTS=1
@@ -27,6 +31,15 @@ case "$ATTEMPTS" in
   *) echo "--attempts must be 1, 2 or 3" >&2; exit 2;;
 esac
 
+MUSE_BACKEND="${MUSE_BACKEND:-meta}"
+case "$MUSE_BACKEND" in
+  meta) BACKEND_ARGS=(--model muse-spark-1.3);;
+  baseten) BACKEND_ARGS=(--model meta-models/muse-spark-open-1026
+      -c 'endpoint_transport.base_url="https://inference.baseten.co/v1"'
+      -c 'endpoint_transport.auth="bearer"' --disable-web-tools);;
+  *) echo "MUSE_BACKEND must be meta or baseten" >&2; exit 2;;
+esac
+
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 if [ ! -f .agents/AGENTS.md ]; then
@@ -43,17 +56,18 @@ UUID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 attempt=1
 run_agent() {
   # $1 = prompt file or empty; $2 = inline prompt or empty; $3 = output jsonl
-  if [ -n "$1" ]; then
-    muse exec --model muse-spark-1.3 --contributor-mode off \
+  local src
+  if [ -n "$1" ]; then src=(--prompt-file "$1"); else src=("$2"); fi
+  (
+    if [ "$MUSE_BACKEND" = baseten ]; then
+      if [ -z "${BASETEN_API_KEY:-}" ]; then echo "BASETEN_API_KEY not set" >&2; exit 2; fi
+      export META_API_KEY="$BASETEN_API_KEY"
+    fi
+    muse exec "${BACKEND_ARGS[@]}" --contributor-mode off \
       --reasoning-effort "$EFFORT" --max-model-steps "$STEPS" \
       --disable-approval --sandbox-network restricted --trust-workspace \
-      --json --session-id "$UUID" --prompt-file "$1" > "$3"
-  else
-    muse exec --model muse-spark-1.3 --contributor-mode off \
-      --reasoning-effort "$EFFORT" --max-model-steps "$STEPS" \
-      --disable-approval --sandbox-network restricted --trust-workspace \
-      --json --session-id "$UUID" "$2" > "$3"
-  fi
+      --json --session-id "$UUID" "${src[@]}" > "$3"
+  )
 }
 
 FIRST_PROMPT="$(mktemp)"
