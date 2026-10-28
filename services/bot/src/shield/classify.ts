@@ -155,13 +155,14 @@ async function postChat(
   key: string,
   gated: readonly GatedText[],
   transport: "shield",
+  maxAttempts: number,
+  fetchImpl?: typeof fetch,
 ): Promise<Response> {
-  const maxAttempts = 4;
   for (let attempt = 0; ; attempt += 1) {
     // Every attempt (including retries) revalidates approval at the
     // transport boundary and records a receipt.
     const response = await dispatchGuarded(transport, gated, attempt + 1, () =>
-      fetch(PRESSURE_API_URL, {
+      (fetchImpl ?? globalThis.fetch)(PRESSURE_API_URL, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -172,13 +173,13 @@ async function postChat(
     );
     if (response.status === 400) {
       const text = await response.text();
-      throw new Error(`muse-spark pressure request rejected (400, not retried): ${text.slice(0, 500)}`);
+      throw new Error(`muse-spark pressure request rejected (400, not retried; body ${Buffer.byteLength(text)} bytes)`);
     }
     if (response.status === 429 || response.status >= 500) {
       if (attempt >= maxAttempts - 1) {
         const text = await response.text();
         throw new Error(
-          `muse-spark pressure request failed after retries (${response.status}): ${text.slice(0, 500)}`,
+          `muse-spark pressure request failed after retries (${response.status}; body ${Buffer.byteLength(text)} bytes)`,
         );
       }
       await sleep(retryAfterMs(response.headers.get("retry-after"), attempt));
@@ -186,7 +187,7 @@ async function postChat(
     }
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`muse-spark pressure request failed (${response.status}, not retried): ${text.slice(0, 500)}`);
+      throw new Error(`muse-spark pressure request failed (${response.status}, not retried; body ${Buffer.byteLength(text)} bytes)`);
     }
     return response;
   }
@@ -263,6 +264,17 @@ export interface SparkRawResult {
 /** Live classifier: exactly ONE batched call over all redacted lines. */
 export class SparkPressureClassifier {
   readonly mode = "live" as const;
+  private readonly maxAttempts: number;
+  private readonly fetchImpl: typeof fetch | undefined;
+
+  constructor(opts?: { maxAttempts?: number; fetchImpl?: typeof fetch }) {
+    const maxAttempts = opts?.maxAttempts ?? 4;
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+      throw new Error("maxAttempts must be an integer >= 1");
+    }
+    this.maxAttempts = maxAttempts;
+    this.fetchImpl = opts?.fetchImpl;
+  }
 
   /**
    * Live Spark call. Lines must arrive as gate-minted `GatedText`
@@ -322,6 +334,8 @@ export class SparkPressureClassifier {
       key,
       gatedValues,
       "shield",
+      this.maxAttempts,
+      this.fetchImpl,
     );
     const { content, usage } = await readStreamedChat(response);
     const usageRecord = {
