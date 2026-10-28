@@ -1,6 +1,6 @@
-# Live end-to-end run: prepared, NOT run
+# Live end-to-end run
 
-Status: prepared only. No live model, Modal or Baseten call was made for release/v1. It runs only with Bridgett's explicit go-ahead. **C9 paid execution and sealed holdout access remain BLOCKED.** This plan touches neither.
+Status: performed Oct 28, 2026 on main `0365fdb`, 3/3 passed. Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116). The commands below are the procedure for that run. This file does not authorize another live call. The sealed held-out run is scheduled for Nov 2; this plan does not open it.
 
 Data: only the made-up transcript in [RECORDING_SCRIPT.md](../../RECORDING_SCRIPT.md).
 
@@ -50,4 +50,4 @@ Worst case: a stuck container can bill until the 1500 s startup timeout, or up t
 5. **Spark.** A 429 or 5xx after 4 retries fails analysis, with no fixture fallback. The cost guard refuses past an estimated $5/day or 50 calls/day.
 6. **Config.** Live is never used when `SECOND_SEAT_TEST_MODE=1` is set, when `SECOND_SEAT_MODE` isn't `live`, or when `GLIMMER_BASE_URL` or `META_API_KEY` is missing. The page then says Live is not configured and stays Offline.
 7. **Auth.** The box needs a Modal token, and the key must be valid for `muse-spark-1.3`. The Glimmer client sends no auth header. If Modal proxy auth is enabled on the endpoint, Glimmer calls get 401. If it isn't, the endpoint is publicly reachable while it's up. That is a security note, not a fix made here.
-8. **Untested path.** The live session path has been tested only with fake transports. This would be its first real end-to-end run.
+8. **Oct 28 result.** The live session path passed 3/3 at `0365fdb`. The public link is demo mode with recorded examples. That live run was recorded and is labeled as a recorded run. Organizers confirmed recorded runs are fine if labeled.

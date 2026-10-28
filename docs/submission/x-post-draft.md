@@ -4,7 +4,7 @@ DRAFT — not posted. Bridgett posts. Strip the [source] brackets before posting
 
 ## Main post (<=280 chars)
 
-I run a small business. My demo AI held my drafted yes until I'd seen the pressure evidence. Offline replay; live run verified 3/3. Larger redact run incomplete: 18/39 end to end [services/bot/fixtures/glimmer-run/rescore.json]. <REPO> <VIDEO PENDING>
+I run a small business. My demo AI held my drafted yes until I'd seen the pressure evidence. Public link is demo mode with recorded examples. Live run verified 3/3 and labeled as recorded. Larger redact run incomplete: 18/39 end to end [services/bot/fixtures/glimmer-run/rescore.json]. <REPO> <VIDEO PENDING>
 
 ## Optional reply
 

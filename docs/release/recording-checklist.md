@@ -59,4 +59,4 @@ while true; do scripts/warmup.sh glimmer; sleep 240; done
 python3 -m modal app stop second-seat-glimmer
 ```
 
-Known issue on screen: the live redactor masks the contract start date "November 15" as `[REDACTED_date_of_birth]`, so the brief loses that date. See README "Known Issues".
+On-screen date note: the Oct 28 live recording at `0365fdb` still shows the contract date "November 15" masked as `[REDACTED_date_of_birth]`, because that run used the previous prompt. PR #116 leaves ordinary meeting dates unmasked. Rehearsals of that fix passed; it was not a new live model call. The live endpoint uses the new prompt only after that re-freeze is deployed. See README "Known Issues". Label any clip of the Oct 28 run as a recorded run.
