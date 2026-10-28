@@ -3,6 +3,10 @@
 Daily log of work added in this repo. Everything below was built this week;
 the earlier Second Seat idea and prototype live elsewhere and are not included.
 
+## Oct 28 — Phase 08 resistance table
+
+- `eval/resistance-table.mjs` prints off, pattern-only, and pattern+Spark catch counts with Wilson 95% intervals for the public dev fixtures. pattern+Spark reads the frozen recorded Spark labels when they are present, and otherwise says pending live run. `--split heldout` exits before any held-out file is opened. No model call.
+
 ## Oct 26 — Phase 01: Repo bootstrap
 
 - Workspace scaffold: root `package.json` (private, pnpm 9), `pnpm-workspace.yaml`, strict `tsconfig.base.json`.

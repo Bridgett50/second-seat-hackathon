@@ -62,6 +62,7 @@ The image / SAM path is experimental. It is hidden from the UI and makes no call
 - Glimmer redaction, historical Modal run (Oct 26): 6/8 requests completed, `complete: false`. It's shown with its limits, not as a headline (`services/bot/fixtures/glimmer-run/`).
 - Live end-to-end (Oct 28, 2026, `main` `0365fdb`): 3/3 runs passed. Glimmer on Modal A100 redaction about 12.5 s, Spark `muse-spark-1.3` brief 13–19 s, all names/phones/emails masked, about $0.22 GPU (owner's private run summary).
 - Seeded-error support judge: caught 9/9 with 0/4 false alarms on a small synthetic suite (`eval/results/support-score.json`).
+- Resistance table (`node eval/resistance-table.mjs --split dev`): off, pattern-only, and pattern+Spark on the public dev fixtures. pattern+Spark uses the recorded Spark labels already in the repo. The held-out split is not run.
 
 ## Known Issues
 
