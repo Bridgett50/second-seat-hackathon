@@ -86,14 +86,14 @@ A before/after probe recorded at one SHA is historical evidence only and is not 
 | G5-4 | bebf9b08a90f9d83f31d6f5563252d91cdaedf19 | apps/web/test/g5-ledger.test.ts G5-4 plus scripts/ci/ledger-check.mjs compareIdSets (docs/file checks, not behavioral proof) | pass (parent bebf9b0 fails with token id-set-incomplete; head passes; verifier certified) | static check | docs/ledger file checks; CI pairings from maintainer-recorded ci-observed.json |
 | G5-5 | bebf9b08a90f9d83f31d6f5563252d91cdaedf19 | apps/web/test/g5-ledger.test.ts G5-5 plus scripts/ci/ledger-check.mjs checkClassification (docs/file checks, not behavioral proof) | pass (parent bebf9b0 fails with token classification-missing; head passes; verifier certified) | static check | docs/ledger file checks; CI pairings from maintainer-recorded ci-observed.json |
 | G5-6 | bebf9b08a90f9d83f31d6f5563252d91cdaedf19 | apps/web/test/g5-ledger.test.ts G5-6g guard (docs/file checks, not behavioral proof) | pass (guard, passes on parent and head) | existing guard | no live inference; docs checks only |
-| G6-1 | pending (no tested head) | none in this tree | pending | not independently certified | no committed evidence in this tree; human review pending |
-| G6-2 | pending (no tested head) | none in this tree | pending | not independently certified | no committed evidence in this tree; human review pending |
-| G6-3 | pending (no tested head) | none in this tree | pending | not independently certified | no committed evidence in this tree; human review pending |
-| G6-4 | pending (no tested head) | none in this tree | pending | not independently certified | no committed evidence in this tree; human review pending |
-| G6-5 | pending (no tested head) | none in this tree | pending | not independently certified | no committed evidence in this tree; human review pending |
-| G6-6 | pending (no tested head) | none in this tree | pending | not independently certified | no committed evidence in this tree; human review pending |
-| G6-7 | pending (no tested head) | none in this tree | pending | not independently certified | no committed evidence in this tree; human review pending |
-| G6-8 | pending (no tested head) | none in this tree | pending | not independently certified | no committed evidence in this tree; human review pending |
+| G6-1 | ac455b34a874c3d80ac0f6908f2e806de38c0671 | apps/web/e2e/g6-rehearsal.spec.ts G6-1g | pass (guard, passes on parent and head) | existing guard | offline fake HTTP; dummy bundles; no live inference |
+| G6-2 | ac455b34a874c3d80ac0f6908f2e806de38c0671 | apps/web/e2e/g6-rehearsal.spec.ts G6-2g | pass (guard, passes on parent and head) | existing guard | offline fake HTTP; dummy bundles; no live inference |
+| G6-3 | ac455b34a874c3d80ac0f6908f2e806de38c0671 | apps/web/e2e/g6-rehearsal.spec.ts G6-3g | pass (guard, passes on parent and head) | existing guard | offline fake HTTP; dummy bundles; no live inference |
+| G6-4 | ac455b34a874c3d80ac0f6908f2e806de38c0671 | apps/web/e2e/g6-rehearsal.spec.ts G6-4g | pass (guard, passes on parent and head) | existing guard | offline fake HTTP; dummy bundles; no live inference |
+| G6-5 | ac455b34a874c3d80ac0f6908f2e806de38c0671 | services/bot/test/g6-replay.test.ts G6-5g | pass (guard, passes on parent and head) | existing guard | offline fake HTTP; dummy bundles; no live inference |
+| G6-6 | ac455b34a874c3d80ac0f6908f2e806de38c0671 | services/bot/test/g6-replay.test.ts G6-6g | pass (guard, passes on parent and head) | existing guard | offline fake HTTP; dummy bundles; no live inference |
+| G6-7 | ac455b34a874c3d80ac0f6908f2e806de38c0671 | the targeted runs listed in docs/release/g-evidence-index.md | pass (static check) | static check | offline fake HTTP; dummy bundles; no live inference |
+| G6-8 | ac455b34a874c3d80ac0f6908f2e806de38c0671 | docs/release/g-evidence-index.md | pass (static check) | static check | offline fake HTTP; dummy bundles; no live inference |
 
 ## 2) Sealed holdout review
 
