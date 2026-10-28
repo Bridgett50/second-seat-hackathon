@@ -21,6 +21,10 @@ the earlier Second Seat idea and prototype live elsewhere and are not included.
 Truth seal proof: seal commit 3690746 (2026-10-26 12:14:14 -05:00), made before any model run, in squash-merged PR #2 https://github.com/Bridgett50/second-seat-hackathon/pull/2 (main 8abe1d1); SHA256SUMS sha256 at seal 1e68350f2b4a3b50cd1fc7dff67b52ee5eaf7ace3d66247dc0085faaf67b3614.
 - Phase 03a: deterministic brief validators (`validateBrief` in `packages/core/src/evidence/validate.ts` plus `test/evidence-regressions.test.ts`).
 
+## Oct 28 — Glimmer date-of-birth prompt
+
+- Owner-approved change to the frozen Glimmer system prompt: only a stated date of birth or birthday is masked as `date_of_birth`. Ordinary meeting dates such as "November 15" stay in the text. The generic `DATE` alias no longer relabels those dates. Real DOB aliases still mask. Prompt hash re-frozen in `config/live/glimmer-launch-config.json` and `eval/results/prompt-freeze.md`. Model revision, image digest, schema, and scorer pins are unchanged. No new live model call in this change.
+
 ## Oct 28 — Verification wired into the session
 
 - The session calls `verifyRedaction` before a send and `verifyBrief` after the brief. `verifyClaims` runs when recorded judge verdicts are present. Hard failures stop the step with a fixed "Needs owner review" line. Warnings escalate and do not block. Offline and Demo Mode use the same path. See `VERIFICATION.md`.

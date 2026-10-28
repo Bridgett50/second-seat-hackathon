@@ -14,7 +14,7 @@
     "digest": "sha256:413c8fbecb1204a218117c77a4ea4b3a211d5686ff99c31d82ba6dd0cec8c5a6"
   },
   "prompt": {
-    "sha256": "966cd26a551bc1e957c06d85ff04c563cae13b27ec04c022fdb2bfe6c826ec73"
+    "sha256": "287f1971666026c1df1f14628157873521a32f2e1d528ae882ccc05a8a92d1b5"
   },
   "schema": {
     "sha256": "fa3842b7a1b5ec0d0aa9fe5fa5a474c12df9780590a785307fc99730549a08ac"
@@ -27,7 +27,7 @@
     "reviewer": "Bridgett Sanders",
     "reviewed_at": "2026-10-28",
     "dataset_sha256": "eb3da376443bd66aba9fd4e4eb345620b64cdba6078a4bfbece82ff0027bde43",
-    "note": "Bridgett Sanders approved the prompt/schema re-freeze for PR #104 (Glimmer entity-text redaction) on 2026-10-28; model revision and image digest unchanged."
+    "note": "Bridgett Sanders approved a prompt-only re-freeze on 2026-10-28 (1:48 PM CT): date_of_birth is only a stated birthday, ordinary calendar dates stay unmasked. Model revision, image digest, schema, and scorer pins unchanged."
   },
   "decoding": {
     "temperature": 0,

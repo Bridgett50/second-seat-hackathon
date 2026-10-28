@@ -106,9 +106,9 @@ export interface Redactor {
   health(): Promise<{ ok: boolean; label: string }>;
 }
 
-/** Date policy: every calendar date in a transcript is treated as potentially
- * identifying and masked under canonical label date_of_birth; generic DATE
- * aliases to it. Unknown labels still throw. */
+/** Date policy: only a stated date of birth or birthday is masked as
+ * date_of_birth. A generic DATE label is not a DOB and is not relabeled.
+ * Unknown labels still throw. */
 export const ALLOWED_LABELS = [
   "person",
   "phone",
@@ -146,7 +146,7 @@ export const LABEL_ALIASES: Record<string, string> = {
   DATE_OF_BIRTH: "date_of_birth",
   BIRTHDATE: "date_of_birth",
   BIRTH_DATE: "date_of_birth",
-  DATE: "date_of_birth",
+  BIRTHDAY: "date_of_birth",
 };
 
 export function normalizeGlimmerLabel(label: string): string {
@@ -155,11 +155,16 @@ export function normalizeGlimmerLabel(label: string): string {
   return label.toLowerCase();
 }
 
+/** Generic DATE is an ordinary calendar date, not a date of birth. */
+export function isGenericDateLabel(label: string): boolean {
+  return normalizeGlimmerLabel(label) === "date";
+}
+
 /** Frozen inline system message for the Glimmer redaction call (kind "text").
  * fetchBody sends exactly GLIMMER_SYSTEM_PROMPT for text requests; image
  * requests send the same string with only the "for text." kind marker
  * swapped. */
-export const GLIMMER_SYSTEM_MESSAGE = { role: "system", content: `Return JSON only for text. Example: for input "Call Ana at 555-0100" return {"spans":[{"text":"Ana","label":"person"},{"text":"555-0100","label":"phone"}],"boxes":[]}. Fields: text is the entity copied exactly, character for character, from the input (never reformat or shorten it), label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth. Do not give character offsets; list each distinct entity once and every occurrence of it is masked. Mask every calendar date as date_of_birth. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` };
+export const GLIMMER_SYSTEM_MESSAGE = { role: "system", content: `Return JSON only for text. Example: for input "Call Ana at 555-0100" return {"spans":[{"text":"Ana","label":"person"},{"text":"555-0100","label":"phone"}],"boxes":[]}. Fields: text is the entity copied exactly, character for character, from the input (never reformat or shorten it), label is one of person, phone, email, credit_card, account_number, iban, address, date_of_birth. Do not give character offsets; list each distinct entity once and every occurrence of it is masked. Mask a date as date_of_birth only when the input states it is a date of birth or birthday. Leave ordinary meeting and calendar dates unmasked. Return {"spans":[],"boxes":[]} when nothing is found or none are stated. Only return entities the input actually states; never guess.` };
 
 /** Frozen inline system prompt string: the exact message content fetchBody
  * sends for kind "text". */
@@ -302,6 +307,7 @@ export function validateGlimmerReply(input: string, parsed: unknown): ValidateGl
       const text = (s as { text?: unknown }).text;
       if (typeof text !== "string" || text.trim() === "") throw new Error("glimmer: span text must be a non-empty string");
       if (typeof label !== "string" || label === "") throw new Error("glimmer: span label must be a string");
+      if (isGenericDateLabel(label)) return [];
       const normalized = normalizeGlimmerLabel(label);
       if (!(ALLOWED_LABELS as readonly string[]).includes(normalized)) {
         throw new Error(`glimmer: unknown label "${label}"`);
@@ -316,6 +322,7 @@ export function validateGlimmerReply(input: string, parsed: unknown): ValidateGl
     // Rejects placeholder values: "n"/"s" and any other non-numbers/non-strings.
     if (!Number.isInteger(start) || !Number.isInteger(end)) throw new Error("glimmer: span start/end must be integers");
     if (typeof label !== "string" || label === "") throw new Error("glimmer: span label must be a string");
+    if (isGenericDateLabel(label)) return [];
     const st = start as number;
     const en = end as number;
     if (st < 0 || en > input.length || en <= st) throw new Error("glimmer: span out of range");

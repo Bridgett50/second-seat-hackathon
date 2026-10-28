@@ -98,9 +98,11 @@ describe("labels", () => {
     for (const raw of ["PHONE", "PHONE_NUMBER", "phone", "Phone"]) {
       expect(normalizeGlimmerLabel(raw)).toBe("phone");
     }
-    for (const raw of ["DOB", "date", "DATE_OF_BIRTH"]) {
+    for (const raw of ["DOB", "DATE_OF_BIRTH", "BIRTHDATE", "BIRTH_DATE"]) {
       expect(normalizeGlimmerLabel(raw)).toBe("date_of_birth");
     }
+    expect(normalizeGlimmerLabel("DATE")).toBe("date");
+    expect(normalizeGlimmerLabel("date")).toBe("date");
   });
 
   it("keeps originalLabel and rejects bad labels", () => {

@@ -7,7 +7,7 @@ Prompt file hashes (sha256):
 | services/bot/prompts/brief-v1.txt | fe0e1f595d9f3eb5a27afc757e09ead6ad1e165824db7e5724e6d348772bd05a |
 | services/bot/prompts/brief-v2.txt | 1fe6a6ded607a5a1fccfe8cd73b4e8215df4bb6c06042418c156e85b67a74cdc |
 | services/bot/prompts/pressure-v1.txt | 141e962264623c4407578ace881d9461371d15957e75dfa1684ee52cb7e568ab |
-| services/bot/src/private/redact.ts (inline Glimmer system prompt) | 966cd26a551bc1e957c06d85ff04c563cae13b27ec04c022fdb2bfe6c826ec73 |
+| services/bot/src/private/redact.ts (inline Glimmer system prompt) | 287f1971666026c1df1f14628157873521a32f2e1d528ae882ccc05a8a92d1b5 |
 
 Model ids and settings read from source:
 
