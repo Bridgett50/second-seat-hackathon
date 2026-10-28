@@ -24,8 +24,8 @@
 //    network. Tolerates interrupted runs (truncated trailing partial line,
 //    missing summary.json): missing cases become explicit not_run records and
 //    the result reports complete:false with a reason.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, posix } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   annotateOccurrences,
@@ -169,6 +169,23 @@ function deepEqual(a, b) {
 const RUN_ID_RE = /^[A-Za-z0-9._-]+$/;
 const CASE_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 
+// True when absPath itself or any path component at or below base is a
+// symlink (lstat, never follows the final link). Read-only check.
+function hasSymlink(absPath, base) {
+  let cur = absPath;
+  while (typeof cur === "string" && cur.length >= base.length && cur.startsWith(base) && cur !== base) {
+    try {
+      if (lstatSync(cur).isSymbolicLink()) return true;
+    } catch {
+      return false;
+    }
+    const parent = dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return false;
+}
+
 function manifestShapeErrors(manifest) {
   const errors = [];
   if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
@@ -186,6 +203,7 @@ function manifestShapeErrors(manifest) {
     return errors;
   }
   const seen = new Set();
+  const seenNorm = new Set();
   planned.forEach((c, idx) => {
     const where = `planned[${idx}]`;
     if (c === null || typeof c !== "object" || Array.isArray(c)) {
@@ -201,6 +219,7 @@ function manifestShapeErrors(manifest) {
     if (file.includes("\\")) flaw = "backslash";
     else if (file.startsWith("/")) flaw = "absolute path";
     else if (file.split("/").includes("..")) flaw = '".." segment';
+    else if (file.split("/").includes(".")) flaw = '"." segment';
     else if (!file.split("/").every((seg) => CASE_SEGMENT_RE.test(seg))) flaw = "unsafe characters";
     if (flaw !== null) {
       errors.push(`invalid manifest: unsafe case path ${JSON.stringify(file)} (${flaw})`);
@@ -210,7 +229,18 @@ function manifestShapeErrors(manifest) {
       errors.push(`invalid manifest: duplicate planned case id ${JSON.stringify(file)}`);
       return;
     }
+    let norm = file;
+    try {
+      norm = posix.normalize(file);
+    } catch {
+      norm = file;
+    }
+    if (seenNorm.has(norm)) {
+      errors.push(`invalid manifest: duplicate planned case id ${JSON.stringify(file)} (normalizes to ${JSON.stringify(norm)})`);
+      return;
+    }
     seen.add(file);
+    seenNorm.add(norm);
   });
   return errors;
 }
@@ -265,9 +295,15 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
   // Immutable inputs + annotation hashes.
   const texts = new Map();
   for (const c of plannedCases) {
+    const inputPath = join(runDir, "inputs", c.file);
+    if (hasSymlink(inputPath, runDir)) {
+      errors.push(`symlinked input file ${c.file}: inputs/${c.file} must be a regular file`);
+      texts.set(c.file, "");
+      continue;
+    }
     let text = null;
     try {
-      text = readFileSync(join(runDir, "inputs", c.file), "utf8");
+      text = readFileSync(inputPath, "utf8");
     } catch (err) {
       errors.push(`missing input file ${c.file}: ${err?.message ?? err}`);
       texts.set(c.file, "");
@@ -286,7 +322,9 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
   // Records: truncated/unparseable last line is ignored with truncated=true.
   let truncated = false;
   let parsed = [];
-  try {
+  if (hasSymlink(join(runDir, "records.jsonl"), runDir)) {
+    errors.push("symlinked records file records.jsonl: must be a regular file");
+  } else try {
     const raw = readFileSync(join(runDir, "records.jsonl"), "utf8");
     const segments = raw.split("\n");
     // Drop the single trailing empty segment from a file ending in newline.
@@ -478,7 +516,12 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
   if (errors.length > 0 || truncated || missingRecordNotices.length > 0) output.complete = false;
   const report = formatReport(recomputed, summary, misses, spanMisses);
 
-  const savedSummary = readSavedSummary(runDir);
+  let savedSummary = null;
+  if (hasSymlink(join(runDir, "summary.json"), runDir)) {
+    errors.push("symlinked summary file summary.json: must be a regular file");
+  } else {
+    savedSummary = readSavedSummary(runDir);
+  }
   const savedSummaryValid =
     savedSummary !== null && typeof savedSummary === "object" && !Array.isArray(savedSummary);
   let savedReport = null;
@@ -489,7 +532,8 @@ async function rescoreStrict(runDir, { parseAnswer } = {}) {
   }
   const mismatches = [];
   if (savedSummaryValid) {
-    for (const key of Object.keys(savedSummary)) {
+    const keys = new Set([...Object.keys(output), ...Object.keys(savedSummary)]);
+    for (const key of keys) {
       if (!deepEqual(savedSummary[key], output[key])) mismatches.push(key);
     }
     if (savedReport !== null && savedReport !== `${report}\n`) {
