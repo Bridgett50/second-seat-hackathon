@@ -12,3 +12,10 @@ the earlier Second Seat idea and prototype live elsewhere and are not included.
 - CI with typecheck, tests, and a secret scan; README, `.env.example`, license pending note.
 Truth seal proof: seal commit 3690746 (2026-10-26 12:14:14 -05:00), made before any model run, in squash-merged PR #2 https://github.com/Bridgett50/second-seat-hackathon/pull/2 (main 8abe1d1); SHA256SUMS sha256 at seal 1e68350f2b4a3b50cd1fc7dff67b52ee5eaf7ace3d66247dc0085faaf67b3614.
 - Phase 03a: deterministic brief validators (`validateBrief` in `packages/core/src/evidence/validate.ts` plus `test/evidence-regressions.test.ts`).
+
+## Oct 28 — Clean UI rebuild + AI Twin stage
+
+- Web UI design rebuilt fresh this week, inspired by the earlier prototype's look (soft purple/pink palette, rounded soft-shadow cards, pill badges, header bar). No code from the earlier prototype was copied; the theme is new plain CSS in `apps/web/src/theme.ts`.
+- "AI Twin of Bridgett" stage panel beside the brief on `/session` and `/briefs/demo`, with a visible "AI-generated" label. It loads `apps/web/public/ai-self.png` (or `.jpg`) when present and otherwise shows a pastel "BS" initials placeholder.
+- `apps/web/public/ai-self.png`: AI-generated image created Oct 28, 2026 by Bridgett with Pika AI Self (her own likeness). Only the image is used; no Pika UI elements.
+- Demo Mode switch, both approval gates, and the loading states are unchanged in behavior. Tests: `apps/web/test/clean-ui.test.ts`, `apps/web/e2e/clean-ui.spec.ts`.

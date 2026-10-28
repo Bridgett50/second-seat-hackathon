@@ -1,3 +1,4 @@
+import { THEME_CSS, briefAppBarHtml, twinStageHtml } from "./theme.js";
 import { modelChips, type RunLogLine } from "./modelStrip.js";
 import { renderCacheRatio, type CacheUsage } from "./cacheRatio.js";
 import type { PressureAssessment } from "./session.js";
@@ -168,6 +169,8 @@ export interface RenderOpts {
   seededScore?: SeededScore | null;
   heroChain?: HeroChainProof | null;
   cacheUsage?: CacheUsage[];
+  /** URL of the optional AI-self image (apps/web/public/ai-self.*); null shows the initials placeholder. */
+  aiSelfSrc?: string | null;
 }
 
 function esc(s: string): string {
@@ -501,9 +504,12 @@ footer{margin-top:2rem;border-top:1px solid #999;padding-top:.5rem}
 [hidden]{display:none!important}
 body.demo #glimmer-runs,body.demo #scores-glimmer-previous,body.demo #scores-glimmer-meta,body.demo #frames{display:none}
 @media (max-width:45rem){#hero{grid-template-columns:1fr}}
-</style>
+${THEME_CSS}</style>
 </head>
 <body>
+${briefAppBarHtml()}
+<div class="ss-shell">
+<main class="ss-main">
 <h1>Vendor brief — demo</h1>
 <p class="replay-label">Replay of recorded brief — Analysis precomputed ${esc(brief.createdAt)}</p>
 <div id="model-strip">${chipHtml}</div>
@@ -538,6 +544,9 @@ ${flaggedHtml}
 ${heroChainHtml}
 ${payloadHtml}
 ${renderCacheRatio(opts.cacheUsage ?? [])}
+</main>
+${twinStageHtml({ imageSrc: opts.aiSelfSrc ?? null, modeLabel: "Recorded replay", narrowPlacement: "after" })}
+</div>
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script type="application/json" id="transcript-data">${transcriptJson}</script>
 <script>
@@ -759,6 +768,8 @@ export type SessionPageView = {
   mode?: "offline" | "live";
   liveAvailable?: boolean;
   liveRequestedButUnavailable?: boolean;
+  /** URL of the optional AI-self image; null/undefined shows the initials placeholder. */
+  aiSelfSrc?: string | null;
 };
 
 const DEMO_STEPS: readonly [string, string][] = [
@@ -807,7 +818,7 @@ function sessionHeaderHtml(snap: SessionPageSnapshot, view: SessionPageView): st
         : "";
   const steps = DEMO_STEPS.map(([id, label], i) => `<li data-step="${id}">${i + 1}. ${esc(label)}</li>`).join("");
   return `<header id="app-header">` +
-    `<div class="brand"><strong>Second Seat</strong><span class="tagline">Redact privately. Brief with citations. You approve every step.</span></div>` +
+    `<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-text"><strong>Second Seat</strong><span class="tagline">Redact privately. Brief with citations. You approve every step.</span></span></div>` +
     `<nav id="mode-select" aria-label="Analysis mode"><span class="mode-title">Mode</span>` +
     `<a id="mode-offline" href="/session"${cur("offline")}>Offline</a>` +
     `<a id="mode-live" href="/session?mode=live"${liveAttrs}>Live (Glimmer + Spark)</a></nav>` +
@@ -878,10 +889,12 @@ body.demo #demo-mode-state{background:#fff;color:#0f7a4a}
 body.demo #payload-panel{display:none}
 body.demo #btn-approve,body.demo #btn-draft-approve{box-shadow:0 0 0 3px #bfe6d1}
 body.demo #btn-redact,body.demo #btn-approve,body.demo #btn-analyze,body.demo #btn-draft-approve,body.demo #btn-copy{font-size:1.1rem;padding:.75rem 1.6rem}
-</style>
+${THEME_CSS}</style>
 </head>
 <body>
 ${sessionHeaderHtml(snap, view)}
+<div class="ss-shell">
+<main class="ss-main">
 <h1>Vendor brief — session</h1>
 ${snap.offline ? `<p id="offline-label">Offline demo</p>` : ""}
 <p id="session-state" role="status">${esc(sessionStateLabel(snap))}</p>
@@ -899,6 +912,9 @@ ${sessionPressureHtml(snap)}
 <section id="transcript" aria-label="Approved transcript"><h2>Approved transcript segments</h2><ol id="segments">${segmentHtml}</ol></section>
 ${sessionDraftHtml(snap)}
 <section id="payload-panel" aria-label="Payload"><h2>Payload</h2>${sessionPayloadHtml(snap)}</section>
+</main>
+${twinStageHtml({ imageSrc: view.aiSelfSrc ?? null, modeLabel: view.mode === "live" ? "Live" : "Offline demo", narrowPlacement: "before" })}
+</div>
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script>
 (function(){
