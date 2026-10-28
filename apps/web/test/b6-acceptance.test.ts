@@ -137,7 +137,7 @@ describe("B6 pressure evidence in /session", () => {
   });
 
   it("B6-4: a neutral result displays without a pressure badge", async () => {
-    const { s } = await analyzed([[{ ...SCARCITY, tactic: "none" }]], "Agenda review\nNext sync is Thursday at 10");
+    const { s } = await analyzed([[{ ...SCARCITY, tactic: "none", span: "" }]], "Agenda review\nNext sync is Thursday at 10");
     const p = pressureOf(s);
     expect(p.items).toEqual([]);
     expect(p.rejected).toBe(0);
