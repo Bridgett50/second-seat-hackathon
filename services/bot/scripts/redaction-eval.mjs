@@ -64,6 +64,7 @@ if (__casesVal === undefined || __casesVal === "" || __casesVal.startsWith("--")
 const runConfigPath = flagValue("--run-config");
 const runConfigSha256 = flagValue("--run-config-sha256");
 let runConfig = null;
+let runConfigBytes = null;
 let runConfigBytesSha256 = null;
 if (runConfigSha256 !== undefined && runConfigPath === undefined) {
   console.error("error: --run-config-sha256 requires --run-config");
@@ -77,6 +78,7 @@ if (runConfigPath !== undefined) {
     console.error(`error: cannot load --run-config ${JSON.stringify(runConfigPath)}: ${err?.message ?? err}`);
     process.exit(2);
   }
+  runConfigBytes = raw;
   runConfigBytesSha256 = createHash("sha256").update(raw).digest("hex");
   if (runConfigSha256 !== undefined && runConfigBytesSha256 !== runConfigSha256) {
     console.error(
@@ -175,6 +177,9 @@ const result = await runEval({
   concurrency: runConfig === null ? 2 : concurrencyFromRunConfig(runConfig),
   ...(runId !== undefined ? { runId } : {}),
   outDir,
+  // Durable config evidence: the exact frozen bytes the eval consumed,
+  // written into the run dir right after manifest.json.
+  ...(runConfigBytes !== null ? { evidenceFiles: { "run-config.json": runConfigBytes } } : {}),
 });
 
 console.log(result.report);

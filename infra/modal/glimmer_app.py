@@ -12,6 +12,7 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -31,6 +32,13 @@ results = modal.Volume.from_name("glimmer-results", create_if_missing=True)
 
 _here = Path(__file__).resolve()
 _repo = _here.parents[2] if len(_here.parents) > 2 else Path("/")  # driver: container path is shallow
+
+# Testable roots: every /results path, the bot cwd, and the vLLM base URL go
+# through these module constants instead of literals so tests can point them
+# at tmp dirs on the imported module.
+_RESULTS_ROOT = "/results"
+_BOT_DIR = "/app/services/bot"
+_VLLM_BASE_URL = "http://127.0.0.1:8000"
 
 def _sha256_hex(data):
     return hashlib.sha256(data).hexdigest()
@@ -180,7 +188,7 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
             "ran_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "run_id": None,
         }
-        live_eval_path = Path("/results/glimmer-live-eval.json")
+        live_eval_path = Path(os.path.join(_RESULTS_ROOT, "glimmer-live-eval.json"))
         live_eval_path.parent.mkdir(parents=True, exist_ok=True)
         live_eval_path.write_text(json.dumps(result, indent=2))
         try:
@@ -192,16 +200,71 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
     # Same contract builder as serve(): the frozen config's revision and
     # token limit drive the server, never hardcoded values.
     cmd = launch_contract.vllm_argv(_LAUNCH_CONFIG, host="127.0.0.1", port=8000)
+    health_url = _VLLM_BASE_URL + "/health"
+    base_url = _VLLM_BASE_URL
+    # One unique run id per run. The frozen bytes are staged OUTSIDE the run
+    # dir at <_RESULTS_ROOT>/.staging/<run_id>/run-config.json: staging
+    # inside the run dir would create the directory the eval refuses to
+    # reuse. A pre-existing run dir or staging dir refuses the run before
+    # anything starts, and nothing is written into the existing run dir.
+    run_id = (
+        "run-"
+        + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
+        + f"-{os.getpid()}"
+    )
+    run_dir = os.path.join(_RESULTS_ROOT, run_id)
+    staging_dir = os.path.join(_RESULTS_ROOT, ".staging", run_id)
+    run_config_path = os.path.join(staging_dir, "run-config.json")
+    staged_here = False
+    reuse_error = None
+    if os.path.exists(run_dir) or os.path.exists(staging_dir):
+        reuse_error = (
+            f"run dir reuse refused (refusing reuse): {run_id} already "
+            f"exists under {_RESULTS_ROOT} (refusing)"
+        )
+    else:
+        try:
+            os.makedirs(staging_dir, exist_ok=False)
+        except FileExistsError:
+            reuse_error = (
+                f"run dir reuse refused (refusing reuse): staging dir "
+                f"{staging_dir} already exists (refusing)"
+            )
+        except OSError as exc:
+            reuse_error = (
+                f"run dir reuse refused (refusing reuse): cannot stage "
+                f"frozen config for {run_id} ({exc})"
+            )
+        else:
+            with open(run_config_path, "wb") as _fh:
+                _fh.write(_LAUNCH_CONFIG_BYTES)
+            staged_here = True
+    if reuse_error is not None:
+        result = {
+            "health": None,
+            "seconds_to_healthy": None,
+            "eval_returncode": None,
+            "eval_stdout": "",
+            "eval_stderr": reuse_error[-2000:],
+            "ran_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "run_id": None,
+        }
+        live_eval_path = Path(os.path.join(_RESULTS_ROOT, "glimmer-live-eval.json"))
+        live_eval_path.parent.mkdir(parents=True, exist_ok=True)
+        live_eval_path.write_text(json.dumps(result, indent=2))
+        try:
+            results.commit()
+        except Exception:
+            pass
+        print("GLIMMER_RESULT_JSON " + json.dumps(result))
+        return result
     # Own process group so the whole vLLM tree can be signalled on teardown.
     vllm = subprocess.Popen(cmd, start_new_session=True)
-    health_url = "http://127.0.0.1:8000/health"
-    base_url = "http://127.0.0.1:8000"
     health_status = None
     seconds_to_healthy = None
     eval_returncode = None
     eval_stdout = ""
     eval_stderr = ""
-    run_id = None
     try:
         def _probe():
             try:
@@ -224,24 +287,11 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
             if remaining_ms <= 0 or remaining_s <= 0:
                 eval_stderr = "no time remaining for eval"
             else:
-                # One unique run dir per run: /results/<run_id>/ holds
-                # manifest.json, records.jsonl, summary.json, report.txt, and
-                # the raw-response log.
-                run_id = (
-                    "run-"
-                    + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
-                    + f"-{os.getpid()}"
-                )
-                # Materialize the frozen launch-config bytes beside the run so
-                # the eval consumes the frozen config (retry/token/decoding
-                # settings) instead of defaults. The identity gate above
-                # guarantees the bytes are present here.
-                run_config_path = f"/results/{run_id}/run-config.json"
-                os.makedirs(os.path.dirname(run_config_path), exist_ok=True)
-                with open(run_config_path, "wb") as _fh:
-                    _fh.write(_LAUNCH_CONFIG_BYTES)
+                # The run dir is created exclusively by the eval itself; the
+                # frozen config reaches it via the staging path outside the
+                # run dir (staged above) plus the run's own config evidence.
                 node_cmd = launch_contract.eval_command(
-                    dataset, "/results", run_id, run_config_path, config_sha256
+                    dataset, _RESULTS_ROOT, run_id, run_config_path, config_sha256
                 )
                 env = {
                     **os.environ,
@@ -251,7 +301,7 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
                 try:
                     proc = subprocess.run(
                         node_cmd,
-                        cwd="/app/services/bot",
+                        cwd=_BOT_DIR,
                         env=env,
                         capture_output=True,
                         text=True,
@@ -263,6 +313,9 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
                 except subprocess.TimeoutExpired as exc:
                     eval_stderr = f"eval timed out: {exc}"
     finally:
+        # Remove only the staging dir this call created, whatever happened.
+        if staged_here:
+            shutil.rmtree(staging_dir, ignore_errors=True)
         result = {
             "health": health_status,
             "seconds_to_healthy": seconds_to_healthy,
@@ -273,9 +326,9 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
             "run_id": run_id if health_status == 200 else None,
         }
         live_eval_path = (
-            Path(f"/results/{result['run_id']}/glimmer-live-eval.json")
+            Path(os.path.join(_RESULTS_ROOT, result["run_id"], "glimmer-live-eval.json"))
             if result["run_id"]
-            else Path("/results/glimmer-live-eval.json")
+            else Path(os.path.join(_RESULTS_ROOT, "glimmer-live-eval.json"))
         )
         live_eval_path.parent.mkdir(parents=True, exist_ok=True)
         live_eval_path.write_text(json.dumps(result, indent=2))
@@ -414,21 +467,7 @@ def fetch(run_id: str = "") -> None:
     )
 
     def list_files(rid):
-        out = []
-        for entry in results.listdir(rid, recursive=True):
-            typ = getattr(entry, "type", None)
-            tname = getattr(typ, "name", None)
-            tvalue = getattr(typ, "value", typ)
-            if tname == "DIRECTORY" or tvalue == 2:
-                continue
-            full = getattr(entry, "path", None)
-            if not isinstance(full, str):
-                continue
-            prefix = f"{rid}/"
-            if not full.startswith(prefix):
-                continue
-            out.append(full[len(prefix):])
-        return out
+        return launch_contract.rels_from_entries(list(results.listdir(rid, recursive=True)), rid)
 
     def read_file(remote):
         return b"".join(results.read_file(remote))
