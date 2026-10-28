@@ -3,6 +3,10 @@
 Daily log of work added in this repo. Everything below was built this week;
 the earlier Second Seat idea and prototype live elsewhere and are not included.
 
+## Oct 28 — Phase 04b shield report
+
+- `eval/shield-report.mjs` prints pattern, spark, gate, and combined shield N/M with Wilson 95% intervals on the public dev fixtures, plus a mutation check. `--split heldout` is accepted and refused before any held-out file is opened.
+
 ## Oct 26 — Phase 01: Repo bootstrap
 
 - Workspace scaffold: root `package.json` (private, pnpm 9), `pnpm-workspace.yaml`, strict `tsconfig.base.json`.
