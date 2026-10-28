@@ -299,8 +299,8 @@ cat > "$H14BIN/muse" <<FAKEEOF
 #!/usr/bin/env bash
 if [ "\${1:-}" = "exec" ]; then
   printf '%s\n' "\$@" > "$H14OUT/args-\${H14TAG}.txt"
-  if [ "\${META_API_KEY:-}" = "h14-fake-baseten-value" ]; then echo bt > "$H14OUT/key-\${H14TAG}.txt"
-  elif [ "\${META_API_KEY:-}" = "h14-fake-meta-value" ]; then echo meta > "$H14OUT/key-\${H14TAG}.txt"
+  if [ "\${META_API_KEY:-}" = "h14bt77" ]; then echo bt > "$H14OUT/key-\${H14TAG}.txt"
+  elif [ "\${META_API_KEY:-}" = "h14mt77" ]; then echo meta > "$H14OUT/key-\${H14TAG}.txt"
   else echo other > "$H14OUT/key-\${H14TAG}.txt"; fi
 fi
 exit 0
@@ -314,8 +314,8 @@ printf '#!/usr/bin/env bash\nprintf "{\\"passed\\":true,\\"problems\\":[]}"\nexi
 printf 'T\n' > "$H14D/task.txt"; printf '{"base":"HEAD","tests":[]}' > "$H14D/crit.json"
 (cd "$H14D" && git add -A && git commit -qm h14base)
 H14_WHY=""
-(cd "$H14D" && export H14TAG=bt PATH="$H14BIN:$PATH" META_API_KEY=h14-fake-meta-value BASETEN_API_KEY=h14-fake-baseten-value MUSE_BACKEND=baseten && bash scripts/muse_pr.sh --task task.txt --scope a.txt --criteria crit.json --evidence evidence/H14bt > "$H14OUT/out-bt.txt" 2>&1)
-(cd "$H14D" && export H14TAG=meta PATH="$H14BIN:$PATH" META_API_KEY=h14-fake-meta-value BASETEN_API_KEY=h14-fake-baseten-value && unset MUSE_BACKEND && bash scripts/muse_pr.sh --task task.txt --scope a.txt --criteria crit.json --evidence evidence/H14m > "$H14OUT/out-meta.txt" 2>&1)
+(cd "$H14D" && export H14TAG=bt PATH="$H14BIN:$PATH" META_API_KEY=h14mt77 BASETEN_API_KEY=h14bt77 MUSE_BACKEND=baseten && bash scripts/muse_pr.sh --task task.txt --scope a.txt --criteria crit.json --evidence evidence/H14bt > "$H14OUT/out-bt.txt" 2>&1)
+(cd "$H14D" && export H14TAG=meta PATH="$H14BIN:$PATH" META_API_KEY=h14mt77 BASETEN_API_KEY=h14bt77 && unset MUSE_BACKEND && bash scripts/muse_pr.sh --task task.txt --scope a.txt --criteria crit.json --evidence evidence/H14m > "$H14OUT/out-meta.txt" 2>&1)
 A="$H14OUT/args-bt.txt"
 grep -qx "meta-models/muse-spark-open-1026" "$A" 2>/dev/null || H14_WHY="${H14_WHY}bt-model;"
 grep -qxF 'endpoint_transport.base_url="https://inference.baseten.co/v1"' "$A" 2>/dev/null || H14_WHY="${H14_WHY}bt-base-url;"
@@ -325,7 +325,7 @@ grep -qx -- "--disable-web-tools" "$A" 2>/dev/null || H14_WHY="${H14_WHY}bt-no-w
 grep -qx "muse-spark-1.3" "$H14OUT/args-meta.txt" 2>/dev/null || H14_WHY="${H14_WHY}default-not-meta;"
 grep -q "baseten" "$H14OUT/args-meta.txt" 2>/dev/null && H14_WHY="${H14_WHY}default-uses-baseten;"
 [ "$(cat "$H14OUT/key-meta.txt" 2>/dev/null)" = "meta" ] || H14_WHY="${H14_WHY}default-key-changed;"
-if grep -rq "h14-fake-baseten-value" "$H14OUT"/out-*.txt "$H14D/evidence" 2>/dev/null; then H14_WHY="${H14_WHY}key-printed;"; fi
+if grep -rq "h14bt77" "$H14OUT"/out-*.txt "$H14D/evidence" 2>/dev/null; then H14_WHY="${H14_WHY}key-printed;"; fi
 (cd "$H14D" && PATH="$H14BIN:$PATH" MUSE_BACKEND=bogus bash scripts/muse_pr.sh --task task.txt --scope a.txt --criteria crit.json --evidence evidence/H14x >/dev/null 2>&1); [ $? -eq 2 ] || H14_WHY="${H14_WHY}bogus-backend-not-exit2;"
 if [ -z "$H14_WHY" ]; then ok H14; else bad H14 "backend: $H14_WHY"; fi
 rm -rf "$H14D" "$H14BIN" "$H14OUT"
