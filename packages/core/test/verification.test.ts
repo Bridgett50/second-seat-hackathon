@@ -159,6 +159,17 @@ describe("verifyBrief (fail-closed)", () => {
     expect(r.verified).toBeNull();
   });
 
+  it("blocks an unreadable context instead of throwing", () => {
+    expect(() => verifyBrief(null as never, brief())).not.toThrow();
+    const missing = verifyBrief(null as never, brief());
+    expect(missing.passed).toBe(false);
+    expect(missing.verified).toBeNull();
+    expect(missing.feedback[0]).toMatch(/context unreadable/);
+    const badSegment = verifyBrief({ segments: [null], frames: [] } as never, brief());
+    expect(badSegment.passed).toBe(false);
+    expect(badSegment.verified).toBeNull();
+  });
+
   it("does not mutate the work under review", () => {
     const b = brief();
     b.entries[1]!.acceptance = "not_established";
@@ -230,6 +241,12 @@ describe("verifyClaims (fail-closed)", () => {
 
   it("blocks when work itself is unreadable", () => {
     expect(verifyClaims({ entryIds: ["e1"] }, null as never).passed).toBe(false);
+  });
+
+  it("blocks an unreadable entry list instead of throwing", () => {
+    expect(() => verifyClaims(null as never, { verdicts: {} })).not.toThrow();
+    expect(verifyClaims(null as never, { verdicts: {} }).passed).toBe(false);
+    expect(verifyClaims({ entryIds: "e1" as never }, { verdicts: {} }).passed).toBe(false);
   });
 
   it("parseJudgeOutput accepts only the strict support shape", () => {

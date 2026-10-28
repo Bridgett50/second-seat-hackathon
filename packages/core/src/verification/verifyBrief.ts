@@ -120,7 +120,29 @@ function ungroundedNumbers(entry: EvidenceEntry, byId: Map<string, ValidateSegme
   return entryNums.filter((n) => !stated.has(n));
 }
 
+function briefContextOk(ctx: BriefVerificationContext | null | undefined): ctx is BriefVerificationContext {
+  if (ctx == null || typeof ctx !== "object") return false;
+  if (!Array.isArray(ctx.segments) || !Array.isArray(ctx.frames)) return false;
+  for (const segment of ctx.segments) {
+    if (segment == null || typeof segment !== "object" || typeof segment.id !== "string" || typeof segment.text !== "string") {
+      return false;
+    }
+  }
+  for (const frame of ctx.frames) {
+    if (frame == null || typeof frame !== "object" || typeof frame.id !== "string") return false;
+  }
+  return true;
+}
+
 export function verifyBrief(ctx: BriefVerificationContext, work: unknown): BriefVerification {
+  if (!briefContextOk(ctx)) {
+    return {
+      passed: false,
+      feedback: ["brief: context unreadable: blocked (fail-closed)"],
+      verified: null,
+      escalations: [],
+    };
+  }
   const structure: string[] = [];
   walk(EVIDENCE_BRIEF_JSON_SCHEMA as unknown as Schema, work, "$", structure);
   if (structure.length > 0) {
