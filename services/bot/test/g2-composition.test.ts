@@ -28,6 +28,12 @@ const DIGEST_G2 = `registry.invalid/dummy@sha256:${"7".repeat(64)}`;
 const REV_G2 = "9f".repeat(20);
 const G2_TEXT = "Call Ana at 555-0100";
 
+// Frozen runtime prompt/schema/scorer identities for dummy configs that run
+// the CLI with --run-config (placeholder shas would now refuse).
+// @ts-expect-error untyped helper module
+const { runtimeIdentities: g2RuntimeIdentities } = await import("../scripts/frozen-identities.mjs");
+const G2_IDS = (await g2RuntimeIdentities()) as { prompt: string; schema: string; scorer: string };
+
 // Inert SDK-shaped modal stub. Records every construction call in REC.
 const STUB = String.raw`
 import sys, types, enum, json
@@ -190,9 +196,9 @@ function canonicalConfig(r: string): { cfg: Record<string, unknown>; path: strin
     dataset: { id: "dummyx", sha256: ds },
     model: { name: "meta-models/Muse-Glimmer-30B", revision: REV_G2 },
     image: { ref: DIGEST_G2, digest: `sha256:${"7".repeat(64)}` },
-    prompt: { sha256: "c".repeat(64) },
-    schema: { sha256: "d".repeat(64) },
-    scorer: { sha256: "f".repeat(64) },
+    prompt: { sha256: G2_IDS.prompt },
+    schema: { sha256: G2_IDS.schema },
+    scorer: { sha256: G2_IDS.scorer },
     decoding: { temperature: 0, seed: 1, reasoning: "low" },
     tokenLimits: { maxTokens: 256 },
     timeouts: { requestMs: 10000, workDeadlineS: 120, functionTimeoutS: 180 },
@@ -272,7 +278,7 @@ describe("G2a canonical config composition", () => {
     // dummyx fixture with one invented dummy case.
     const tree = mkdtempSync(join(tmpdir(), "g2-tree-"));
     mkdirSync(join(tree, "scripts"), { recursive: true });
-    for (const f of ["redaction-eval.mjs", "redaction-eval-runner.mjs", "redaction-eval-lib.mjs"]) {
+    for (const f of ["redaction-eval.mjs", "redaction-eval-runner.mjs", "redaction-eval-lib.mjs", "frozen-identities.mjs"]) {
       copyFileSync(join(botDir, "scripts", f), join(tree, "scripts", f));
     }
     symlinkSync(join(botDir, "dist"), join(tree, "dist"));

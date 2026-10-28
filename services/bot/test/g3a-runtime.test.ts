@@ -25,6 +25,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const here = dirname(fileURLToPath(import.meta.url));
 const botDir = join(here, "..");
 
+// Frozen runtime prompt/schema/scorer identities for the dummy config that
+// runs the CLI with --run-config (placeholder shas would now refuse).
+// @ts-expect-error untyped helper module
+const { runtimeIdentities: g3aRuntimeIdentities } = await import("../scripts/frozen-identities.mjs");
+const G3A_IDS = (await g3aRuntimeIdentities()) as { prompt: string; schema: string; scorer: string };
+
 afterEach(() => {
   vi.useRealTimers();
   delete process.env["GLIMMER_RAW_DIR"];
@@ -103,9 +109,9 @@ describe("g3a frozen settings reach execution", () => {
         ref: `registry.invalid/dummy@sha256:${"7".repeat(64)}`,
         digest: `sha256:${"7".repeat(64)}`,
       },
-      prompt: { sha256: "c".repeat(64) },
-      schema: { sha256: "d".repeat(64) },
-      scorer: { sha256: "f".repeat(64) },
+      prompt: { sha256: G3A_IDS.prompt },
+      schema: { sha256: G3A_IDS.schema },
+      scorer: { sha256: G3A_IDS.scorer },
       decoding: { temperature: 0, seed: 1, reasoning: "low" },
       tokenLimits: { maxTokens: 256 },
       timeouts: { requestMs: 4321, workDeadlineS: 7, functionTimeoutS: 180 },
@@ -133,7 +139,7 @@ describe("g3a frozen settings reach execution", () => {
     const cfgDir = mkdtempSync(join(tmpdir(), "g3a-cfg-"));
     try {
       mkdirSync(join(tree, "scripts"), { recursive: true });
-      for (const f of ["redaction-eval.mjs", "redaction-eval-runner.mjs", "redaction-eval-lib.mjs"]) {
+      for (const f of ["redaction-eval.mjs", "redaction-eval-runner.mjs", "redaction-eval-lib.mjs", "frozen-identities.mjs"]) {
         copyFileSync(join(botDir, "scripts", f), join(tree, "scripts", f));
       }
       symlinkSync(join(botDir, "dist"), join(tree, "dist"));

@@ -102,6 +102,7 @@ if (runConfigPath !== undefined) {
 let runnerSettings = null;
 let clientOptions = null;
 let runRevision = null;
+let runtimeIds = null;
 if (runConfig !== null) {
   const { validateRunConfig, toRunnerSettings, sparkProofClientOptions } = await import(
     "../dist/src/release/runConfig.js"
@@ -132,6 +133,26 @@ if (runConfig !== null) {
   }
 }
 
+// With --run-config, the frozen prompt/schema/scorer identities are compared
+// against the runtime before any fixture read or redactor construction: a
+// changed inline prompt, response schema, or scorer refuses with exit 2
+// until it is explicitly re-frozen.
+if (runConfig !== null) {
+  const { runtimeIdentities } = await import("./frozen-identities.mjs");
+  runtimeIds = await runtimeIdentities();
+  const frozen = {
+    prompt: runConfig?.prompt?.sha256,
+    schema: runConfig?.schema?.sha256,
+    scorer: runConfig?.scorer?.sha256,
+  };
+  for (const name of ["prompt", "schema", "scorer"]) {
+    if (frozen[name] !== runtimeIds[name]) {
+      console.error(`error: frozen identity mismatch: ${name} (re-freeze required)`);
+      process.exit(2);
+    }
+  }
+}
+
 // --dry-run: report the resolved runner/client settings derived from the
 // frozen run config (or defaults when none was given) without importing the
 // redactor, reading fixtures, or touching the network.
@@ -146,6 +167,7 @@ if (cliArgs.includes("--dry-run")) {
         runner: runnerSettings,
         clientOptions,
         revision: runRevision,
+        identities: runtimeIds,
       }),
   );
   process.exit(0);
