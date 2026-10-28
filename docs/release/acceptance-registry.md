@@ -51,7 +51,7 @@ general/structured-output.md). Model names are identifiers only.
 | Brief / support judge | `muse-spark-1.3` | Standard mode | live end-to-end 3/3 on Oct 28 at 0365fdb; rehearsals at 8c00c32 and on #116 |
 | Redactor | `meta-models/Muse-Glimmer-30B` (self-hosted vLLM on Modal) | n/a | live end-to-end 3/3 on Oct 28 at 0365fdb (that recording used the previous calendar-date prompt); rehearsals passed at 8c00c32 and on the #116 prompt fix; no new live model call for #116 |
 
-The public link is demo mode with recorded examples. The Oct 28 live run was recorded and is labeled as a recorded run. Organizers confirmed recorded runs are fine if labeled. Video URL, founder story, and user observations remain pending.
+The public link is demo mode with recorded examples. The Oct 28 live run was recorded and is labeled as a recorded run. Organizers confirmed recorded runs are fine if labeled. Video URL and user observations remain pending. Founder story: done.
 
 Mode rule: `muse-spark-1.3` is the Standard-mode model ID; the
 `-contributor` suffix selects Contributor mode (discounted, content may train

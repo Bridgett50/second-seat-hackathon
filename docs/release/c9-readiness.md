@@ -39,7 +39,7 @@ Observed CI runs from docs/release/ci-observed.json (recorded by the maintainer 
 
 ### G acceptance ledger (draft PR heads #81–#90)
 
-A before/after probe recorded at one SHA is historical evidence only and is not current proof at another SHA. Rows below marked with a guard classification passed on their parent and guard existing behavior; rows marked bug regression failed on the parent for an assertion reason and pass at the tested head. Never pass from CI alone. C9 stays BLOCKED, the budget stays proposed, and founder story, buyer tryouts, partner verification, video, and submission URLs stay pending.
+A before/after probe recorded at one SHA is historical evidence only and is not current proof at another SHA. Rows below marked with a guard classification passed on their parent and guard existing behavior; rows marked bug regression failed on the parent for an assertion reason and pass at the tested head. Never pass from CI alone. C9 stays BLOCKED, the budget stays proposed, and Founder story: done. Buyer tryouts, partner verification, video, and submission URLs stay pending.
 
 | ID | Tested head | Behavioral test / probe | Outcome | Classification | Limitation |
 |---|---|---|---|---|---|

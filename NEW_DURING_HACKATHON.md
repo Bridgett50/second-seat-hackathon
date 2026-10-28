@@ -8,7 +8,7 @@ the earlier Second Seat idea and prototype live elsewhere and are not included.
 - Live end-to-end passed 3/3 on main `0365fdb`. Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116).
 - Verification is wired into the session (#113). Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it (#114/#115).
 - The public link is demo mode with recorded examples. The live run was recorded and is labeled as a recorded run. Organizers confirmed recorded runs are fine if labeled.
-- Video URL, founder story, and user observations: PENDING.
+- Video URL and user observations: PENDING. Founder story: done.
 
 ## Oct 28 — Phase 08 resistance table
 

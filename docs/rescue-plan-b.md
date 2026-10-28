@@ -163,7 +163,7 @@ Acceptance criteria:
 8. Test counts link to the tested commit and CI run.
 9. Spending controls are described as implemented; no unsupported hard billing guarantee.
 10. Document the exact local startup command and /session route, verified with offline execution once implementation is authorized.
-11. Founder story, observations, and URLs remain pending until supplied.
+11. Founder story: done — supplied in the README. Observations and URLs remain pending until supplied.
 Effort: 1–2 hours.
 
 ## B8 — Prepare honest buyer-evidence collection

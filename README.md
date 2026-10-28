@@ -8,6 +8,20 @@ Second Seat never sends a reply or message to the vendor, never joins calls, and
 
 Before the approved text is sent, a redaction check has to pass. After the brief is written, a second check has to pass. If a recorded support verdict is available, that is checked too. A hard failure stops the step and the page says "Needs owner review" without quoting the provider. Noisy warnings are sent to you for review and do not block the brief. Offline and Demo Mode run the same checks on the local brief. You still approve the redacted text and the draft yourself.
 
+## Why this matters to me
+
+I didn't build Second Seat because I wanted to play with AI. I built it because I was losing money on the phone.
+
+As a small business owner, my livelihood depends on vendor calls. Just last month, on September 7, I was negotiating the purchase of point-of-sale hardware for my store. We had a phone call. We agreed on a price of $700 a month. But when the written quote arrived, it said $750.
+
+I caught the difference, emailed the vendor, and he corrected it. But it made me realize: what happens on the weeks when I don't catch it? What happens to the business owner who is exhausted, juggling ten other things, and just trusts the written quote or an AI summary to be accurate? They lose money. They miss the hidden price increase, the conditional deadline, or the liability shift.
+
+When I looked at the market for AI meeting assistants, I found two problems. First, they summarize the whole call, which means they hallucinate and miss the specific financial details I actually need to act on. Second, to get those summaries, you have to pipe your private client data, vendor names, and proprietary numbers into a massive cloud database. As a business owner, that is a privacy risk I couldn't take.
+
+So I built Second Seat for myself first. The idea predates this hackathon; this week's build is the live engine. It takes the messy transcript, uses Meta's open-weights model (Glimmer) on GPU hardware I control to scrub all the sensitive data, and asks for my explicit approval. Only then does it use Meta's Spark model to hand me a bulleted brief of what was offered, what was asked, and what needs a decision—with every single claim cited back to the transcript.
+
+Second Seat exists to prove a core philosophy: The future of superintelligence isn't replacing human judgment. It's putting a human in the final seat.
+
 ## How to run
 
 Requires Node 20+ and pnpm (via corepack).
@@ -36,7 +50,7 @@ SECOND_SEAT_MODE=live GLIMMER_BASE_URL=<your Modal Glimmer URL> META_API_KEY=<se
   pnpm --filter @second-seat/web serve
 ```
 
-Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The record is the owner's run summary `second-seat-live3-run-summary.md` (private, in the owner's Drive). Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116). The public link is demo mode with recorded examples. The Oct 28 live run was recorded and is labeled as a recorded run; organizers confirmed recorded runs are fine if labeled. Video URL, founder story, and user observations are still pending.
+Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The record is the owner's run summary `second-seat-live3-run-summary.md` (private, in the owner's Drive). Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116). The public link is demo mode with recorded examples. The Oct 28 live run was recorded and is labeled as a recorded run; organizers confirmed recorded runs are fine if labeled. Video URL and user observations are still pending.
 
 The image / SAM path is experimental. It is hidden from the UI and makes no calls unless `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`.
 
