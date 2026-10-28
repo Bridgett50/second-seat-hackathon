@@ -10,13 +10,17 @@ Before the approved text is sent, a redaction check has to pass. After the brief
 
 ## Why this matters to me
 
-I own Mo'ja Liquor, a small store, and I run Loving Grace Technologies. In September I was pricing new point-of-sale hardware for the store. On the phone, a vendor and I agreed on $700 a month.
+I didn't build Second Seat because I wanted to play with AI. I built it because I was losing money on the phone.
 
-Then the written quote came in at $750 a month. Nobody mentioned the change. It was just a different number on the page. I caught it, emailed the vendor, and the next day they apologized and sent a corrected quote at $700. I almost overpaid $50 a month.
+As a small business owner, my livelihood depends on vendor calls. Just last month, on September 7, I was negotiating the purchase of point-of-sale hardware for my store. We had a phone call. We agreed on a price of $700 a month. But when the written quote arrived, it said $750.
 
-I had the idea for Second Seat before this hackathon. That quote is why it matters. Small business owners take these calls alone, often between customers, and nobody takes notes. What gets said and what gets written down can drift apart, and the person who notices is usually the one paying.
+I caught the difference, emailed the vendor, and he corrected it. But it made me realize: what happens on the weeks when I don't catch it? What happens to the business owner who is exhausted, juggling ten other things, and just trusts the written quote or an AI summary to be accurate? They lose money. They miss the hidden price increase, the conditional deadline, or the liability shift.
 
-Second Seat is the second person in the room after the call. Glimmer runs on GPU hardware I control, through Modal, and masks personal details before anything else sees the text. Spark writes a brief that cites the meeting, so a changed number stands out. It never sends anything and never decides for you. The human stays in the final seat.
+When I looked at the market for AI meeting assistants, I found two problems. First, they summarize the whole call, which means they hallucinate and miss the specific financial details I actually need to act on. Second, to get those summaries, you have to pipe your private client data, vendor names, and proprietary numbers into a massive cloud database. As a business owner, that is a privacy risk I couldn't take.
+
+So I built Second Seat for myself first. The idea predates this hackathon; this week's build is the live engine. It takes the messy transcript, uses Meta's open-weights model (Glimmer) on GPU hardware I control to scrub all the sensitive data, and asks for my explicit approval. Only then does it use Meta's Spark model to hand me a bulleted brief of what was offered, what was asked, and what needs a decision—with every single claim cited back to the transcript.
+
+Second Seat exists to prove a core philosophy: The future of superintelligence isn't replacing human judgment. It's putting a human in the final seat.
 
 ## How to run
 
