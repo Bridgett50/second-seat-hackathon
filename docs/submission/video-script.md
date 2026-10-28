@@ -22,13 +22,13 @@ The whole video follows ONE meeting through the connected `/session` flow (`apps
 
 ## Honesty rules (read before recording)
 
-- Say "replay" or "offline demo," never "live analysis." Second Seat never joins calls and never sends a reply.
+- The scripted walkthrough is an offline demo. Say "replay" or "offline demo" for those beats. A separate clip of the Oct 28 live run is allowed only when labeled as a recorded run; organizers confirmed recorded runs are fine if labeled. Second Seat never joins calls and never sends a reply.
 - Show only the connected `/session` paste-to-copy flow with real UI states (`#transcript-input`, `#btn-redact`, `#session-state`, `#btn-approve`, `#btn-analyze`, `#draft-text`, `#btn-draft-approve`, `#btn-copy`, `#offline-label`).
 - No screenshot upload, no SAM, no timed replay in the core video. SAM/image features are experimental and off by default.
 - Show the incomplete historical Glimmer run WITH its limitations (6/8 requests, 18/39 end-to-end, span coverage not re-scorable) [services/bot/fixtures/glimmer-run/rescore.json]. Never present the n=10 10/10 smoke test [services/bot/fixtures/glimmer-live-eval-n10.json] as the headline.
 - Never state "the raw transcript never left our server" as a guarantee. Say what the code does: the approved redacted text goes through the privacy gate, and test mode stays offline even with credentials present [apps/web/src/liveConfig.ts].
 - Founder story, user observations, and video URLs are PENDING — not yet supplied. Invent nothing: no user quotes, no founder anecdotes, no URLs.
-- Statuses spoken accurately, per [docs/release/acceptance-registry.md]: A1–A9 merged (A1–A3 criteria reconstructed, not verbatim); C1–C7 criteria with per-criterion outcomes on the tested commits, including pending C1-9, C2-7, C3-7/C3-8, C4-7/C4-8/C4-9/C4-11, C6-4/C6-7 and partial pressure/model rows; C8 docs checks; C9 prep only with execution blocked; D-series review verdicts per [docs/release/acceptance-registry.md]: D1-1 partly, D1-2 closed, D1-3 closed, D1-4 closed, D1-5 closed; D2-1 closed, D2-2 partly, D2-3 closed, D2-4 closed, D2-5 closed, D2-6 partly; D3-1 closed, D3-2 partly, D3-3 partly, D3-4 open, D3-5 partly; D4-1 closed, D4-2 partly, D4-3 partly, D4-4 open, D4-5 closed, D4-6 partly; D5-1 partly, D5-2 closed, D5-3 partly, D5-4 partly, D5-5 partly; D6-1 closed, D6-2 open, D6-3 closed, D6-4 open, D6-5 closed; live execution NOT performed; partner none; draft PRs B1–B8 pending review. Never say blanket "criteria met."
+- Statuses spoken accurately, per [docs/release/acceptance-registry.md]: A1–A9 merged (A1–A3 criteria reconstructed, not verbatim); C1–C7 criteria with per-criterion outcomes on the tested commits, including pending C1-9, C2-7, C3-7/C3-8, C4-7/C4-8/C4-9/C4-11, C6-4/C6-7 and partial pressure/model rows; C8 docs checks; C9 prep only with execution blocked; D-series review verdicts per [docs/release/acceptance-registry.md]: D1-1 partly, D1-2 closed, D1-3 closed, D1-4 closed, D1-5 closed; D2-1 closed, D2-2 partly, D2-3 closed, D2-4 closed, D2-5 closed, D2-6 partly; D3-1 closed, D3-2 partly, D3-3 partly, D3-4 open, D3-5 partly; D4-1 closed, D4-2 partly, D4-3 partly, D4-4 open, D4-5 closed, D4-6 partly; D5-1 partly, D5-2 closed, D5-3 partly, D5-4 partly, D5-5 partly; D6-1 closed, D6-2 open, D6-3 closed, D6-4 open, D6-5 closed; live end-to-end passed 3/3 on Oct 28, 2026 at 0365fdb; rehearsals passed at 8c00c32 and on the November 15 fix (#116); verification is wired into the session (#113); Shield report and resistance table are on dev fixtures (#114/#115), with the sealed held-out run scheduled Nov 2; the public link is demo mode with recorded examples; the live run was recorded and must be labeled as a recorded run; partner none. Video URL, founder story, and user observations stay PENDING. Never say blanket "criteria met."
 - Superseded wording (no longer claimed): "any edit to the draft or transcript clears the approval" — replaced by the open-page plus reload-caveat narration above (F4 partly open).
 
 ## 30–60 s 9:16 clip cut list
@@ -41,7 +41,7 @@ The whole video follows ONE meeting through the connected `/session` flow (`apps
 
 ## Recording checklist
 
-- Fixture mode for every replayed beat; the "Offline demo" label visible throughout.
-- One capped live clip maximum ONLY if a live run has actually been performed and logged; otherwise no live clip. Never substitute a fixture for a live call.
+- Fixture mode for every replayed beat of this script; the "Offline demo" label visible throughout. The public link is this demo mode, with recorded examples.
+- The Oct 28 live run (3/3 at 0365fdb) was recorded. A clip of it is allowed only when labeled as a recorded run. Organizers confirmed recorded runs are fine if labeled. Never substitute a fixture for that run.
 - Backups of the recording on 2 devices before editing.
 - Before export: every on-screen number traced to a file in brackets; any number without a source cut.

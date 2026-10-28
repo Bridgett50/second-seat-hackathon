@@ -36,7 +36,7 @@ SECOND_SEAT_MODE=live GLIMMER_BASE_URL=<your Modal Glimmer URL> META_API_KEY=<se
   pnpm --filter @second-seat/web serve
 ```
 
-Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The record is the owner's run summary `second-seat-live3-run-summary.md` (private, in the owner's Drive).
+Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The record is the owner's run summary `second-seat-live3-run-summary.md` (private, in the owner's Drive). Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116). The public link is demo mode with recorded examples. The Oct 28 live run was recorded and is labeled as a recorded run; organizers confirmed recorded runs are fine if labeled. Video URL, founder story, and user observations are still pending.
 
 The image / SAM path is experimental. It is hidden from the UI and makes no calls unless `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`.
 
@@ -64,8 +64,8 @@ The image / SAM path is experimental. It is hidden from the UI and makes no call
 - Glimmer redaction, historical Modal run (Oct 26): 6/8 requests completed, `complete: false`. It's shown with its limits, not as a headline (`services/bot/fixtures/glimmer-run/`).
 - Live end-to-end (Oct 28, 2026, `main` `0365fdb`): 3/3 runs passed. Glimmer on Modal A100 redaction about 12.5 s, Spark `muse-spark-1.3` brief 13–19 s, all names/phones/emails masked, about $0.22 GPU (owner's private run summary).
 - Seeded-error support judge: caught 9/9 with 0/4 false alarms on a small synthetic suite (`eval/results/support-score.json`).
-- Resistance table (`node eval/resistance-table.mjs --split dev`): off, pattern-only, and pattern+Spark on the public dev fixtures. pattern+Spark uses the recorded Spark labels already in the repo. The held-out split is not run.
-- Persuasion Shield dev report (`node eval/shield-report.mjs --split dev`): pattern, recorded Spark, and the approval gate, each as N/M with a Wilson 95% interval, plus a mutation check. The held-out split is not run.
+- Resistance table (`node eval/resistance-table.mjs --split dev`, #115): off, pattern-only, and pattern+Spark on the public dev fixtures. pattern+Spark uses the recorded Spark labels already in the repo. The sealed held-out run is scheduled for Nov 2 and is not run here.
+- Persuasion Shield dev report (`node eval/shield-report.mjs --split dev`, #114): pattern, recorded Spark, and the approval gate, each as N/M with a Wilson 95% interval, plus a mutation check. The sealed held-out run is scheduled for Nov 2 and is not run here.
 
 ## Known Issues
 

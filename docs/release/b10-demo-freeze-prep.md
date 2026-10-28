@@ -12,14 +12,16 @@ existing evidence-run facts from [runbook-holdout-run.md](../runbook-holdout-run
   How to verify: run one meeting end-to-end on `/session` — paste meeting text,
   redaction masks PII for review, review and correct the redacted text, approve it,
   brief writes a short brief with citations, edit the reply draft, approve that exact
-  text, copy it out manually. Confirm Second Seat sends nothing and takes no action.
+  text, copy it out manually. Confirm Second Seat never sends a reply or message to the vendor and takes no action.
   Status: pending.
 - [ ] **Criterion 2 — The execution-mode label stays accurate throughout.**
   How to verify: confirm the demo shows the correct mode label at every step —
   offline (default, `SECOND_SEAT_MODE` unset; `SECOND_SEAT_TEST_MODE=1` forces
   offline), recorded (every replay labelled as a replay), or live (requires
-  `SECOND_SEAT_MODE=live` + `GLIMMER_BASE_URL` + `META_API_KEY`; live not performed
-  for the new path). Status: pending.
+  `SECOND_SEAT_MODE=live` + `GLIMMER_BASE_URL` + `META_API_KEY`). Live end-to-end
+  passed 3/3 on Oct 28, 2026 at `0365fdb`. Rehearsals passed at `8c00c32` and on
+  the November 15 fix (#116). The public link is demo mode with recorded examples.
+  A live clip is a recorded run and must be labeled as such. Status: pending.
 - [ ] **Criterion 3 — Show one meaningful correction or refusal that the current implementation actually supports.**
   How to verify: demonstrate exactly one supported behavior from the current build,
   e.g. editing the draft clears approval so `#btn-copy` disables until the exact

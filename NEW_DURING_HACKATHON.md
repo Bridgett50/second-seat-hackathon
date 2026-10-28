@@ -3,6 +3,13 @@
 Daily log of work added in this repo. Everything below was built this week;
 the earlier Second Seat idea and prototype live elsewhere and are not included.
 
+## Submission facts (Oct 28, 2026)
+
+- Live end-to-end passed 3/3 on main `0365fdb`. Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116).
+- Verification is wired into the session (#113). The Shield report (#114) and resistance table (#115) are on dev fixtures. The sealed held-out run is scheduled for Nov 2.
+- The public link is demo mode with recorded examples. The live run was recorded and is labeled as a recorded run. Organizers confirmed recorded runs are fine if labeled.
+- Video URL, founder story, and user observations: PENDING.
+
 ## Oct 28 — Phase 08 resistance table
 
 - `eval/resistance-table.mjs` prints off, pattern-only, and pattern+Spark catch counts with Wilson 95% intervals for the public dev fixtures. pattern+Spark reads the frozen recorded Spark labels when they are present, and otherwise says pending live run. `--split heldout` exits before any held-out file is opened. No model call.

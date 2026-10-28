@@ -12,7 +12,10 @@ forces offline (`apps/web/src/liveConfig.ts`). Live end-to-end was verified
 on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed (Glimmer on Modal A100
 redaction about 12.5 s, Spark `muse-spark-1.3` brief 13–19 s, all names/phones/emails
 masked, about $0.22 GPU). The owner's private run summary
-(`second-seat-live3-run-summary.md`, Drive) is the record.
+(`second-seat-live3-run-summary.md`, Drive) is the record. Rehearsals passed
+at `8c00c32` and on the November 15 prompt fix (#116). The public link is demo
+mode with recorded examples. The Oct 28 live run was recorded and is labeled
+as a recorded run. The sealed held-out run is scheduled for Nov 2.
 
 ## Pinned models
 
