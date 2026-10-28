@@ -43,7 +43,7 @@ function scripted(byCall: Label[][]) {
 }
 
 const SCARCITY: Label = {
-  segmentId: "seg-2", tactic: "scarcity", ask: "net-45 terms", target: "owner",
+  segmentId: "seg-2", tactic: "scarcity", ask: "sign by 5 today", target: "owner",
   span: "price doubles unless we sign by 5 today", source: "fixture",
 };
 
@@ -93,13 +93,13 @@ describe("B6 pressure evidence in /session", () => {
     const p = pressureOf(s);
     expect(p.items).toHaveLength(1);
     const it0 = p.items[0]!;
-    expect(it0).toMatchObject({ tactic: "scarcity", segmentId: "seg-2", quote: SCARCITY.span, unresolvedTerm: "net-45 terms" });
+    expect(it0).toMatchObject({ tactic: "scarcity", segmentId: "seg-2", quote: SCARCITY.span, unresolvedTerm: "sign by 5 today" });
     const seg = s.segments.find((g) => g.id === "seg-2")!;
     expect(seg.text).toContain(it0.quote);
     const html = renderSessionPage(s);
     expect(html).toMatch(/class="pressure-badge"[^>]*href="#seg-2"/);
     expect(html).toContain("price doubles unless we sign by 5 today");
-    expect(html).toContain("net-45 terms");
+    expect(html).toContain("sign by 5 today");
     // Assessment wording, not certainty about intent.
     expect(html).toMatch(/assessment/i);
     expect(html).not.toMatch(/is manipulating|intends to|is lying/i);
