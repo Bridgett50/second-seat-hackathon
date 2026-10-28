@@ -16,6 +16,16 @@ const sha256 = (s) => createHash("sha256").update(s).digest("hex");
 const promptRows = readdirSync(PROMPTS).filter((f) => f.endsWith(".txt")).sort()
   .map((f) => ({ file: `services/bot/prompts/${f}`, sha256: sha256(readFileSync(join(PROMPTS, f), "utf8")) }));
 
+// Inline Glimmer redaction system prompt: sha256 of the exact template literal
+// source text between the backticks of the `{ role: "system", content: `...` }`
+// message in fetchBody (NOT FOUND when the grab misses, never a crash).
+const redactSrc = readFileSync(join(ROOT, "services/bot/src/private/redact.ts"), "utf8");
+const redactMatch = redactSrc.match(/\{\s*role:\s*"system",\s*content:\s*`([\s\S]*?)`\s*\}/);
+promptRows.push({
+  file: "services/bot/src/private/redact.ts (inline Glimmer system prompt)",
+  sha256: redactMatch?.[1] === undefined ? "NOT FOUND" : sha256(redactMatch[1]),
+});
+
 // Settings read from source (regex over the listed files, not hardcoded).
 const grabs = [];
 function grab(file, pattern, label) {
