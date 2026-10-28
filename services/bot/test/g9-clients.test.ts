@@ -142,6 +142,22 @@ describe("g9 clients", () => {
     try { await judge.gradeSupport(input); } catch (e) { errGrade = e as Error; }
     expect(errGrade, "provider-body-embedded: invalid grade should throw").not.toBeNull();
     expect(errGrade!.message.includes("SECRET-MODEL-CONTENT"), "provider-body-embedded: invalid grade error must not contain model content").toBe(false);
+
+    // Non-JSON model content. JSON.parse's own message quotes the input.
+    const secret = "SECRET-PROVIDER-BODY-not-json";
+    globalThis.fetch = (async () => sse(secret)) as typeof fetch;
+    let errJson: Error | null = null;
+    try { await judge.gradeSupport(input); } catch (e) { errJson = e as Error; }
+    expect(errJson, "provider-body-embedded: non-JSON content should throw").not.toBeNull();
+    expect(errJson!.message.includes(secret), "provider-body-embedded: non-JSON error must not contain the body").toBe(false);
+    expect(errJson!.message).toMatch(/unreadable JSON/);
+
+    globalThis.fetch = (async () => new Response(`data: ${secret}\n\n`, { status: 200 })) as typeof fetch;
+    let errSse: Error | null = null;
+    try { await judge.gradeSupport(await gatedSupportInput()); } catch (e) { errSse = e as Error; }
+    expect(errSse, "provider-body-embedded: bad SSE should throw").not.toBeNull();
+    expect(errSse!.message.includes(secret), "provider-body-embedded: SSE error must not contain the body").toBe(false);
+    expect(errSse!.message).toMatch(/not valid JSON/);
   });
 
   it("CR2-classify-no-body", async () => {
@@ -161,6 +177,14 @@ describe("g9 clients", () => {
     expect(err503, "provider-body-embedded: 503 should throw").not.toBeNull();
     expect(err503!.message.includes("SECRET-PROVIDER-BODY"), "provider-body-embedded: 503 error must not contain body text").toBe(false);
     expect(err503!.message.includes("503"), "provider-body-embedded: 503 error must contain status").toBe(true);
+
+    const secret = "SECRET-PROVIDER-BODY-not-json";
+    globalThis.fetch = (async () => sse(secret)) as typeof fetch;
+    let errJson: Error | null = null;
+    try { await cls.classify(lines); } catch (e) { errJson = e as Error; }
+    expect(errJson, "provider-body-embedded: non-JSON content should throw").not.toBeNull();
+    expect(errJson!.message.includes(secret), "provider-body-embedded: non-JSON error must not contain the body").toBe(false);
+    expect(errJson!.message).toMatch(/not valid JSON/);
   });
 
   it("CR4-citation", async () => {

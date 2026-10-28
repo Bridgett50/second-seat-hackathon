@@ -100,9 +100,10 @@ function walk(schema: Schema, value: unknown, path: string, out: string[]): void
 
 const NUMBER_RE = /\d+(?:\.\d+)?/g;
 
+/** Raw digit tokens. "01" and "1" stay distinct. */
 function numbersIn(text: string): Set<string> {
   const out = new Set<string>();
-  for (const m of text.matchAll(NUMBER_RE)) out.add(String(Number(m[0])));
+  for (const m of text.matchAll(NUMBER_RE)) out.add(m[0]);
   return out;
 }
 
@@ -111,13 +112,37 @@ function ungroundedNumbers(entry: EvidenceEntry, byId: Map<string, ValidateSegme
     .filter((c) => c.kind === "segment" && c.segmentId !== null)
     .map((c) => byId.get(c.segmentId as string))
     .filter((s): s is ValidateSegment => s !== undefined);
-  if (cited.length === 0) return [];
+  const entryNums = [...numbersIn(entry.text)];
+  // A frame-only citation has no segment text to ground a number against.
+  if (cited.length === 0) return entryNums;
   const stated = new Set<string>();
   for (const s of cited) for (const n of numbersIn(s.text)) stated.add(n);
-  return [...numbersIn(entry.text)].filter((n) => !stated.has(n));
+  return entryNums.filter((n) => !stated.has(n));
+}
+
+function briefContextOk(ctx: BriefVerificationContext | null | undefined): ctx is BriefVerificationContext {
+  if (ctx == null || typeof ctx !== "object") return false;
+  if (!Array.isArray(ctx.segments) || !Array.isArray(ctx.frames)) return false;
+  for (const segment of ctx.segments) {
+    if (segment == null || typeof segment !== "object" || typeof segment.id !== "string" || typeof segment.text !== "string") {
+      return false;
+    }
+  }
+  for (const frame of ctx.frames) {
+    if (frame == null || typeof frame !== "object" || typeof frame.id !== "string") return false;
+  }
+  return true;
 }
 
 export function verifyBrief(ctx: BriefVerificationContext, work: unknown): BriefVerification {
+  if (!briefContextOk(ctx)) {
+    return {
+      passed: false,
+      feedback: ["brief: context unreadable: blocked (fail-closed)"],
+      verified: null,
+      escalations: [],
+    };
+  }
   const structure: string[] = [];
   walk(EVIDENCE_BRIEF_JSON_SCHEMA as unknown as Schema, work, "$", structure);
   if (structure.length > 0) {
@@ -162,5 +187,6 @@ export function verifyBrief(ctx: BriefVerificationContext, work: unknown): Brief
       escalations.push({ entryId: entry.id, reason: `ungrounded_number:${n}` });
     }
   }
-  return { passed: feedback.length === 0, feedback, verified, escalations };
+  const passed = feedback.length === 0;
+  return { passed, feedback, verified: passed ? verified : null, escalations };
 }

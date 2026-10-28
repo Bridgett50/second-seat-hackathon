@@ -10,6 +10,27 @@ import {
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
 import { LIVE_REDACT_TIMEOUT_MS } from "./liveConfig.js";
 
+/**
+ * Shown instead of a provider or transport error. Those messages can
+ * include a slice of the response body; this line does not.
+ */
+export const TRANSPORT_FAILURE_REASON =
+  "the analysis service failed; the provider response was not included";
+
+function isTransportFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "SyntaxError") return true;
+  if (err.name === "TypeError" && /fetch/i.test(err.message)) return true;
+  const msg = err.message;
+  return (
+    msg.startsWith("muse-spark") ||
+    msg.startsWith("fetch failed") ||
+    msg.startsWith("glimmer: chat failed") ||
+    msg.startsWith("glimmer: no JSON") ||
+    msg.startsWith("glimmer: finish_reason")
+  );
+}
+
 export type SessionStatus =
   | "input"
   | "redaction_pending"
@@ -872,7 +893,9 @@ export function createSessionStore(options?: SessionStoreOptions) {
     } else {
       s.state = "error";
     }
-    s.reason = msg;
+    // Keep the policy classification on the original message, but never
+    // store a transport body in the reason the page and state API show.
+    s.reason = isTransportFailure(err) ? TRANSPORT_FAILURE_REASON : msg;
   }
 
   return {

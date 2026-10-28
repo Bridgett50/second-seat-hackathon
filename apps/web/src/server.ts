@@ -11,6 +11,8 @@ import { findAiSelf } from "./theme.js";
 import { renderBriefPage, renderSessionPage } from "./render.js";
 
 const PORT = Number(process.env.PORT ?? 4173);
+/** Loopback only. The demo process does not listen on other interfaces. */
+export const WEB_BIND_HOST = "127.0.0.1";
 const LIVE_DEV = process.env.LIVE_DEV === "1";
 const SAM_ENABLED = process.env.SECOND_SEAT_EXPERIMENTAL_IMAGES === "1";
 
@@ -690,7 +692,7 @@ export function createWebServer(deps?: WebServerDeps) {
 const isMain =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
-  createWebServer().listen(PORT, () => {
-    console.log(`web demo on http://localhost:${PORT}/briefs/demo`);
+  createWebServer().listen(PORT, WEB_BIND_HOST, () => {
+    console.log(`web demo on http://${WEB_BIND_HOST}:${PORT}/briefs/demo`);
   });
 }

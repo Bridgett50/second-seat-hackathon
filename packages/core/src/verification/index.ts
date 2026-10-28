@@ -8,6 +8,7 @@ export type {
   ParsedJudgeOutput,
   SupportGrade,
 } from "./verifyClaims.js";
+export { normalizePiiText, preparePiiScanText } from "./normalize.js";
 export { verifyRedaction } from "./verifyRedaction.js";
 export type {
   RedactionSpan,

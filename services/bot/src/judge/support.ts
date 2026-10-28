@@ -26,6 +26,9 @@ import { checkCapsPreCall, checkPerCallTokenCap, recordCall } from "../brief/cos
 import { PROMPT_CACHE_KEYS } from "../promptCache.js";
 import { dispatchGuarded, requireLiveGatedText, type GatedText } from "../private/gate.js";
 
+/** Development ceiling. The omitted default is 1, the proof cap. */
+export const SUPPORT_MAX_ATTEMPTS = 4;
+
 export const SUPPORT_MODEL = "muse-spark-1.3";
 export const SUPPORT_PROMPT_VERSION = "support-v1";
 export const SUPPORT_SEED = BRIEF_SEED;
@@ -265,10 +268,15 @@ async function readStreamedChat(response: Response): Promise<{ content: string; 
         if (data === "[DONE]") {
           continue;
         }
-        const event = JSON.parse(data) as {
+        let event: {
           choices?: Array<{ delta?: { content?: string } }>;
           usage?: ChatResponse["usage"];
         };
+        try {
+          event = JSON.parse(data) as typeof event;
+        } catch {
+          throw new Error(`muse-spark streaming response was not valid JSON (${data.length} chars)`);
+        }
         const delta = event.choices?.[0]?.delta?.content;
         if (typeof delta === "string") {
           chunks.push(delta);
@@ -283,7 +291,12 @@ async function readStreamedChat(response: Response): Promise<{ content: string; 
 }
 
 function parseGrade(content: string): { grade: SupportGrade; missingQualifier: string | null } {
-  const parsed = JSON.parse(content) as { grade?: unknown; missing_qualifier?: unknown };
+  let parsed: { grade?: unknown; missing_qualifier?: unknown };
+  try {
+    parsed = JSON.parse(content) as { grade?: unknown; missing_qualifier?: unknown };
+  } catch {
+    throw new Error(`support judge returned unreadable JSON (${content.length} chars)`);
+  }
   if (parsed.grade !== "supported" && parsed.grade !== "partial" && parsed.grade !== "unsupported") {
     throw new Error(`support judge returned invalid grade (content ${content.length} chars)`);
   }
@@ -299,9 +312,9 @@ export class SparkSupportJudge {
   private readonly fetchImpl: typeof fetch | undefined;
 
   constructor(opts?: { maxAttempts?: number; fetchImpl?: typeof fetch }) {
-    const maxAttempts = opts?.maxAttempts ?? 4;
-    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
-      throw new Error("maxAttempts must be an integer >= 1");
+    const maxAttempts = opts?.maxAttempts ?? 1;
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > SUPPORT_MAX_ATTEMPTS) {
+      throw new Error(`maxAttempts must be an integer >= 1 and <= ${SUPPORT_MAX_ATTEMPTS}`);
     }
     this.maxAttempts = maxAttempts;
     this.fetchImpl = opts?.fetchImpl;

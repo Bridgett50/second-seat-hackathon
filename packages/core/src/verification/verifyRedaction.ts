@@ -14,6 +14,7 @@
  * agent/verification/verify_redaction.py; see VERIFICATION.md.
  * Independent implementation.
  */
+import { normalizePiiText } from "./normalize.js";
 import type { VerificationResult } from "./types.js";
 
 export interface RedactionSpan {
@@ -68,7 +69,10 @@ export function verifyRedaction(
     }
     const original = ctx.rawText.slice(s.start, s.end).trim();
     if (s.label === "person" && original !== "") names.push(original);
-    if (original.length >= MIN_SURVIVOR_LENGTH && work.maskedText.includes(original)) {
+    const folded = normalizePiiText(original);
+    // Case, format characters, and collapsed whitespace still count as
+    // the same span text. Feedback names the span, never the text.
+    if (folded.length >= MIN_SURVIVOR_LENGTH && normalizePiiText(work.maskedText).includes(folded)) {
       feedback.push(`span ${i} (${s.label}): original text still present in masked text`);
     }
   });

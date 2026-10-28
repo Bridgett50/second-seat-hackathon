@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createWebServer, validatePostBody } from "../src/server.js";
+import { WEB_BIND_HOST, createWebServer, validatePostBody } from "../src/server.js";
 
 function post(path: string, body: string, contentType: string): Promise<{ status: number; json: unknown }> {
   return new Promise((resolve, reject) => {
@@ -24,6 +24,12 @@ function post(path: string, body: string, contentType: string): Promise<{ status
     });
   });
 }
+
+describe("bind address", () => {
+  it("defaults to loopback and does not listen on every interface", () => {
+    expect(WEB_BIND_HOST).toBe("127.0.0.1");
+  });
+});
 
 describe("validatePostBody", () => {
   it("rejects multipart and image content types", () => {

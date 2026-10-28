@@ -131,6 +131,45 @@ describe("verifyBrief (fail-closed)", () => {
     expect(r.escalations).toContainEqual({ entryId: "e1", reason: "ungrounded_number:10" });
   });
 
+  it("does not treat 01 and 1 as the same number", () => {
+    const b = brief();
+    b.entries[0]!.text = "Use code 01.";
+    const r = verifyBrief(ctx, b);
+    expect(r.passed).toBe(true);
+    expect(r.escalations).toContainEqual({ entryId: "e1", reason: "ungrounded_number:01" });
+  });
+
+  it("escalates numbers when the only citation is a frame", () => {
+    const b = brief();
+    b.entries = [
+      {
+        ...b.entries[0]!,
+        text: "Ship 99 units.",
+        citations: [{ kind: "frame", segmentId: null, frameId: "f-01:10", region: null }],
+      },
+    ];
+    const r = verifyBrief(ctx, b);
+    expect(r.passed).toBe(true);
+    expect(r.escalations).toContainEqual({ entryId: "e1", reason: "ungrounded_number:99" });
+  });
+
+  it("returns verified null when a hard rule fails", () => {
+    const r = verifyBrief({ ...ctx, expectedMeetingId: "other" }, brief());
+    expect(r.passed).toBe(false);
+    expect(r.verified).toBeNull();
+  });
+
+  it("blocks an unreadable context instead of throwing", () => {
+    expect(() => verifyBrief(null as never, brief())).not.toThrow();
+    const missing = verifyBrief(null as never, brief());
+    expect(missing.passed).toBe(false);
+    expect(missing.verified).toBeNull();
+    expect(missing.feedback[0]).toMatch(/context unreadable/);
+    const badSegment = verifyBrief({ segments: [null], frames: [] } as never, brief());
+    expect(badSegment.passed).toBe(false);
+    expect(badSegment.verified).toBeNull();
+  });
+
   it("does not mutate the work under review", () => {
     const b = brief();
     b.entries[1]!.acceptance = "not_established";
@@ -155,9 +194,26 @@ describe("verifyClaims (fail-closed)", () => {
     );
     expect(r.passed).toBe(false);
     expect(r.feedback).toEqual([
-      "entry e1: partially supported; missing qualifier: plus tax and freight",
+      "entry e1: partially supported; a missing qualifier was reported",
       "entry e2: not supported by its cited spans",
     ]);
+    expect(r.feedback.join("\n")).not.toContain("plus tax and freight");
+  });
+
+  it("blocks a supported grade that still names a qualifier, without echoing it", () => {
+    const r = verifyClaims(
+      { entryIds: ["e1"] },
+      { verdicts: { e1: { grade: "supported", missing_qualifier: "plus tax and freight" } } },
+    );
+    expect(r.passed).toBe(false);
+    expect(r.feedback).toEqual(["entry e1: supported grade contradicts a missing qualifier"]);
+    expect(r.feedback.join("\n")).not.toContain("plus tax");
+  });
+
+  it("blocks an empty entry list", () => {
+    const r = verifyClaims({ entryIds: [] }, { verdicts: {} });
+    expect(r.passed).toBe(false);
+    expect(r.feedback[0]).toMatch(/no entries/);
   });
 
   it.each([
@@ -185,6 +241,12 @@ describe("verifyClaims (fail-closed)", () => {
 
   it("blocks when work itself is unreadable", () => {
     expect(verifyClaims({ entryIds: ["e1"] }, null as never).passed).toBe(false);
+  });
+
+  it("blocks an unreadable entry list instead of throwing", () => {
+    expect(() => verifyClaims(null as never, { verdicts: {} })).not.toThrow();
+    expect(verifyClaims(null as never, { verdicts: {} }).passed).toBe(false);
+    expect(verifyClaims({ entryIds: "e1" as never }, { verdicts: {} }).passed).toBe(false);
   });
 
   it("parseJudgeOutput accepts only the strict support shape", () => {
@@ -218,6 +280,17 @@ describe("verifyRedaction (fail-closed)", () => {
     expect(r.passed).toBe(false);
     expect(r.feedback).toEqual(["span 0 (person): original text still present in masked text"]);
     expect(r.feedback.join("\n")).not.toContain("Ana");
+  });
+
+  it.each([
+    ["different case", "Call ana bell at [REDACTED_phone] today."],
+    ["collapsed whitespace", "Call Ana  Bell at [REDACTED_phone] today."],
+    ["a zero-width character", "Call Ana\u200B Bell at [REDACTED_phone] today."],
+  ])("blocks a span that survives as %s, without echoing the text", (_name, maskedText) => {
+    const r = verifyRedaction({ rawText, spans, residualScan: cleanScan }, { maskedText });
+    expect(r.passed).toBe(false);
+    expect(r.feedback[0]).toBe("span 0 (person): original text still present in masked text");
+    expect(r.feedback.join("\n")).not.toMatch(/ana bell/i);
   });
 
   it("blocks out-of-range or inverted spans", () => {

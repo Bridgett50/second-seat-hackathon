@@ -17,6 +17,7 @@ import {
   type Redactor,
   type TextSpan,
 } from "./redact.js";
+import { normalizePiiText, preparePiiScanText } from "@second-seat/core";
 
 export { GateConfigError };
 
@@ -255,22 +256,31 @@ export function backstopContactSpans(text: string): TextSpan[] {
   return out.sort((a, b) => a.start - b.start || a.end - b.end);
 }
 
-/** Residual-pattern scan over candidate send text. Returns a hit kind or null. */
+const DIGIT_RUN_RE = /(?<!\d)\d{7,15}(?!\d)/;
+
+/** Residual-pattern scan over candidate send text. Returns a hit kind or null.
+ * The kind never includes the matched text. Comparison is NFKC, format-stripped,
+ * and case-insensitive; phones also match a separator-free 7–15 digit run.
+ */
 export function findResidualPII(text: string, rawNames: readonly string[] = []): string | null {
-  const cardGroup = CARD_GROUP_RE.exec(text);
+  const scanned = preparePiiScanText(text);
+  const cardGroup = CARD_GROUP_RE.exec(scanned);
   if (cardGroup !== null) {
     const digits = cardGroup[0].replace(/\D/g, "");
     if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) return "card number";
   }
-  const cardLong = CARD_LONG_RE.exec(text);
+  const cardLong = CARD_LONG_RE.exec(scanned);
   if (cardLong !== null && luhnOk(cardLong[0])) return "card number";
-  if (EMAIL_RE.test(text)) return "email address";
-  if (PHONE_RE.test(text)) return "phone number";
-  if (IBAN_RE.test(text)) return "IBAN";
-  if (SSN_RE.test(text)) return "SSN-like number";
+  if (EMAIL_RE.test(scanned)) return "email address";
+  if (PHONE_RE.test(scanned)) return "phone number";
+  if (IBAN_RE.test(scanned.toUpperCase())) return "IBAN";
+  if (SSN_RE.test(scanned)) return "SSN-like number";
+  const folded = normalizePiiText(text);
   for (const name of rawNames) {
-    if (name.length >= 2 && text.includes(name)) return "unredacted name from redaction spans";
+    const foldedName = normalizePiiText(name);
+    if (foldedName.length >= 2 && folded.includes(foldedName)) return "unredacted name from redaction spans";
   }
+  if (DIGIT_RUN_RE.test(scanned)) return "phone number";
   return null;
 }
 

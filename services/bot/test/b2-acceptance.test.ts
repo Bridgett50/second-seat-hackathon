@@ -68,12 +68,13 @@ function okContent(client: ClientName): string {
   return JSON.stringify({ entries: [] });
 }
 
-function callClient(client: ClientName, g: GatedText): Promise<unknown> {
+function callClient(client: ClientName, g: GatedText, maxAttempts?: number): Promise<unknown> {
+  const opts = maxAttempts === undefined ? undefined : { maxAttempts };
   if (client === "muse") {
-    return new MuseClient().completeBrief({ meetingId: "m", transcriptText: g, framesSidecarText: "", fixtureMode: false });
+    return new MuseClient(opts).completeBrief({ meetingId: "m", transcriptText: g, framesSidecarText: "", fixtureMode: false });
   }
-  if (client === "shield") return new SparkPressureClassifier().classify([{ segmentId: "s1", text: g }]);
-  return new SparkSupportJudge().gradeSupport({ entryId: "e", entryText: g, citedSpans: [g] });
+  if (client === "shield") return new SparkPressureClassifier(opts).classify([{ segmentId: "s1", text: g }]);
+  return new SparkSupportJudge(opts).gradeSupport({ entryId: "e", entryText: g, citedSpans: [g] });
 }
 
 let fetchCalls: number;
@@ -186,7 +187,9 @@ describe.each(CLIENTS)("B2 via %s client (B2-8: all clients)", (client) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { gate, runId, token } = await approvedRun();
     respond = async () => new Response("busy", { status: 503 });
-    const p = gate.send(runId, token, (g) => callClient(client, g));
+    // Support and shield default to one attempt. This case asks for a second
+    // so revocation can still cancel a retry that was actually scheduled.
+    const p = gate.send(runId, token, (g) => callClient(client, g, client === "muse" ? undefined : 2));
     p.catch(() => undefined);
     await flush(() => fetchCalls === 1 && vi.getTimerCount() > 0);
     gate.revoke(runId);

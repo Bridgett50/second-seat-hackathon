@@ -12,7 +12,7 @@ import { createPrivacyGate } from "@second-seat/bot/dist/src/private/gate.js";
 import { GlimmerClient } from "@second-seat/bot/dist/src/private/redact.js";
 import { MuseClient } from "@second-seat/bot/dist/src/brief/muse.js";
 import { resolveAnalysisConfig } from "../src/liveConfig.js";
-import { createSessionStore } from "../src/session.js";
+import { TRANSPORT_FAILURE_REASON, createSessionStore } from "../src/session.js";
 import { renderSessionPage } from "../src/render.js";
 
 const RAW_NAME = "Alice Anderson";
@@ -281,7 +281,8 @@ describe("live session analysis over fake transports", () => {
     const s = await store.analyze(id);
     expect(s.state).toBe("error");
     expect(s.result).toBeNull();
-    expect(s.reason).toBeTypeOf("string");
+    expect(s.reason).toBe(TRANSPORT_FAILURE_REASON);
+    expect(s.reason).not.toContain("rejected");
     // The offline heuristic would have found a question here; live must not.
     // The transport ran and the provider refused (http_error receipt), so
     // the payload shows the failed attempt, never a success claim.

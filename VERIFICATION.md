@@ -52,8 +52,10 @@ The table mirrors `VERIFICATION_POINTS` in
   - Reads the judge's raw output in the strict support shape
     `{grade, missing_qualifier}`.
   - It blocks an entry when:
-    - its grade is `partial` (the feedback names the missing qualifier) or
-      `unsupported`;
+    - its grade is `partial` (the feedback says a qualifier was reported
+      and does not repeat the qualifier text) or `unsupported`;
+    - its grade is `supported` but `missing_qualifier` is not null;
+    - the entry list is empty;
     - it has no verdict;
     - its output is empty, not JSON, not an object, has a missing or extra
       key, or has a grade outside the enum.
@@ -65,8 +67,14 @@ pnpm --filter @second-seat/bot build
 node services/bot/scripts/verify-run.mjs \
   --input services/bot/fixtures/hero-input \
   --brief services/bot/fixtures/hero-brief.recorded.json \
+  --redacted /path/to/approved-redacted.txt \
+  --spans /path/to/spans.json \
   --meeting-id hero-input --skip-claims --out /tmp/verify
 ```
+
+`--redacted` is the approved masked text and `--spans` is the JSON span
+array from that same redaction. If either is missing or unreadable, the
+redaction check blocks. The script does not run a fresh redactor.
 
 The script:
 - writes `verification.json`;
