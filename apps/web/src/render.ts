@@ -1,4 +1,5 @@
 import { modelChips, type RunLogLine } from "./modelStrip.js";
+import { renderCacheRatio, type CacheUsage } from "./cacheRatio.js";
 import type { PressureAssessment } from "./session.js";
 
 export interface Citation {
@@ -166,6 +167,7 @@ export interface RenderOpts {
   briefScore?: BriefScore | null;
   seededScore?: SeededScore | null;
   heroChain?: HeroChainProof | null;
+  cacheUsage?: CacheUsage[];
 }
 
 function esc(s: string): string {
@@ -533,6 +535,7 @@ ${flaggedHtml}
 <section id="frames"><h2>Frames</h2>${frameHtml}</section>
 ${heroChainHtml}
 ${payloadHtml}
+${renderCacheRatio(opts.cacheUsage ?? [])}
 <footer>Second Seat never sends a reply to the vendor.</footer>
 <script type="application/json" id="transcript-data">${transcriptJson}</script>
 <script>
