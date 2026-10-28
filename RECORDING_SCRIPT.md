@@ -35,7 +35,7 @@ All meeting data below is made up. Nobody in it is real. Don't paste real meetin
 
 ## Rules for the take
 
-- Use only the made-up transcript above.
+- Use only `demo/synthetic-transcript.txt`.
 - Don't say "live" in an Offline take. The "Offline demo" label must stay visible. A clip of the Oct 28 live run must be labeled as a recorded run. Organizers confirmed recorded runs are fine if labeled. The Oct 28 recording still masks "November 15" as a date of birth; #116 changes that prompt and was rehearsed without a new live model call.
 - Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. Do not describe it as finished.
 - Never show a terminal with keys, `env` output, or `.env` files.
