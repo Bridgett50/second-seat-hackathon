@@ -146,7 +146,10 @@ if _LAUNCH_IMAGE:
         .dockerfile_commands(["RUN ln -sf \"$(command -v python3)\" /usr/local/bin/python"])
         .entrypoint([])
     )
-    _node_base = modal.Image.from_registry(_LAUNCH_IMAGE).run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
+    # Derive from `image` (not the raw registry image) so eval_in_container
+    # also gets the python symlink and empty entrypoint Modal needs to detect
+    # the Python version; otherwise `modal deploy` fails for that Function.
+    _node_base = image.run_commands("apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && node --version")  # driver: distro nodejs too old for fetch
 else:
     image = (
         modal.Image.from_registry("vllm/vllm-openai:muse-glimmer")
