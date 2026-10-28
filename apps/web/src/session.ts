@@ -246,10 +246,11 @@ function detectPressurePatterns(text: string, segmentId = ""): PressureLabel[] {
  */
 /**
  * An unresolved term is shown only with validated provenance: label.ask
- * must be a non-empty string that appears verbatim in the approved
- * transcript text and is not equal to the whole (trimmed) cited segment
- * text. Otherwise the item carries "" and renderers show
- * "term not identified".
+ * must be a non-empty substring of the CITED segment text and not equal
+ * to the whole (trimmed) cited segment text. Otherwise the item carries
+ * "" and renderers show "term not identified". Substring presence does
+ * not prove semantic unresolvedness: it only shows the word was said in
+ * the cited segment, not that the term itself is unresolved.
  */
 function resolveUnresolvedTerm(
   ask: unknown,
@@ -257,8 +258,9 @@ function resolveUnresolvedTerm(
   approvedText: string,
 ): string {
   if (typeof ask !== "string" || ask === "") return "";
+  if (segmentText === undefined || !segmentText.includes(ask)) return "";
   if (!approvedText.includes(ask)) return "";
-  if (segmentText !== undefined && ask === segmentText.trim()) return "";
+  if (ask === segmentText.trim()) return "";
   return ask;
 }
 

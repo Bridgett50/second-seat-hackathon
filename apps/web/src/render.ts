@@ -625,9 +625,9 @@ function pressureSourceLabel(p: { source: string; status?: string }): string {
   if (p.status === "failed") return "failed / unavailable";
   if (p.source === "offline-fixture") return "offline fixture";
   if (p.source === "live") return "live check";
-  if (p.source === "pattern") return "pattern check";
+  if (p.source === "pattern") return "deterministic pattern detection";
   if (p.source === "none") return "not run";
-  return "offline pattern check";
+  return "deterministic pattern detection";
 }
 
 function sessionPressureHtml(snap: SessionPageSnapshot): string {
@@ -642,6 +642,12 @@ function sessionPressureHtml(snap: SessionPageSnapshot): string {
       return `<section id="pressure" aria-label="Possible pressure">` +
         `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
         `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p>${reasonHtml}</section>`;
+    }
+    if (status === "valid_negative") {
+      return `<section id="pressure" aria-label="Possible pressure">` +
+        `<h2>Possible pressure — assessment, not a judgment of anyone's intent</h2>` +
+        `<p id="pressure-source">${esc(pressureSourceLabel(p))}</p>` +
+        `<p id="pressure-negative">No pressure items found</p></section>`;
     }
     return "";
   }
@@ -897,20 +903,23 @@ function mut(path,fields,opts){
   });
 }
 function pressureOk(s){var p=s.pressure||null;if(!p)return true;if(p.status==="valid_negative")return true;if(p.status==="valid_positive")return !!p.allReviewed;if(p.status==="not_run"||p.status==="failed")return false;if(!p.items||p.items.length===0)return true;return !!p.allReviewed;}
-function pressureLabel(p){if(p&&p.status==="not_run")return "not run";if(p&&p.status==="failed")return "failed / unavailable";var source=p?p.source:"";if(source==="offline-fixture")return "offline fixture";if(source==="live")return "live check";if(source==="pattern")return "pattern check";if(source==="none")return "not run";return "offline pattern check";}
+function pressureLabel(p){if(p&&p.status==="not_run")return "not run";if(p&&p.status==="failed")return "failed / unavailable";var source=p?p.source:"";if(source==="offline-fixture")return "offline fixture";if(source==="live")return "live check";if(source==="pattern")return "deterministic pattern detection";if(source==="none")return "not run";return "deterministic pattern detection";}
 function syncPressure(s){
   var old=document.getElementById("pressure");
   if(old&&old.parentNode)old.parentNode.removeChild(old);
   var p=s.pressure||null;
   if(!p)return;
   var empty=!p.items||p.items.length===0;
-  if(empty&&p.status!=="not_run"&&p.status!=="failed")return;
   var findings=document.getElementById("findings");
   if(!findings||!findings.parentNode)return;
   var sec=el("section",{id:"pressure","aria-label":"Possible pressure"});
   sec.appendChild(el("h2",{},"Possible pressure — assessment, not a judgment of anyone's intent"));
   sec.appendChild(el("p",{id:"pressure-source"},pressureLabel(p)));
-  if(empty)return findings.parentNode.insertBefore(sec,findings.nextSibling);
+  if(empty){
+    if(p.status==="valid_negative")sec.appendChild(el("p",{id:"pressure-negative"},"No pressure items found"));
+    else if(p.status!=="not_run"&&p.status!=="failed")return;
+    return findings.parentNode.insertBefore(sec,findings.nextSibling);
+  }
   p.items.forEach(function(item){
     var art=el("article",{"class":"pressure-item",id:"pressure-"+item.id});
     art.appendChild(el("a",{"class":"pressure-badge",href:"#"+item.segmentId},"pressure: "+item.id));
