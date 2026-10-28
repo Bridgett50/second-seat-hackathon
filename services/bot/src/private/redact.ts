@@ -738,6 +738,11 @@ export class GlimmerClient implements Redactor {
     if (opts?.receiptContext !== undefined) this.receiptContext = { ...opts.receiptContext };
   }
 
+  /** Per-request timeout this client uses (explicit option, else GLIMMER_TIMEOUT_MS / default). */
+  get requestTimeoutMs(): number {
+    return this.timeoutMs ?? glimmerTimeoutMs();
+  }
+
   /** Key the next receipts by run/case (used by the eval runner; optional). */
   setReceiptContext(ctx: GlimmerReceiptContext): void {
     this.receiptContext = { ...ctx };

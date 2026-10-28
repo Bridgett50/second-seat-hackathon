@@ -11,6 +11,14 @@ import { createPrivacyGate, type PrivacyGate } from "@second-seat/bot/dist/src/p
 import { GlimmerClient } from "@second-seat/bot/dist/src/private/redact.js";
 import { MuseClient } from "@second-seat/bot/dist/src/brief/muse.js";
 
+/** Default live redaction timeout (web race and Glimmer per-request). */
+export const LIVE_REDACT_TIMEOUT_MS = 240_000;
+
+function positiveIntOr(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export interface OfflineAnalysisConfig {
   mode: "offline";
 }
@@ -45,10 +53,13 @@ export function resolveAnalysisConfig(
   if (key === "") {
     throw new Error("live analysis needs META_API_KEY (set META_API_KEY)");
   }
+  // Live redaction of a full transcript on the private endpoint can take
+  // well over a minute; use the live default unless GLIMMER_TIMEOUT_MS is set.
+  const timeoutMs = positiveIntOr(env["GLIMMER_TIMEOUT_MS"], LIVE_REDACT_TIMEOUT_MS);
   const redactor =
     deps?.fetchImpl === undefined
-      ? new GlimmerClient(baseUrl)
-      : new GlimmerClient(baseUrl, { fetchImpl: deps.fetchImpl });
+      ? new GlimmerClient(baseUrl, { timeoutMs })
+      : new GlimmerClient(baseUrl, { timeoutMs, fetchImpl: deps.fetchImpl });
   const analyzer =
     deps?.fetchImpl === undefined
       ? new MuseClient({ labelTranscriptSegments: true })

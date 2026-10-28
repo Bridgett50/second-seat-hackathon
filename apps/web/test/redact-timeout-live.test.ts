@@ -28,11 +28,19 @@ describe("redaction timeout defaults", () => {
 
   it("the live Glimmer client's per-request timeout matches the live default", () => {
     const env = { SECOND_SEAT_MODE: "live", GLIMMER_BASE_URL: "http://glimmer.invalid", META_API_KEY: "test-placeholder" };
-    const cfg = resolveAnalysisConfig(env, { fetchImpl: fakeFetch });
-    if (cfg.mode !== "live") throw new Error("expected live config");
-    expect(cfg.redactor.requestTimeoutMs).toBe(240_000);
-    const overridden = resolveAnalysisConfig({ ...env, GLIMMER_TIMEOUT_MS: "200000" }, { fetchImpl: fakeFetch });
-    if (overridden.mode !== "live") throw new Error("expected live config");
-    expect(overridden.redactor.requestTimeoutMs).toBe(200_000);
+    // The live gate also requires the private Glimmer URL in process.env.
+    const prior = process.env["GLIMMER_BASE_URL"];
+    process.env["GLIMMER_BASE_URL"] = env.GLIMMER_BASE_URL;
+    try {
+      const cfg = resolveAnalysisConfig(env, { fetchImpl: fakeFetch });
+      if (cfg.mode !== "live") throw new Error("expected live config");
+      expect(cfg.redactor.requestTimeoutMs).toBe(240_000);
+      const overridden = resolveAnalysisConfig({ ...env, GLIMMER_TIMEOUT_MS: "200000" }, { fetchImpl: fakeFetch });
+      if (overridden.mode !== "live") throw new Error("expected live config");
+      expect(overridden.redactor.requestTimeoutMs).toBe(200_000);
+    } finally {
+      if (prior === undefined) delete process.env["GLIMMER_BASE_URL"];
+      else process.env["GLIMMER_BASE_URL"] = prior;
+    }
   });
 });

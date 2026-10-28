@@ -8,6 +8,7 @@ import {
   type PrivacyGate,
 } from "@second-seat/bot/dist/src/private/gate.js";
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
+import { LIVE_REDACT_TIMEOUT_MS } from "./liveConfig.js";
 
 export type SessionStatus =
   | "input"
@@ -679,16 +680,30 @@ export function toLiveAnalysisResult(
 
 const SESSION_TEST_MODE = process.env.SECOND_SEAT_TEST_MODE === "1";
 
-function redactTimeoutMs(): number {
-  if (SESSION_TEST_MODE) return 500;
-  const raw = process.env.SECOND_SEAT_REDACT_TIMEOUT_MS ?? "";
+export { LIVE_REDACT_TIMEOUT_MS };
+/** Offline/fixture redaction timeout (local mock redactor). */
+export const OFFLINE_REDACT_TIMEOUT_MS = 30_000;
+
+/**
+ * Redaction timeout for the session analyze step. Test mode stays at 500ms;
+ * SECOND_SEAT_REDACT_TIMEOUT_MS overrides; otherwise live mode gets 240s
+ * (a full transcript took ~50s on the private endpoint, over the old 30s)
+ * and offline keeps 30s.
+ */
+export function redactTimeoutMs(opts: {
+  offline: boolean;
+  env?: Record<string, string | undefined>;
+}): number {
+  const env = opts.env ?? process.env;
+  if (env["SECOND_SEAT_TEST_MODE"] === "1") return 500;
+  const raw = env["SECOND_SEAT_REDACT_TIMEOUT_MS"] ?? "";
   const parsed = Number.parseInt(raw, 10);
   if (Number.isInteger(parsed) && parsed > 0) return parsed;
-  return 30000;
+  return opts.offline ? OFFLINE_REDACT_TIMEOUT_MS : LIVE_REDACT_TIMEOUT_MS;
 }
 
-function withRedactTimeout<T>(promise: Promise<T>): Promise<T> {
-  const ms = redactTimeoutMs();
+function withRedactTimeout<T>(promise: Promise<T>, offline: boolean): Promise<T> {
+  const ms = redactTimeoutMs({ offline });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`redaction timeout after ${ms}ms`)), ms);
@@ -914,7 +929,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       let p!: Promise<void>;
       p = (async () => {
         try {
-          const prepared = await withRedactTimeout(gate.prepare(s.rawText));
+          const prepared = await withRedactTimeout(gate.prepare(s.rawText), offline);
           if (s.generation !== gen) return;
           assertWellFormedRedaction(prepared);
           s.runId = prepared.runId;
