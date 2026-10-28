@@ -8,6 +8,16 @@ Second Seat never sends a reply or message to the vendor, never joins calls, and
 
 Before the approved text is sent, a redaction check has to pass. After the brief is written, a second check has to pass. If a recorded support verdict is available, that is checked too. A hard failure stops the step and the page says "Needs owner review" without quoting the provider. Noisy warnings are sent to you for review and do not block the brief. Offline and Demo Mode run the same checks on the local brief. You still approve the redacted text and the draft yourself.
 
+## Why this matters to me
+
+I own Mo'ja Liquor, a small store, and I run Loving Grace Technologies. In September I was pricing new point-of-sale hardware for the store. On the phone, a vendor and I agreed on $700 a month.
+
+Then the written quote came in at $750 a month. Nobody mentioned the change. It was just a different number on the page. I caught it, emailed the vendor, and the next day they apologized and sent a corrected quote at $700. I almost overpaid $50 a month.
+
+I had the idea for Second Seat before this hackathon. That quote is why it matters. Small business owners take these calls alone, often between customers, and nobody takes notes. What gets said and what gets written down can drift apart, and the person who notices is usually the one paying.
+
+Second Seat is the second person in the room after the call. Glimmer runs on GPU hardware I control, through Modal, and masks personal details before anything else sees the text. Spark writes a brief that cites the meeting, so a changed number stands out. It never sends anything and never decides for you. The human stays in the final seat.
+
 ## How to run
 
 Requires Node 20+ and pnpm (via corepack).
@@ -36,7 +46,7 @@ SECOND_SEAT_MODE=live GLIMMER_BASE_URL=<your Modal Glimmer URL> META_API_KEY=<se
   pnpm --filter @second-seat/web serve
 ```
 
-Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The record is the owner's run summary `second-seat-live3-run-summary.md` (private, in the owner's Drive). Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116). The public link is demo mode with recorded examples. The Oct 28 live run was recorded and is labeled as a recorded run; organizers confirmed recorded runs are fine if labeled. Video URL, founder story, and user observations are still pending.
+Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The record is the owner's run summary `second-seat-live3-run-summary.md` (private, in the owner's Drive). Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116). The public link is demo mode with recorded examples. The Oct 28 live run was recorded and is labeled as a recorded run; organizers confirmed recorded runs are fine if labeled. Video URL and user observations are still pending.
 
 The image / SAM path is experimental. It is hidden from the UI and makes no calls unless `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`.
 
