@@ -60,6 +60,12 @@ export function parseJudgeOutput(raw: unknown): ParsedJudgeOutput {
 }
 
 export function verifyClaims(ctx: ClaimsVerificationContext, work: ClaimsVerificationWork): VerificationResult {
+  if (ctx == null || !Array.isArray(ctx.entryIds)) {
+    return result(["claims: entry id list unreadable: blocked (fail-closed)"]);
+  }
+  if (ctx.entryIds.length === 0) {
+    return result(["claims: no entries to verify: blocked (fail-closed)"]);
+  }
   const verdicts = work?.verdicts;
   if (verdicts === null || typeof verdicts !== "object" || Array.isArray(verdicts)) {
     return result(["claims: verdict map unreadable: blocked (fail-closed)"]);
@@ -75,9 +81,11 @@ export function verifyClaims(ctx: ClaimsVerificationContext, work: ClaimsVerific
     if (!parsed.ok) {
       feedback.push(`entry ${id}: judge output unreadable (${parsed.reason}): blocked (fail-closed)`);
     } else if (parsed.grade === "partial") {
-      feedback.push(`entry ${id}: partially supported; missing qualifier: ${parsed.missingQualifier ?? "(not named)"}`);
+      feedback.push(`entry ${id}: partially supported; a missing qualifier was reported`);
     } else if (parsed.grade === "unsupported") {
       feedback.push(`entry ${id}: not supported by its cited spans`);
+    } else if (parsed.missingQualifier !== null) {
+      feedback.push(`entry ${id}: supported grade contradicts a missing qualifier`);
     }
   }
   for (const id of Object.keys(verdicts)) {

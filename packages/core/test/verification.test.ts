@@ -155,9 +155,26 @@ describe("verifyClaims (fail-closed)", () => {
     );
     expect(r.passed).toBe(false);
     expect(r.feedback).toEqual([
-      "entry e1: partially supported; missing qualifier: plus tax and freight",
+      "entry e1: partially supported; a missing qualifier was reported",
       "entry e2: not supported by its cited spans",
     ]);
+    expect(r.feedback.join("\n")).not.toContain("plus tax and freight");
+  });
+
+  it("blocks a supported grade that still names a qualifier, without echoing it", () => {
+    const r = verifyClaims(
+      { entryIds: ["e1"] },
+      { verdicts: { e1: { grade: "supported", missing_qualifier: "plus tax and freight" } } },
+    );
+    expect(r.passed).toBe(false);
+    expect(r.feedback).toEqual(["entry e1: supported grade contradicts a missing qualifier"]);
+    expect(r.feedback.join("\n")).not.toContain("plus tax");
+  });
+
+  it("blocks an empty entry list", () => {
+    const r = verifyClaims({ entryIds: [] }, { verdicts: {} });
+    expect(r.passed).toBe(false);
+    expect(r.feedback[0]).toMatch(/no entries/);
   });
 
   it.each([
