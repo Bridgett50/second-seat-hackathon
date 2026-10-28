@@ -31,6 +31,43 @@ add_problem() {
     "$1" "$2" >> "$PROBLEMS"
 }
 
+emit_json() {
+JSON_OUT="$(BASE_SHA="$BASE_SHA" PROBLEMS="$PROBLEMS" TESTSTATUS="$TESTSTATUS" python3 - <<'EOF'
+import json, os
+probs = []
+with open(os.environ["PROBLEMS"]) as f:
+    for line in f:
+        line = line.strip()
+        if line:
+            probs.append(json.loads(line))
+tests = []
+crit = {}
+try:
+    crit = json.load(open(".muse/criteria.json"))
+except Exception:
+    pass
+for t in crit.get("tests", []) or []:
+    tid = str(t.get("id", "t"))
+    import re
+    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", tid)
+    def rd(kind, default):
+        try:
+            return open(os.path.join(os.environ["TESTSTATUS"], sid + "." + kind)).read().strip() or default
+        except OSError:
+            return default
+    tests.append({"id": tid, "head": rd("head", "fail"), "base": rd("base", "fail")})
+print(json.dumps({"passed": len(probs) == 0, "base": os.environ["BASE_SHA"],
+                  "problems": probs, "tests": tests}))
+EOF
+)"
+printf '%s\n' "$JSON_OUT"
+if [ -n "${VERIFY_OUT:-}" ]; then
+  mkdir -p "$VERIFY_OUT"
+  printf '%s\n' "$JSON_OUT" > "$VERIFY_OUT/verify.json"
+  cp "$TESTLOGS"/* "$VERIFY_OUT"/ 2>/dev/null || true
+fi
+}
+
 # --- sealed regex: same sources as .muse/guard.sh (small duplicated block) ---
 sealed_regex() {
   python3 - <<'EOF'
@@ -75,6 +112,68 @@ BASE_SHA="$(git rev-parse --verify "$BASE" 2>/dev/null || echo "")"
 if [ -z "$BASE_SHA" ]; then
   add_problem "bad_base" "cannot resolve base ref: $BASE"
   BASE_SHA="HEAD"
+fi
+
+# --- sealed policy first: no test command and no worktree before this passes ---
+POLICY_FILE="$ROOT/.sealed-paths"
+POLICY_ENTRIES="$WORK/policy-entries.txt"
+: > "$POLICY_ENTRIES"
+POLICY_BAD=""
+if [ ! -f "$POLICY_FILE" ] || [ ! -r "$POLICY_FILE" ]; then
+  add_problem "policy_missing" ".sealed-paths is missing or unreadable"
+  POLICY_BAD="missing"
+else
+  POLICY_CHECK="$(POLICY_FILE="$POLICY_FILE" POLICY_ENTRIES="$POLICY_ENTRIES" python3 - <<'EOF'
+import os
+pf = os.environ["POLICY_FILE"]
+out = os.environ["POLICY_ENTRIES"]
+entries = []
+bad = ""
+try:
+    with open(pf) as f:
+        raw = f.read().splitlines()
+except OSError as e:
+    bad = "unreadable: %s" % e
+else:
+    import re as _re
+    for line in raw:
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("/") or "\\" in s or "*" in s or "?" in s or "[" in s or "]" in s:
+            bad = "invalid entry: %s" % s
+            break
+        if _re.search(r"\s", s):
+            bad = "invalid entry: %s" % s
+            break
+        if any(seg == ".." for seg in s.split("/")):
+            bad = "invalid entry: %s" % s
+            break
+        entries.append(s)
+    if not bad and not entries:
+        bad = "empty policy"
+if bad:
+    print("bad:" + bad)
+else:
+    with open(out, "w") as f:
+        for e in entries:
+            f.write(e + "\n")
+    print("ok")
+EOF
+)"
+  if [ "$POLICY_CHECK" = "ok" ]; then
+    POLICY_BAD=""
+  elif [ "${POLICY_CHECK#bad:unreadable}" != "$POLICY_CHECK" ]; then
+    add_problem "policy_missing" "${POLICY_CHECK#bad:}"
+    POLICY_BAD="missing"
+  else
+    add_problem "policy_invalid" "${POLICY_CHECK#bad:}"
+    POLICY_BAD="invalid"
+  fi
+fi
+if [ -n "$POLICY_BAD" ]; then
+  emit_json
+  exit 1
 fi
 
 # --- changed paths: committed + working tree + untracked non-ignored ---
@@ -217,24 +316,57 @@ EOF
   WT="$(mktemp -d "${TMPDIR:-/tmp}/muse-base-XXXXXX")"
   base_res="fail"
   set +e
-  git worktree add --detach "$WT" "$BASE_SHA" >/dev/null 2>&1
+  git worktree add --no-checkout --detach "$WT" "$BASE_SHA" >/dev/null 2>&1
   wt_st=$?
   set -e
+  WT_OK=""
+  WT_FAIL_STEP=""
   if [ "$wt_st" -ne 0 ]; then
-    add_problem "weak_before" "$TID: cannot create base worktree"
-    base_res="weak"
+    WT_FAIL_STEP="worktree-add"
   else
-    # sparse-checkout excluding .sealed-paths entries (non-cone)
-    if [ -f .sealed-paths ]; then
-      {
-        echo '/*'
-        grep -v '^[[:space:]]*#' .sealed-paths | grep -v '^[[:space:]]*$' \
-          | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^/!\//'
-      } > "$WORK/sparse-$sid.txt"
-      git -C "$WT" sparse-checkout set --no-cone --stdin < "$WORK/sparse-$sid.txt" >/dev/null 2>&1 \
-        || { cp "$WORK/sparse-$sid.txt" "$WT/.git/info/sparse-checkout" 2>/dev/null || true;
-             git -C "$WT" sparse-checkout reapply >/dev/null 2>&1 || true; }
+    {
+      printf '/*\n'
+      while IFS= read -r pe; do
+        [ -n "$pe" ] || continue
+        printf '!/%s\n' "$pe"
+      done < "$POLICY_ENTRIES"
+    } > "$WORK/sparse-$sid.txt"
+    set +e
+    git -C "$WT" sparse-checkout set --no-cone --stdin < "$WORK/sparse-$sid.txt" >/dev/null 2>&1
+    sc_st=$?
+    set -e
+    if [ "$sc_st" -ne 0 ]; then
+      WT_FAIL_STEP="sparse-set"
+    elif ! git -C "$WT" sparse-checkout list >"$WORK/sparse-$sid.got" 2>/dev/null; then
+      WT_FAIL_STEP="sparse-verify"
+    elif ! cmp -s "$WORK/sparse-$sid.txt" "$WORK/sparse-$sid.got"; then
+      WT_FAIL_STEP="sparse-verify"
+    else
+      set +e
+      git -C "$WT" read-tree -mu HEAD >/dev/null 2>&1
+      rt_st=$?
+      set -e
+      if [ "$rt_st" -ne 0 ]; then
+        WT_FAIL_STEP="materialize"
+      else
+        while IFS= read -r pe; do
+          [ -n "$pe" ] || continue
+          if [ -e "$WT/$pe" ]; then
+            WT_FAIL_STEP="excluded-present:$pe"
+            break
+          fi
+        done < "$POLICY_ENTRIES"
+        if [ -z "$WT_FAIL_STEP" ]; then WT_OK=1; fi
+      fi
     fi
+  fi
+  if [ -z "$WT_OK" ]; then
+    add_problem "policy_setup_failed" "$TID: $WT_FAIL_STEP"
+    git worktree remove --force "$WT" >/dev/null 2>&1 || true
+    git worktree prune >/dev/null 2>&1 || true
+    rm -rf "$WT" || true
+    base_res="fail"
+  else
     # copy the test's files from the working tree
     n=0
     while [ "$n" -lt "${TFILES_N:-0}" ]; do
@@ -265,7 +397,7 @@ EOF
     fi
     git worktree remove --force "$WT" >/dev/null 2>&1 || true
     git worktree prune >/dev/null 2>&1 || true
-    rmdir "$WT" 2>/dev/null || true
+    rm -rf "$WT" || true
   fi
   printf '%s' "$base_res" > "$TESTSTATUS/$sid.base"
   printf '%s\n' "$TID" >> "$WORK/tids.txt"
@@ -282,39 +414,5 @@ if [ "$FULL" -eq 1 ]; then
 fi
 
 # --- emit ---
-JSON_OUT="$(NTESTS="$NTESTS" BASE_SHA="$BASE_SHA" PROBLEMS="$PROBLEMS" TESTSTATUS="$TESTSTATUS" python3 - <<'EOF'
-import json, os
-probs = []
-with open(os.environ["PROBLEMS"]) as f:
-    for line in f:
-        line = line.strip()
-        if line:
-            probs.append(json.loads(line))
-tests = []
-tids = os.path.join(os.environ.get("TMPD", ""), "")
-crit = {}
-try:
-    crit = json.load(open(".muse/criteria.json"))
-except Exception:
-    pass
-for t in crit.get("tests", []) or []:
-    tid = str(t.get("id", "t"))
-    import re
-    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", tid)
-    def rd(kind, default):
-        try:
-            return open(os.path.join(os.environ["TESTSTATUS"], sid + "." + kind)).read().strip() or default
-        except OSError:
-            return default
-    tests.append({"id": tid, "head": rd("head", "fail"), "base": rd("base", "fail")})
-print(json.dumps({"passed": len(probs) == 0, "base": os.environ["BASE_SHA"],
-                  "problems": probs, "tests": tests}))
-EOF
-)"
-printf '%s\n' "$JSON_OUT"
-if [ -n "${VERIFY_OUT:-}" ]; then
-  mkdir -p "$VERIFY_OUT"
-  printf '%s\n' "$JSON_OUT" > "$VERIFY_OUT/verify.json"
-  cp "$TESTLOGS"/* "$VERIFY_OUT"/ 2>/dev/null || true
-fi
+emit_json
 if [ -s "$PROBLEMS" ]; then exit 1; else exit 0; fi
