@@ -90,6 +90,14 @@ answer cannot vouch for a claim, so an unreadable verdict is a refusal.
 The tests cover this: see the "blocks malformed judge output" cases in
 `packages/core/test/verification.test.ts`.
 
+The contrast is also measured. `eval/rules/` feeds the 13 recorded support
+verdicts through both checkers: well-formed, under 11 corruptions, and
+missing. A fail-open reference blocks 27 of the 143 malformed outputs and
+none of the 13 missing verdicts. `verifyClaims` blocks all of them. The
+same suite scores `verifyBrief` against seeded mutants of the recorded
+briefs. Run `pnpm --filter @second-seat/eval rules` to reproduce it; the
+results are in `eval/results/rules-table.md`.
+
 ## Status and known findings
 
 - **Not wired into the live session yet.** `apps/web` and `session.ts` are

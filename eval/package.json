@@ -15,7 +15,9 @@
     "prescore-brief": "pnpm --filter @second-seat/core build",
     "score-brief": "node score-brief.mjs",
     "presupport": "pnpm --filter @second-seat/bot build",
-    "support": "node support.mjs"
+    "support": "node support.mjs",
+    "prerules": "pnpm --filter @second-seat/core build",
+    "rules": "node rules/run.mjs"
   },
   "devDependencies": {
     "@second-seat/core": "workspace:*",
