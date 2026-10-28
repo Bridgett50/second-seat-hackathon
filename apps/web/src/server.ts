@@ -5,7 +5,9 @@ import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
 import { buildOfflineBrief, createSessionStore } from "./session.js";
 import { resolveAnalysisConfig } from "./liveConfig.js";
 import { installNetGuard, outboundStats, recordAnalyzerCall } from "./netGuard.js";
-import { loadDemo } from "./loadFixtures.js";
+import { readFileSync } from "node:fs";
+import { loadDemo, WEB_ROOT } from "./loadFixtures.js";
+import { findAiSelf } from "./theme.js";
 import { renderBriefPage, renderSessionPage } from "./render.js";
 
 const PORT = Number(process.env.PORT ?? 4173);
@@ -274,6 +276,14 @@ export function createWebServer(deps?: WebServerDeps) {
     });
   return createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    // Optional AI-self image for the twin stage (apps/web/public/ai-self.png|jpg).
+    // Looked up per request so dropping the file in needs no restart.
+    const aiSelf = findAiSelf(WEB_ROOT);
+    if (req.method === "GET" && aiSelf !== null && url.pathname === aiSelf.url) {
+      res.writeHead(200, { "content-type": aiSelf.contentType, "cache-control": "no-cache" });
+      res.end(readFileSync(aiSelf.file));
+      return;
+    }
     if (req.method === "GET" && (url.pathname === "/briefs/demo" || url.pathname === "/briefs/demo/")) {
       const demo = loadDemo();
       const html = renderBriefPage(
@@ -291,6 +301,7 @@ export function createWebServer(deps?: WebServerDeps) {
           // SAM / image hero chain is experimental and hidden unless enabled.
           heroChain: SAM_ENABLED ? demo.heroChain : null,
           cacheUsage: demo.cacheUsage,
+          aiSelfSrc: aiSelf?.url ?? null,
         },
       );
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -305,6 +316,7 @@ export function createWebServer(deps?: WebServerDeps) {
         mode,
         liveAvailable,
         liveRequestedButUnavailable: wantsLive && !liveAvailable,
+        aiSelfSrc: aiSelf?.url ?? null,
       });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(html);
