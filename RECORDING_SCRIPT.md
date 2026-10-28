@@ -1,5 +1,9 @@
 # Recording script: Second Seat (target 2:50, hard limit 3:00)
 
+## Opening line (founder-supplied)
+
+> "In September, a vendor and I agreed on seven hundred dollars a month by phone. The written quote said seven-fifty. I caught it, and they fixed it. Second Seat helps the next owner catch it too."
+
 All meeting data below is made up. Nobody in it is real. Don't paste real meeting text on camera.
 
 ## Before you hit record (not on camera)

@@ -4,6 +4,10 @@ Timecodes are the script's own timeline, not measured claims. Every other number
 
 Founder story: PENDING — not yet supplied. User observations: PENDING — not yet supplied. Video URLs: PENDING — not yet supplied. Record nothing for these slots until they are supplied; invent no quotes, anecdotes, or URLs.
 
+## Opening line (founder-supplied)
+
+> "In September, a vendor and I agreed on seven hundred dollars a month by phone. The written quote said seven-fifty. I caught it, and they fixed it. Second Seat helps the next owner catch it too."
+
 The whole video follows ONE meeting through the connected `/session` flow (`apps/web`, PRs A4–A8): paste transcript text, redaction review, approval, analysis, correction, editable draft, exact-draft approval, copy. No screenshot upload. No SAM. No timed replay. SAM/image features are experimental, outside the core flow, and off by default — they do not appear in this video.
 
 | Time | On screen | Bridgett says |
