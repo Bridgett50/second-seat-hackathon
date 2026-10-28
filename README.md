@@ -4,7 +4,7 @@ Pre-existing: the Second Seat idea and an earlier prototype in a separate repo (
 
 ## What it is
 
-Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, the redaction step masks PII for my review, I review and correct the redacted text, I approve it, the brief step writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. `#btn-copy` stays disabled until I approve the exact current draft text and finish pressure review of every item; approval requires an explicit click on `#btn-draft-approve`; it only writes that text to my clipboard; any edit to the draft or transcript clears the approval. Second Seat never sends a reply or message to the vendor; I copy the approved draft myself. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
+Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, the redaction step masks PII for my review, I review and correct the redacted text, I approve it, the brief step writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. `#btn-copy` stays disabled until I approve the exact current draft text and finish pressure review of every item; approval requires an explicit click on `#btn-draft-approve`; it only writes that text to my clipboard; edits in the open page clear the approval, but a reload after an A->B->A edit during a held approval can still show Copy enabled (open; F4 partly open, approveDraft does not revoke on input). Second Seat never sends a reply or message to the vendor; I copy the approved draft myself. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
 
 ## Demo modes: offline, recorded, live
 
@@ -21,12 +21,12 @@ The deterministic pattern layer runs by default in both offline and live modes a
 | A1 | merged (#35) | criteria reconstructed from merged PR #35 (not verbatim); offline tests pass | live not performed | none |
 | A2 | merged (#36) | criteria reconstructed from merged PR #36 (not verbatim); offline tests pass | live not performed | none |
 | A3 | merged (#37) | criteria reconstructed from merged PR #37 (not verbatim); offline tests pass | live not performed | none |
-| A4 | merged (#38) | criteria met on the tested commit; offline tests pass | live not performed | none |
-| A5 | merged (#39) | criteria met on the tested commit; offline tests pass | live not performed | none |
-| A6 | merged (#40) | criteria met on the tested commit; offline tests pass | live not performed | none |
-| A7 | merged (#41) | criteria met on the tested commit; offline tests pass | live not performed | none |
-| A8 | merged (#42) | criteria met on the tested commit; offline tests pass | live not performed | none |
-| A9 | merged (#43) | criteria met on the tested commit; offline tests pass | live not performed | none |
+| A4 | merged (#38) | reconstructed; not re-verified at restacked heads; offline tests pass | live not performed | none |
+| A5 | merged (#39) | reconstructed; not re-verified at restacked heads; offline tests pass | live not performed | none |
+| A6 | merged (#40) | reconstructed; not re-verified at restacked heads; offline tests pass | live not performed | none |
+| A7 | merged (#41) | reconstructed; not re-verified at restacked heads; offline tests pass | live not performed | none |
+| A8 | merged (#42) | reconstructed; not re-verified at restacked heads; offline tests pass | live not performed | none |
+| A9 | merged (#43) | reconstructed; not re-verified at restacked heads; offline tests pass | live not performed | none |
 | B1 | draft PR (#44) | offline tests pass | live not performed | none |
 | B2 | draft PR (#45) | offline tests pass | live not performed | none |
 | B3 | draft PR (#48) | offline tests pass | live not performed | none |
@@ -35,21 +35,31 @@ The deterministic pattern layer runs by default in both offline and live modes a
 | B6 | draft PR (#49) | offline tests pass | live not performed | none |
 | B7 | this draft PR (docs) | docs checks pass | live not performed | none |
 | B8 | draft (evidence protocol only; no observations) | no observations | live not performed | none |
-| C1 | draft PR (#54) | criteria C1-1..C1-9 (C1-9 pending D2-6); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/8d1ca970b1993b34112f1276b9915eb2219b0b7a; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479067260 success | live not performed | none |
-| C2 | draft PR (#55) | criteria C2-1..C2-7 (C2-7 pending); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/2617b7978363963e5126d8e4ca643f176cecfd5f; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479898486 success | live not performed | none |
-| C3 | draft PR (#56) | criteria C3-1..C3-8 (C3-7/C3-8 pending); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/fb4c216d60b08aef4308a05f25250b5f8adfa925; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40480594570 failed (web build emitted to dist/apps/web because a test imported core source by relative path; fixed in C7 #59) | live not performed | none |
-| C4 | draft PR (#57) | criteria C4-1..C4-11 (C4-7/C4-8/C4-9/C4-11 pending D5); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/b383e12615b5df48866c7f276d1095d7f116850c; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484194423 failed (same build issue; fixed in C7 #59) | live not performed | none |
-| C5 | draft PR (#58) | criteria C5-1..C5-12 (C5-3/C5-6 partial); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/789ab3c3475145404484f39c428883dcc78557b7; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484954956 failed (same build issue; fixed in C7 #59) | live not performed | none |
-| C6 | draft PR (#53) | criteria C6-1..C6-7 (C6-4/C6-7 pending D3); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/7efcae01fa594a564165a69a2d065f86d9c15d03; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40477442184 success | live not performed | none |
-| C7 | draft PR (#59) | criteria C7-1..C7-8 (C7-2/C7-3/C7-7/C7-8 partial); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/1153dd8f6aae575a8f46788b9bf3432d28e43817; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40486174227 success | live not performed | none |
-| C8 | docs | criteria C8-1..C8-9; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/f7a91a15571c179d5cc5bf4a3c86e866576bb7dd; prose checks pass | live not performed | none |
-| C9 | prep only | criteria C9-P1..C9-P10; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/c6829e3c2a1b12de73878b2462d6d3014542bdac; execution blocked | live not performed | none |
-| D1 | this repo | criteria D1-1..D1-5; tested head a23b46295c302113a294713adace48d10f97030a; fake-transport/fixture tests pass | live not performed | none |
-| D2 | this repo | criteria D2-1..D2-6; tested head 9d5dd7fc700c2e76c2f1375bc10dd593b4cb07b1; probe apps/web/e2e/d2-approval.spec.ts; pass with fake transport | live not performed | none |
-| D3 | this repo | criteria D3-1..D3-5; tested head 7af1d4b077a68d4063546fc94553bb73aa271397; fake-repo tests pass | live not performed | none |
-| D4 | this repo | criteria D4-1..D4-6; tested head b1ba5dbd50689fe6aec5716fd509cbc5b3426dfe; inert-stub tests pass | live not performed | none |
-| D5 | this repo | criteria D5-1..D5-5; tested head 6b37061ee2d1726077961e1ac077de20e954a02c; dummy-bundle tests pass | live not performed | none |
-| D6 | this change (docs) | criteria D6-1..D6-5; tested head TBD-head; file checks pass | live not performed | none |
+| C1 | draft PR (#54) | criteria C1-1..C1-9 (C1-9 pending D2-6); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/077c7d35d1fa7fd8a967f179187e137fb45831b5; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479067260 success | live not performed | none |
+| C2 | draft PR (#55) | criteria C2-1..C2-7 (C2-7 pending); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/b63c1cf28a6973cfea1ef6cd827164553aa36e5d; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40479898486 success | live not performed | none |
+| C3 | draft PR (#56) | criteria C3-1..C3-8 (C3-7/C3-8 pending); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/de50552b66c25f5c920dff50b2d5252782ec2c39; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40480594570 failed at the pre-restack commit (web build emitted to dist/apps/web); old build failure fixed at de50552 (F6 closed) | live not performed | none |
+| C4 | draft PR (#57) | criteria C4-1..C4-11 (C4-7/C4-8/C4-9/C4-11 pending D5); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/1f4b74f1ece34fcaeb4a8fdee7696f6a4095040a; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484194423 failed at the pre-restack commit (same build issue); old build failure fixed at de50552 (F6 closed) | live not performed | none |
+| C5 | draft PR (#58) | criteria C5-1..C5-12 (C5-3/C5-6 partial); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/9a3dd34e41f6d7654c9ff5b93eae175ff31a54d8; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40484954956 failed at the pre-restack commit (same build issue); old build failure fixed at de50552 (F6 closed) | live not performed | none |
+| C6 | draft PR (#53) | criteria C6-1..C6-7 (C6-4/C6-7 pending D3); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/7af1d4b077a68d4063546fc94553bb73aa271397; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40477442184 success | live not performed | none |
+| C7 | draft PR (#59) | criteria C7-1..C7-8 (C7-2/C7-3/C7-7/C7-8 partial); tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/7442f77538494fd35e0778d104e19aca694fc5d5; CI https://github.com/Bridgett50/second-seat-hackathon/actions/runs/40486174227 success | live not performed | none |
+| C8 | docs | criteria C8-1..C8-9; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/d1cd7e1e6814933ead71cbd9750b5cb9a2714f28; prose checks pass | live not performed | none |
+| C9 | prep only | criteria C9-P1..C9-P10; tested commit https://github.com/Bridgett50/second-seat-hackathon/commit/dd7c8c69244872f04515d1a20b07a2625b6dcddb; execution blocked | live not performed | none |
+| D1 | this repo | criteria D1-1..D1-5 (review verdicts: D1-1 partly, D1-2 closed, D1-3 closed, D1-4 closed, D1-5 closed); tested head a23b46295c302113a294713adace48d10f97030a; fake-transport/fixture tests | live not performed | none |
+| D2 | this repo | criteria D2-1..D2-6 (review verdicts: D2-1 closed, D2-2 partly, D2-3 closed, D2-4 closed, D2-5 closed, D2-6 partly); tested head 9d5dd7fc700c2e76c2f1375bc10dd593b4cb07b1; probe apps/web/e2e/d2-approval.spec.ts with fake transport | live not performed | none |
+| D3 | this repo | criteria D3-1..D3-5 (review verdicts: D3-1 closed, D3-2 partly, D3-3 partly, D3-4 open, D3-5 partly); tested head 7af1d4b077a68d4063546fc94553bb73aa271397; fake-repo tests | live not performed | none |
+| D4 | this repo | criteria D4-1..D4-6 (review verdicts: D4-1 closed, D4-2 partly, D4-3 partly, D4-4 open, D4-5 closed, D4-6 partly); tested head b1ba5dbd50689fe6aec5716fd509cbc5b3426dfe; inert-stub tests | live not performed | none |
+| D5 | this repo | criteria D5-1..D5-5 (review verdicts: D5-1 partly, D5-2 closed, D5-3 partly, D5-4 partly, D5-5 partly); tested head 6b37061ee2d1726077961e1ac077de20e954a02c; dummy-bundle tests | live not performed | none |
+| D6 | this change (docs) | criteria D6-1..D6-5 (review verdicts: D6-1 closed, D6-2 open, D6-3 closed, D6-4 open, D6-5 closed); tested head 1d19da07260166909d4f7d21ee82f9576923fb64; file checks only | live not performed | none |
+
+### Ledger corrections (E6) and current limitations
+
+Current limitations match [docs/codex/cursor-D-review.md](docs/codex/cursor-D-review.md): F4 partly open (in the open page an A->B->A edit keeps Copy disabled, but a reload after an A->B->A edit during a held approval can still show Copy enabled because approveDraft does not revoke on input); F5 closed; F6 closed (old build failure fixed at de50552).
+
+Superseded wording (no longer claimed): "any edit to the draft or transcript clears the approval" — replaced by the open-page plus reload-caveat statement above.
+
+### E-series fixes (draft, unmerged)
+
+Draft PRs with fail-before/pass-after tests: E1 (D1-1/F1), E2 (D4-4/D4-6/F7), E4 (D5-1/D5-2/D5-3/F8), E5 (D3-2/D3-4/F9). E3 (F4 reload) not fixed. See [docs/codex/cursor-D-review.md](docs/codex/cursor-D-review.md).
 
 ## Why it matters
 
