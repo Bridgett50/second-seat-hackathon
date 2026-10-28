@@ -63,7 +63,14 @@ def _read_launcher_identity():
 # since import. _LAUNCH_PROJECTION is the explicit bound flat projection
 # computed from the canonical config; _MODEL_REVISION/_LAUNCH_IMAGE come
 # from the projection (empty when the projection fails).
+# Inside the deployed container GLIMMER_LAUNCH_CONFIG is unset (Modal does not
+# forward the deployer's env), so the same bytes are shipped next to this
+# file by _with_launch_files() and picked up from there.
+_CONTAINER_ROOT = "/root"
+_CONFIG_BASENAME = "glimmer-launch-config.json"
 _LAUNCH_CONFIG_PATH = os.environ.get("GLIMMER_LAUNCH_CONFIG", "")
+if not _LAUNCH_CONFIG_PATH and (_here.parent / _CONFIG_BASENAME).is_file():
+    _LAUNCH_CONFIG_PATH = str(_here.parent / _CONFIG_BASENAME)
 _LAUNCH_CONFIG = {}
 _LAUNCH_CONFIG_BYTES = None
 _LAUNCH_CONFIG_SHA256 = None
@@ -166,8 +173,21 @@ else:
     )
 
 
+def _with_launch_files(img):
+    """Ship launch_contract.py and the frozen launch-config bytes into the
+    container (Modal 1.x mounts only the entrypoint file, and local env vars
+    are not forwarded). Added last: add_local_file without copy=True must
+    follow every build step. No config staged -> nothing shipped."""
+    img = img.add_local_file(
+        str(_here.parent / "launch_contract.py"), f"{_CONTAINER_ROOT}/launch_contract.py"
+    )
+    if _LAUNCH_CONFIG_BYTES is not None:
+        img = img.add_local_file(_LAUNCH_CONFIG_PATH, f"{_CONTAINER_ROOT}/{_CONFIG_BASENAME}")
+    return img
+
+
 @app.function(
-    image=image,
+    image=_with_launch_files(image),
     gpu="A100-80GB",
     volumes={"/root/.cache/huggingface": volume},
     timeout=3600,
@@ -179,6 +199,11 @@ else:
 def serve() -> None:
     # vLLM flags come from the frozen launch config via the pure contract
     # builder (revision + token-limit derived, never hardcoded here).
+    _argv = launch_contract.vllm_argv(_LAUNCH_CONFIG)
+    if not _LAUNCH_CONFIG_BYTES or not _argv[_argv.index("--revision") + 1]:
+        raise RuntimeError(
+            "launch config missing in container: refusing to start vLLM without a pinned revision"
+        )
     cmd = launch_contract.vllm_argv(_LAUNCH_CONFIG, host="0.0.0.0", port=8000)
     subprocess.Popen(cmd)
 
@@ -187,7 +212,7 @@ def serve() -> None:
 # whether this Modal version accepts that kwarg, and an unknown kwarg would
 # fail app definition at import time.
 @app.function(
-    image=eval_in_container_image,
+    image=_with_launch_files(eval_in_container_image),
     gpu="A100-80GB",
     volumes={"/root/.cache/huggingface": volume, "/results": results},
     timeout=_FUNCTION_TIMEOUT_S,

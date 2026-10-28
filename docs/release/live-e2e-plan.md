@@ -13,7 +13,7 @@ pnpm install && pnpm -r build
 # 1. Deploy the Glimmer vLLM server on Modal (A100-80GB, scale-to-zero).
 #    GLIMMER_LAUNCH_CONFIG must name a canonical nested run config
 #    (runConfig.ts shape, configVersion 1) with model.revision set.
-#    See failure 1 below: the deployed container does not receive it today.
+#    The deploy ships those exact bytes into the container (H3).
 GLIMMER_LAUNCH_CONFIG=<config.json> python3 -m modal deploy infra/modal/glimmer_app.py
 
 # 2. Point the app at the endpoint Modal prints for the `serve` function,
@@ -43,7 +43,7 @@ Worst case: a stuck container can bill until the 1500 s startup timeout, or up t
 
 ## What would make it fail
 
-1. **Revision not shipped to the deployed server (real bug, unfixed, reported).** `GLIMMER_LAUNCH_CONFIG` is read at import, but the `serve` image doesn't carry the config file or the env var into the container. Inside Modal, `_LAUNCH_CONFIG` is `{}`, so `launch_contract.vllm_argv({})` gives `--revision ''` (verified locally, pure function, no Modal call). vLLM will likely fail to resolve the weights, or load an unpinned revision.
+1. **Launch config (fixed by the H3 PR; still needs a real config file).** Before H3, the deployed `serve` container never got `GLIMMER_LAUNCH_CONFIG` or `launch_contract.py`, so vLLM would have started with `--revision ''`. H3 ships both into the image at `/root/` with `Image.add_local_file`, and `serve()` now refuses to start without a pinned revision. Still open: no canonical launch config with the real `model.revision` and image digest is committed. One has to be written before deploy, or `serve` will refuse.
 2. **Cold start.** If the weights volume `glimmer-weights` is empty, the first start downloads the 30B weights and can exceed the 1500 s startup timeout. Each Glimmer request has a 90 s timeout, so redaction fails if warmup didn't finish.
 3. **Glimmer output.** The historical run completed 6/8. The two failures were invalid JSON and a length finish with empty output. Either one fails redaction.
 4. **Residual PII.** If Glimmer misses the phone or email, the privacy gate refuses Analyze ("residual PII detected"). The owner must fix the preview first.
