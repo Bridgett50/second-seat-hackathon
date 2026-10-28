@@ -6,6 +6,8 @@ Vendor calls are where people agree to things they never meant to agree to. Seco
 
 Second Seat never sends a reply or message to the vendor, never joins calls, and takes no action. You decide.
 
+Before the approved text is sent, a redaction check has to pass. After the brief is written, a second check has to pass. If a recorded support verdict is available, that is checked too. A hard failure stops the step and the page says "Needs owner review" without quoting the provider. Noisy warnings are sent to you for review and do not block the brief. Offline and Demo Mode run the same checks on the local brief. You still approve the redacted text and the draft yourself.
+
 ## How to run
 
 Requires Node 20+ and pnpm (via corepack).
