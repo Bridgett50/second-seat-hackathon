@@ -251,7 +251,12 @@ interface RawLabel {
 }
 
 function parseLabels(rawText: string): PressureLabel[] {
-  const parsed = JSON.parse(rawText) as { labels?: RawLabel[] };
+  let parsed: { labels?: RawLabel[] };
+  try {
+    parsed = JSON.parse(rawText) as { labels?: RawLabel[] };
+  } catch {
+    throw new Error(`pressure response was not valid JSON (${rawText.length} chars)`);
+  }
   if (!Array.isArray(parsed.labels)) {
     throw new Error("pressure response has no labels array");
   }

@@ -268,10 +268,15 @@ async function readStreamedChat(response: Response): Promise<{ content: string; 
         if (data === "[DONE]") {
           continue;
         }
-        const event = JSON.parse(data) as {
+        let event: {
           choices?: Array<{ delta?: { content?: string } }>;
           usage?: ChatResponse["usage"];
         };
+        try {
+          event = JSON.parse(data) as typeof event;
+        } catch {
+          throw new Error(`muse-spark streaming response was not valid JSON (${data.length} chars)`);
+        }
         const delta = event.choices?.[0]?.delta?.content;
         if (typeof delta === "string") {
           chunks.push(delta);
@@ -286,7 +291,12 @@ async function readStreamedChat(response: Response): Promise<{ content: string; 
 }
 
 function parseGrade(content: string): { grade: SupportGrade; missingQualifier: string | null } {
-  const parsed = JSON.parse(content) as { grade?: unknown; missing_qualifier?: unknown };
+  let parsed: { grade?: unknown; missing_qualifier?: unknown };
+  try {
+    parsed = JSON.parse(content) as { grade?: unknown; missing_qualifier?: unknown };
+  } catch {
+    throw new Error(`support judge returned unreadable JSON (${content.length} chars)`);
+  }
   if (parsed.grade !== "supported" && parsed.grade !== "partial" && parsed.grade !== "unsupported") {
     throw new Error(`support judge returned invalid grade (content ${content.length} chars)`);
   }
