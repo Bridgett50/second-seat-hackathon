@@ -131,6 +131,34 @@ describe("verifyBrief (fail-closed)", () => {
     expect(r.escalations).toContainEqual({ entryId: "e1", reason: "ungrounded_number:10" });
   });
 
+  it("does not treat 01 and 1 as the same number", () => {
+    const b = brief();
+    b.entries[0]!.text = "Use code 01.";
+    const r = verifyBrief(ctx, b);
+    expect(r.passed).toBe(true);
+    expect(r.escalations).toContainEqual({ entryId: "e1", reason: "ungrounded_number:01" });
+  });
+
+  it("escalates numbers when the only citation is a frame", () => {
+    const b = brief();
+    b.entries = [
+      {
+        ...b.entries[0]!,
+        text: "Ship 99 units.",
+        citations: [{ kind: "frame", segmentId: null, frameId: "f-01:10", region: null }],
+      },
+    ];
+    const r = verifyBrief(ctx, b);
+    expect(r.passed).toBe(true);
+    expect(r.escalations).toContainEqual({ entryId: "e1", reason: "ungrounded_number:99" });
+  });
+
+  it("returns verified null when a hard rule fails", () => {
+    const r = verifyBrief({ ...ctx, expectedMeetingId: "other" }, brief());
+    expect(r.passed).toBe(false);
+    expect(r.verified).toBeNull();
+  });
+
   it("does not mutate the work under review", () => {
     const b = brief();
     b.entries[1]!.acceptance = "not_established";
