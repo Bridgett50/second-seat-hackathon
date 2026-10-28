@@ -127,13 +127,13 @@ test.describe.serial("D2 draft invalidation and receipt panel", () => {
     await expect(page.locator("#draft-status")).not.toContainText(
       "Approved — ready to copy.",
     );
-    // Zero timer callbacks ran: the B edit never reached the server.
+    // The edit revoked the server approval immediately while the text sync is still debounced (text stays "Reply A").
     await expect
       .poll(
         async () => (await state(page, id)).draft,
         { timeout: 10000 },
       )
-      .toMatchObject({ text: "Reply A", approved: true });
+      .toMatchObject({ text: "Reply A", approved: false });
     const delivered = page.waitForResponse((r) =>
       r.url().endsWith("/api/session/draft/approve"),
     );
@@ -181,13 +181,13 @@ test.describe.serial("D2 draft invalidation and receipt panel", () => {
     await draft.evaluate((e) => e.blur());
     expect(await draft.inputValue()).toBe("Reply A");
     await expect(copy).toBeDisabled();
-    // Edits unsent while paused: the server still shows approved A.
+    // The edit revoked the server approval immediately while the text sync is still debounced (text stays "Reply A").
     await expect
       .poll(
         async () => (await state(page, id)).draft,
         { timeout: 10000 },
       )
-      .toMatchObject({ text: "Reply A", approved: true });
+      .toMatchObject({ text: "Reply A", approved: false });
     const delivered1 = page.waitForResponse((r) =>
       r.url().endsWith("/api/session/draft/approve"),
     );
