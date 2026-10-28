@@ -260,6 +260,39 @@ rm -f "$H11ERR" "$H11ERR2"
 rm -rf "$H11D" "$H11BIN" "$H11OUT"
 unset FAKE_OUT
 
+# ---------- H13: one attempt by default (no automatic retries) ----------
+H13D="$(mktemp -d)"; H13BIN="$(mktemp -d)"; H13OUT="$(mktemp -d)"
+printf '0' > "$H13OUT/count"
+cat > "$H13BIN/muse" <<FAKEEOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "exec" ]; then
+  N="\$(cat "$H13OUT/count")"; printf '%s' "\$((N + 1))" > "$H13OUT/count"
+fi
+exit 0
+FAKEEOF
+chmod +x "$H13BIN/muse"
+gitinit "$H13D"
+mkdir -p "$H13D/scripts" "$H13D/.agents" "$H13D/.muse"
+cp "$REPO/scripts/muse_pr.sh" "$H13D/scripts/muse_pr.sh"
+cp "$REPO/.agents/AGENTS.md" "$H13D/.agents/AGENTS.md"
+printf '#!/usr/bin/env bash\nprintf %s\nexit 1\n' "'{\"passed\":false,\"problems\":[{\"code\":\"x\"}]}'" > "$H13D/.muse/verify_pr.sh"
+printf 'T\n' > "$H13D/task.txt"; printf '{"base":"HEAD","tests":[]}' > "$H13D/crit.json"
+(cd "$H13D" && git add -A && git commit -qm h13base)
+H13_WHY=""
+(cd "$H13D" && PATH="$H13BIN:$PATH" bash scripts/muse_pr.sh --task task.txt --scope "a.txt" --criteria crit.json --evidence evidence/H13 >/dev/null 2>&1); H13_ST=$?
+H13_N="$(cat "$H13OUT/count")"
+[ "$H13_N" = "1" ] || H13_WHY="${H13_WHY}muse-exec-calls=$H13_N;"
+[ "$H13_ST" -eq 1 ] || H13_WHY="${H13_WHY}exit=$H13_ST;"
+grep -q '"attempts": 1' "$H13D/evidence/H13/summary.json" 2>/dev/null || H13_WHY="${H13_WHY}summary-attempts-not-1;"
+[ ! -e "$H13D/evidence/H13/session-2.jsonl" ] || H13_WHY="${H13_WHY}retry-session-written;"
+# opt-in: --attempts 2 allows exactly one retry
+printf '0' > "$H13OUT/count"
+(cd "$H13D" && PATH="$H13BIN:$PATH" bash scripts/muse_pr.sh --task task.txt --scope "a.txt" --criteria crit.json --evidence evidence/H13b --attempts 2 >/dev/null 2>&1)
+H13_N2="$(cat "$H13OUT/count")"
+[ "$H13_N2" = "2" ] || H13_WHY="${H13_WHY}optin-attempts2-calls=$H13_N2;"
+if [ -z "$H13_WHY" ]; then ok H13; else bad H13 "auto-retry: $H13_WHY"; fi
+rm -rf "$H13D" "$H13BIN" "$H13OUT"
+
 # G1 (Codex prompt A, G1a): checkout-safety tests on dummy repos with a dummy .sealed-paths policy only
 # ---------- G1-0 helpers (dummy sealed-policy repos only) ----------
 g1_rm() {

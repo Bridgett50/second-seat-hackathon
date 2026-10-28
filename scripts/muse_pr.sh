@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # muse_pr.sh --task task.txt --scope "a b c" --criteria crit.json
-#            --evidence evidence/NAME [--steps 60] [--effort medium]
-# Runs one muse session, verifies, retries up to 2 times, exports evidence.
+#            --evidence evidence/NAME [--steps 60] [--effort medium] [--attempts 1]
+# Runs one muse session, verifies, exports evidence. One attempt by default:
+# no automatic retry (each retry is a paid call). --attempts N (1-3) opts in.
 set -u
 
-TASK=""; SCOPE=""; CRITERIA=""; EVID=""; STEPS=60; EFFORT="medium"
+TASK=""; SCOPE=""; CRITERIA=""; EVID=""; STEPS=60; EFFORT="medium"; ATTEMPTS=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --task) TASK="${2:-}"; shift 2;;
@@ -13,13 +14,18 @@ while [ $# -gt 0 ]; do
     --evidence) EVID="${2:-}"; shift 2;;
     --steps) STEPS="${2:-60}"; shift 2;;
     --effort) EFFORT="${2:-medium}"; shift 2;;
+    --attempts) ATTEMPTS="${2:-1}"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 if [ -z "$TASK" ] || [ -z "$SCOPE" ] || [ -z "$CRITERIA" ] || [ -z "$EVID" ]; then
-  echo "usage: muse_pr.sh --task task.txt --scope \"a b c\" --criteria crit.json --evidence evidence/NAME [--steps 60] [--effort medium]" >&2
+  echo "usage: muse_pr.sh --task task.txt --scope \"a b c\" --criteria crit.json --evidence evidence/NAME [--steps 60] [--effort medium] [--attempts 1]" >&2
   exit 2
 fi
+case "$ATTEMPTS" in
+  1|2|3) ;;
+  *) echo "--attempts must be 1, 2 or 3" >&2; exit 2;;
+esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -60,7 +66,7 @@ rm -f "$FIRST_PROMPT"
 VERIFY_OUT="$EVID/verify-1" bash .muse/verify_pr.sh >"$EVID/verify-1.json" 2>"$EVID/verify-1.err"
 if [ $? -eq 0 ]; then passed=true; else passed=false; fi
 
-while [ "$passed" = false ] && [ "$attempt" -lt 3 ]; do
+while [ "$passed" = false ] && [ "$attempt" -lt "$ATTEMPTS" ]; do
   attempt=$((attempt + 1))
   probs="$(python3 -c 'import json; print(json.dumps(json.load(open("'"$EVID/verify-$((attempt - 1)).json"'")).get("problems", [])))' 2>/dev/null || echo '[]')"
   retry_text="Fix only these problems, changing nothing else: $probs"
