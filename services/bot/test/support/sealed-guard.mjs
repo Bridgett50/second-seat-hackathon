@@ -9,8 +9,9 @@
 // Recursive operations additionally refuse ancestor directories of sealed
 // roots via containsSealed. Child processes are refused when the command
 // or any arg names a sealed root (exclusion patternspecs starting with
-// "!" or ":" excepted; node -e/--eval payloads are enforced in-child
-// through the propagated guard instead), or when a recursive copier/
+// "!" or ":" excepted; plain node -e/--eval payloads are enforced in-child
+// through the propagated guard, while payloads hiding a sealed spelling
+// behind quote-concatenation are refused up front), or when a recursive copier/
 // reader (cp -r/-R/-a, rsync, tar, zip, git grep/archive/cat-file/show,
 // grep -r/-R, find, cat) is given a sealed or ancestor path. Leaves
 // stat/lstat/exists untouched.
@@ -229,6 +230,12 @@ function baseCmd(cmdStr) {
   return last.toLowerCase().replace(/\.exe$/, "");
 }
 
+// Strip quote-concatenation joins used to split a sealed spelling across
+// adjacent string literals ("a" + "b", 'a' 'b') before text matching.
+function normalizeInline(s) {
+  return s.replace(/['"]\s*\+?\s*['"]/g, "");
+}
+
 function hasSealedText(s) {
   const h = fwdLower(s);
   for (const n of needles) {
@@ -296,13 +303,40 @@ export function guardChildArgs(cmd, args, cwd = process.cwd()) {
     }
     if (skipNext) {
       skipNext = false;
+      // Node -e/--eval payloads are enforced in-child via the propagated
+      // guard, so plain sealed text stays skipped here; only refuse up front
+      // when the payload hides the spelling behind quote-concatenation.
+      if (!hasSealedText(a) && hasSealedText(normalizeInline(a))) return a;
       continue;
     }
     scan.push(a);
   }
   for (const s of scan) {
     if (s.startsWith("!") || s.startsWith(":")) continue;
-    if (hasSealedText(s)) return s;
+    if (hasSealedText(s) || hasSealedText(normalizeInline(s))) return s;
+  }
+  // cp/mv/cat-like commands: resolve the realpath of existing paths before
+  // checking, so a symlink at an innocent name pointing at a sealed or
+  // sealed-like target is still refused.
+  if (base === "cp" || base === "mv" || base === "cat") {
+    const cands = [];
+    for (const t of toks.slice(1)) {
+      if (t === "" || t.startsWith("-") || t.startsWith(":") || t.startsWith("!")) continue;
+      cands.push(t);
+    }
+    for (const a of argStrs) {
+      if (a === "" || a.startsWith("-") || a.startsWith(":") || a.startsWith("!")) continue;
+      cands.push(a);
+    }
+    const cwdStr = toPathString(cwd) || process.cwd();
+    for (const c of cands) {
+      const lex = lexResolve(resolve(cwdStr, c));
+      if (lex === null) continue;
+      const canon = canonicalize(lex);
+      const real = canon ?? lex;
+      if (hasSealedText(real)) return c;
+      if (canon !== null && canon !== lex && matchSealed(canon)) return c;
+    }
   }
   if (isRecursiveCmd(base, argStrs, toks)) {
     const cands = [];

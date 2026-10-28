@@ -12,8 +12,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../../services/bot"
 
 mirror=$(mktemp -d)
 tmproot=$(mktemp -d)
+# Node 22 writes its compile cache into TMPDIR by default, which would trip
+# the empty-temp-root check below. Keep that cache in a sibling dir outside
+# the checked root, and disable it outright where supported. The check
+# itself still refuses every entry left in the temp root.
+cachehome=$(mktemp -d)
 cleanup() {
-  rm -rf "$mirror" "$tmproot"
+  rm -rf "$mirror" "$tmproot" "$cachehome"
 }
 trap cleanup EXIT
 
@@ -25,6 +30,9 @@ export MUSE_STATE_FILE="$mirror/state.json"
 export MUSE_COST_LOG_FILE="$mirror/cost.jsonl"
 export MUSE_MAX_CALLS_PER_DAY=50
 export TMPDIR="$tmproot" TMP="$tmproot" TEMP="$tmproot"
+export NODE_COMPILE_CACHE="$cachehome/node-compile-cache"
+export NODE_DISABLE_COMPILE_CACHE=1
+mkdir -p "$NODE_COMPILE_CACHE"
 
 state_before=$(sha256sum "$mirror/state.json" | cut -d" " -f1)
 cost_before=$(sha256sum "$mirror/cost.jsonl" | cut -d" " -f1)
