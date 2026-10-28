@@ -751,7 +751,47 @@ function sessionPayloadHtml(snap: SessionPageSnapshot): string {
   return `<pre id="payload-text">${esc(text)}</pre><p id="payload-status">${esc(payloadStatusLabel(snap.payload))}</p>${sessionSupersededHtml(snap)}`;
 }
 
-export function renderSessionPage(snap: SessionPageSnapshot): string {
+/** How the session page was opened: analysis mode and whether Live is configured. */
+export type SessionPageView = {
+  mode?: "offline" | "live";
+  liveAvailable?: boolean;
+  liveRequestedButUnavailable?: boolean;
+};
+
+const DEMO_STEPS: readonly [string, string][] = [
+  ["paste", "Paste"],
+  ["redact", "Redact"],
+  ["approve", "You approve the redacted text"],
+  ["analyze", "Analyze"],
+  ["draft", "You approve the draft"],
+  ["copy", "Copy"],
+];
+
+function sessionHeaderHtml(snap: SessionPageSnapshot, view: SessionPageView): string {
+  const mode = view.mode ?? "offline";
+  const live = view.liveAvailable === true;
+  const cur = (m: string): string => (m === mode ? ' aria-current="true" class="active"' : "");
+  const liveAttrs = live ? cur("live") : ' aria-disabled="true" class="unavailable"';
+  const note =
+    mode === "live"
+      ? `<p id="live-label">Live — raw text goes only to the private Glimmer redactor; Spark sees only the text you approve.</p>`
+      : view.liveRequestedButUnavailable === true
+        ? `<p id="live-unavailable" role="alert">Live is not configured on this server. Start it with SECOND_SEAT_MODE=live, GLIMMER_BASE_URL and META_API_KEY to use Live. Showing Offline.</p>`
+        : "";
+  const steps = DEMO_STEPS.map(([id, label], i) => `<li data-step="${id}">${i + 1}. ${esc(label)}</li>`).join("");
+  return `<header id="app-header">` +
+    `<div class="brand"><strong>Second Seat</strong><span class="tagline">Redact privately. Brief with citations. You approve every step.</span></div>` +
+    `<nav id="mode-select" aria-label="Analysis mode"><span class="mode-title">Mode</span>` +
+    `<a id="mode-offline" href="/session"${cur("offline")}>Offline</a>` +
+    `<a id="mode-live" href="/session?mode=live"${liveAttrs}>Live (Glimmer + Spark)</a></nav>` +
+    `<label id="demo-mode-toggle"><input type="checkbox" id="demo-mode"> Demo Mode</label>` +
+    `</header>` +
+    note +
+    `<p id="demo-mode-note" hidden>Demo Mode streamlines the screen for recording. Owner approval is unchanged: you still approve the redacted text and the draft yourself.</p>` +
+    `<ol id="steps" aria-label="Steps" hidden>${steps}</ol>`;
+}
+
+export function renderSessionPage(snap: SessionPageSnapshot, view: SessionPageView = {}): string {
   const canRedact = snap.state !== "redaction_pending" && snap.state !== "analysis_pending";
   const dis = (off: boolean): string => (off ? " disabled" : "");
   const segmentHtml = snap.segments
@@ -771,10 +811,33 @@ h2{font-size:1.1rem;margin:0 0 .5rem}
 section{background:#fff;border:1px solid #ddd;border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:1rem;margin:0 0 1rem}
 textarea{width:100%;font:inherit}
 pre{white-space:pre-wrap;word-break:break-word}
-button{margin:.25rem;padding:.4rem .9rem;font:inherit}
+button{margin:.25rem;padding:.45rem 1rem;font:inherit;border-radius:.5rem;border:1px solid #c8c8c8;background:#fff;color:#1a1a1a;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+#btn-redact,#btn-approve,#btn-analyze,#btn-draft-approve,#btn-copy{background:#1f4fd1;border-color:#1f4fd1;color:#fff;font-weight:600;padding:.6rem 1.3rem}
+#btn-approve,#btn-draft-approve{background:#0f7a4a;border-color:#0f7a4a}
+#app-header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;padding:.75rem 0;border-bottom:1px solid #ddd;margin-bottom:1rem}
+#app-header .brand{display:flex;flex-direction:column}
+#app-header .brand strong{font-size:1.25rem}
+.tagline{color:#555;font-size:.9rem}
+#mode-select{display:flex;align-items:center;gap:.25rem}
+.mode-title{color:#555;font-size:.85rem;margin-right:.25rem}
+#mode-select a{padding:.35rem .8rem;border:1px solid #c8c8c8;border-radius:999px;text-decoration:none;color:#1a1a1a;background:#fff}
+#mode-select a.active{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
+#mode-select a.unavailable{color:#888;border-style:dashed}
+#demo-mode-toggle{font-weight:600}
+#offline-label,#live-label{display:inline-block;padding:.2rem .7rem;border-radius:999px;font-size:.85rem;font-weight:600}
+#offline-label{background:#eef1f6;color:#33405a}
+#live-label{background:#fff4e0;color:#7a4b00}
+#steps{display:flex;flex-wrap:wrap;gap:.4rem;list-style:none;padding:0;margin:0 0 1rem}
+#steps li{padding:.3rem .7rem;border-radius:999px;background:#eceff3;color:#555;font-size:.9rem}
+#steps li.done{background:#dff3e8;color:#0f5a37}
+#steps li.current{background:#1f4fd1;color:#fff;font-weight:600}
+body.demo #payload-panel{display:none}
+body.demo #btn-redact,body.demo #btn-approve,body.demo #btn-analyze,body.demo #btn-draft-approve,body.demo #btn-copy{font-size:1.1rem;padding:.75rem 1.6rem}
 </style>
 </head>
 <body>
+${sessionHeaderHtml(snap, view)}
 <h1>Vendor brief — session</h1>
 ${snap.offline ? `<p id="offline-label">Offline demo</p>` : ""}
 <p id="session-state" role="status">${esc(sessionStateLabel(snap))}</p>
@@ -805,6 +868,13 @@ var supersededEl=document.getElementById("superseded-notice");
 var draftSection=document.getElementById("draft"),draftText=document.getElementById("draft-text");
 var draftStatus=document.getElementById("draft-status"),draftNote=document.getElementById("draft-note");
 var btnDraftApprove=document.getElementById("btn-draft-approve"),btnDraftReject=document.getElementById("btn-draft-reject"),btnCopy=document.getElementById("btn-copy");
+var PAGE_MODE=${JSON.stringify(view.mode ?? "offline")};
+var demoBox=document.getElementById("demo-mode"),stepsEl=document.getElementById("steps"),demoNote=document.getElementById("demo-mode-note");
+function setDemo(on){document.body.classList.toggle("demo",on);if(stepsEl)stepsEl.hidden=!on;if(demoNote)demoNote.hidden=!on;if(demoBox)demoBox.checked=on;try{localStorage.setItem("secondSeatDemo",on?"1":"0");}catch(e){}}
+function stepFor(s){var d=s.draft||null;if(d&&d.approved)return 5;if(d)return 4;switch(s.state){case "redaction_pending":return 1;case "review_required":return 2;case "approved":return 3;case "analysis_pending":return 3;case "completed":return 4;default:return input&&input.value.trim()?1:0;}}
+function syncSteps(s){if(!stepsEl)return;var k=stepFor(s),items=stepsEl.getElementsByTagName("li");for(var i=0;i<items.length;i++){items[i].className=i<k?"done":(i===k?"current":"");}}
+if(demoBox){demoBox.addEventListener("change",function(){setDemo(demoBox.checked);});}
+(function(){var on=false;try{on=/[?&]demo=1(&|$)/.test(location.search)||localStorage.getItem("secondSeatDemo")==="1";}catch(e){}setDemo(on);})();
 var LABELS={"input":"Input — paste a transcript to begin.","redaction_pending":"Redaction pending…","review_required":"Review required — check the redacted preview, then approve.","approved":"Approved — ready to analyze.","analysis_pending":"Analysis pending…","completed":"Completed — findings below."};
 function labelFor(s){if(s.state==="blocked")return "Blocked — "+(s.reason||"a policy or approval check refused the request");if(s.state==="error")return s.reason?("Error — "+s.reason):"Error — something went wrong.";return LABELS[s.state]||s.state;}
 function el(tag,attrs,text){var n=document.createElement(tag);for(var k in attrs){n.setAttribute(k,attrs[k]);}if(text!==undefined)n.textContent=text;return n;}
@@ -814,6 +884,7 @@ function render(s){
   if(rev!==null){if(rev<serverRev)return false;serverRev=rev;}
   if(s.pressure&&typeof s.pressure.assessmentId==="string")serverAssessment=s.pressure.assessmentId;
   stateEl.textContent=labelFor(s);
+  syncSteps(s);
   if(offlineLabel)offlineLabel.hidden=!s.offline;
   var serverPreview=s.redactedText||"";
   if(redacted.value===lastRedacted||redacted.value===serverPreview){redacted.value=serverPreview;lastRedacted=serverPreview;}
@@ -1036,7 +1107,7 @@ draftText.addEventListener("input",function(){
 btnDraftApprove.addEventListener("click",function(){if(btnDraftApprove.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}var t=draftText.value,g=draftGen;draftApproveInflight=true;draftRejectSent=false;pending=true;updateButtons();run(mut("/api/session/draft",{text:t},{rebase:true}).then(function(e){if(!e.ok)return e;if(draftText.value!==t||g!==draftGen)return e;draftEdited=false;return mut("/api/session/draft/approve",{text:t},{}).then(function(a){if(!a.ok)return a;if(draftText.value!==t||g!==draftGen)return a;draftEdited=false;return a;});}).then(function(r){draftApproveInflight=false;return r;},function(err){draftApproveInflight=false;throw err;}));});
 btnDraftReject.addEventListener("click",function(){if(btnDraftReject.disabled||!sessionId)return;if(draftDeb){clearTimeout(draftDeb);draftDeb=null;}draftGen++;draftEdited=false;run(mut("/api/session/draft/reject",{},{}));});
 btnCopy.addEventListener("click",function(){if(btnCopy.disabled)return;var text=draftText.value;function done(){draftNote.textContent="Copied locally. Nothing was sent.";}function fallback(){var t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(t);done();}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){fallback();});}else{fallback();}});
-fetch("/api/session",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}).then(function(r){return r.json();}).then(function(b){sessionId=b.sessionId;refresh();});
+fetch("/api/session",{method:"POST",headers:{"content-type":"application/json"},body:PAGE_MODE==="live"?JSON.stringify({mode:"live"}):"{}"}).then(function(r){return r.json();}).then(function(b){sessionId=b.sessionId;refresh();});
 })();
 </script>
 </body>

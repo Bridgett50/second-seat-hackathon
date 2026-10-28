@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 const root = resolve(__dirname, "../../..");
 const rd = (p: string) => readFileSync(resolve(root, p), "utf8");
-const README = rd("README.md");
+const README = rd("docs/engineering-log.md");
 const VIDEO = rd("docs/submission/video-script.md");
 const FIELDS = rd("docs/submission/submission-fields.md");
 const RULES = rd("docs/submission/rules-check.md");

@@ -8,7 +8,7 @@ const root = resolve(__dirname, "../../..");
 const rd = (p: string) => readFileSync(resolve(root, p), "utf8");
 const REGISTRY = rd("docs/release/acceptance-registry.md");
 const READINESS = rd("docs/release/c9-readiness.md");
-const README = rd("README.md");
+const README = rd("docs/engineering-log.md");
 const VIDEO = rd("docs/submission/video-script.md");
 
 function expand(prefix: string, lo: number, hi: number): string[] {

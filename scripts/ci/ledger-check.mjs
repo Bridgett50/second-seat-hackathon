@@ -195,7 +195,7 @@ function verifyKindById() {
 
 function runCli() {
   const problems = [];
-  const readme = read("README.md");
+  const readme = read("docs/engineering-log.md");
   const readiness = read("docs/release/c9-readiness.md");
   const registry = read("docs/release/acceptance-registry.md");
   const observed = JSON.parse(read("docs/release/ci-observed.json"));
@@ -204,7 +204,7 @@ function runCli() {
   // 1. Every docs line pairing a CI run with a tested commit must be current
   //    or explicitly labeled historical CI.
   for (const [name, doc] of [
-    ["README.md", readme],
+    ["docs/engineering-log.md", readme],
     ["docs/release/c9-readiness.md", readiness],
   ]) {
     doc.split("\n").forEach((line, i) => {
