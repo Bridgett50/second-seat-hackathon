@@ -8,6 +8,7 @@ import datetime
 import hashlib
 import os
 import re
+import subprocess
 
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _MODEL_REV_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -313,6 +314,82 @@ def check_launch(config, fixtures_root, invoked_dataset=None, repo_root=None):
         else:
             if not isinstance(config.get("source_sha256"), str) or config.get("source_sha256") != actual_src:
                 blockers.append("source identity mismatch: frozen source_sha256 does not match packaged source")
+    return blockers
+
+
+def git_binding_blockers(repo_root, source_sha, allow_untracked=()):
+    """Blockers binding the launch to the git commit (stdlib only).
+
+    Runs `git -C repo_root rev-parse HEAD` and `git -C repo_root status
+    --porcelain --untracked-files=all` via subprocess (no shell) and
+    returns blocker strings; empty means the working tree matches the
+    recorded commit. allow_untracked holds repo-relative paths (posix
+    style) that may exist as untracked files, e.g. the freshly written
+    --config file; every other untracked file and every tracked
+    modification is reported as changes outside the packaged hash.
+    """
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception as exc:
+        return [f"git binding unavailable: cannot run git ({exc})"]
+    if head.returncode != 0:
+        return [f"git binding unavailable: not a git checkout: {repo_root!r}"]
+    blockers = []
+    actual = head.stdout.strip()
+    if actual != source_sha:
+        blockers.append(
+            f"source_sha does not match git HEAD: {source_sha!r} != {actual!r}"
+        )
+    try:
+        status = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception as exc:
+        return blockers + [
+            f"git binding unavailable: cannot inspect working tree ({exc})"
+        ]
+    if status.returncode != 0:
+        return blockers + ["git binding unavailable: cannot inspect working tree"]
+    allowed = set()
+    for entry in allow_untracked or ():
+        allowed.add(str(entry).replace("\\", "/"))
+    outside = []
+    for line in status.stdout.splitlines():
+        if not line.strip():
+            continue
+        code = line[:2]
+        path = line[3:] if len(line) > 3 else ""
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[1]
+        path = path.strip().strip('"').replace("\\", "/")
+        if not path:
+            continue
+        if code == "??":
+            if path not in allowed:
+                outside.append(path)
+        else:
+            outside.append(path)
+    if outside:
+        outside.sort()
+        blockers.append(
+            "working tree has changes outside the packaged hash: "
+            + ", ".join(outside)
+        )
     return blockers
 
 
