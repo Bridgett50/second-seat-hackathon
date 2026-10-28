@@ -68,12 +68,9 @@ The image / SAM path is experimental. It is hidden from the UI and makes no call
 
 ## Known Issues
 
-- **Contract dates are masked as `date_of_birth` in Live mode.** In the Oct 28 live runs, Glimmer masked the contract start date "November 15" as `[REDACTED_date_of_birth]`, so the brief loses the start date.
-  - *Cause:* the frozen Glimmer redaction prompt tells the model to mask every calendar date as `date_of_birth`, and the frozen label schema has no generic date label (`services/bot/src/private/redact.ts`).
-  - *Why not fixed now:* any fix changes the prompt, the label schema or the redacted text the owner approves, and that would force a re-freeze. A display-only relabel would break the rule that Spark sees exactly the text you approved.
-  - *Impact:* over-masking only. No personal data is exposed, but a business date is hidden from the brief.
-  - *Workaround:* in the editable redacted preview, change `[REDACTED_date_of_birth]` back to "November 15" before you click Approve.
-  - *Offline mode:* local masking only matches dates that include a year, so "November 15" is left as is.
+- **Ordinary calendar dates are no longer instructed to be masked as `date_of_birth`.** Bridgett Sanders approved this prompt change on Oct 28, 2026. The Glimmer system prompt now says to mask a date as `date_of_birth` only when the text states it is a date of birth or birthday, and to leave ordinary meeting dates unmasked. A generic `DATE` label is not relabeled to `date_of_birth`. Real DOB aliases (`DOB`, `DATE_OF_BIRTH`, `BIRTHDATE`, `BIRTH_DATE`) are still masked. The label schema and model pins are unchanged.
+  - *Live runs before this change:* the Oct 28 runs masked "November 15" because the previous prompt said to mask every calendar date. Those recorded outputs are unchanged. The live endpoint uses the new prompt only after this re-freeze is deployed.
+  - *Offline mode:* "November 15" as a meeting date stays in the text. A phrase such as "born on March 4, 1990" is still masked, as are names, phones, and emails.
 
 ## More
 
