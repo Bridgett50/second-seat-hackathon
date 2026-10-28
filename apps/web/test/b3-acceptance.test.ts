@@ -101,8 +101,14 @@ async function analyzeWith(respond: Responder | string) {
 async function expectRejected(respond: Responder | string) {
   const { s, calls } = await analyzeWith(respond);
   expect(calls.length).toBe(1); // the fake Spark transport actually ran
-  expect(s.state).toBe("error");
+  // Schema failures are a verification block. Unreadable output stays an error.
+  // Either way the brief is not shown.
+  expect(["error", "blocked"]).toContain(s.state);
   expect(s.result).toBeNull();
+  if (s.state === "blocked") {
+    expect(s.verification?.blocked).toBe(true);
+    expect(s.reason).toBe("Needs owner review. A verification check blocked this step.");
+  }
   return s;
 }
 

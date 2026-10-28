@@ -339,8 +339,10 @@ describe("live session analysis over fake transports", () => {
     const store = makeLiveStore({ notes: [] }, calls);
     const id = await runToApproval(store);
     const s = await store.analyze(id);
-    expect(s.state).toBe("error");
+    expect(s.state).toBe("blocked");
     expect(s.result).toBeNull();
+    expect(s.verification?.blocked).toBe(true);
+    expect(s.verification?.message).toBe("Needs owner review. A verification check blocked this step.");
   });
 
   it("entry missing text string is an error", async () => {
@@ -350,8 +352,9 @@ describe("live session analysis over fake transports", () => {
     const store = makeLiveStore(evidenceBrief([entryWithoutText]), calls);
     const id = await runToApproval(store);
     const s = await store.analyze(id);
-    expect(s.state).toBe("error");
+    expect(s.state).toBe("blocked");
     expect(s.result).toBeNull();
+    expect(s.verification?.message).not.toContain("Follow up");
   });
 
   it("entry with a bad category is an error", async () => {
@@ -359,7 +362,7 @@ describe("live session analysis over fake transports", () => {
     const store = makeLiveStore(evidenceBrief([briefEntry("Follow up agreed", "seg-1", "note")]), calls);
     const id = await runToApproval(store);
     const s = await store.analyze(id);
-    expect(s.state).toBe("error");
+    expect(s.state).toBe("blocked");
     expect(s.result).toBeNull();
   });
 
@@ -371,8 +374,9 @@ describe("live session analysis over fake transports", () => {
     );
     const id = await runToApproval(store);
     const s = await store.analyze(id);
-    expect(s.state).toBe("error");
+    expect(s.state).toBe("blocked");
     expect(s.result).toBeNull();
+    expect(s.verification?.checks.find((c) => c.id === "brief")?.result).toBe("blocked");
   });
 
   it("valid empty entries produce the honest empty state", async () => {
@@ -391,16 +395,14 @@ describe("live session analysis over fake transports", () => {
     const store = makeLiveStore({ notes: [] }, calls);
     const id = await runToApproval(store);
     const s = await store.analyze(id);
-    expect(s.state).toBe("error");
+    expect(s.state).toBe("blocked");
     expect(s.result).toBeNull();
     const page = renderSessionPage(s);
-    expect(page).toContain('id="analysis-error"');
-    const resultsDiv = page.slice(
-      page.indexOf('<div id="results">'),
-      page.indexOf("</div></section>"),
-    );
-    expect(resultsDiv).toContain('id="analysis-error"');
-    expect(resultsDiv).not.toContain("No findings");
+    expect(page).toContain('id="verification-title">Needs owner review');
+    expect(page).toContain('id="btn-approve"');
+    expect(page).toContain('id="btn-draft-approve"');
+    const resultsDiv = page.slice(page.indexOf('<div id="results">'), page.indexOf("</div></section>"));
+    expect(resultsDiv).not.toContain("No findings in the approved transcript.");
   });
 
   it("payload panel distinguishes prepared from dispatched", async () => {

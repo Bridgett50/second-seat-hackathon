@@ -18,7 +18,8 @@
     "support": "node support.mjs",
     "prerules": "pnpm --filter @second-seat/core build",
     "rules": "node rules/run.mjs",
-    "resistance": "node resistance-table.mjs --split dev"
+    "resistance": "node resistance-table.mjs --split dev",
+    "shield:report": "node shield-report.mjs --split dev"
   },
   "devDependencies": {
     "@second-seat/core": "workspace:*",

@@ -9,6 +9,12 @@ import {
 } from "@second-seat/bot/dist/src/private/gate.js";
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
 import { LIVE_REDACT_TIMEOUT_MS } from "./liveConfig.js";
+import {
+  offlineEvidenceBrief,
+  verifyApprovedRedaction,
+  verifySessionBrief,
+  type SessionVerification,
+} from "./sessionVerification.js";
 
 /**
  * Shown instead of a provider or transport error. Those messages can
@@ -104,6 +110,8 @@ export interface SessionSnapshot {
    * already-dispatched history is never erased.
    */
   receipts: DispatchReceipt[];
+  /** Present after a verification check has run. Absent before that. */
+  verification?: SessionVerification | null;
 }
 
 export interface DraftRecord {
@@ -190,6 +198,12 @@ export interface SessionStoreOptions {
   analyzerLabel?: string;
   offline?: boolean;
   pressureClassifier?: PressureClassifier | null;
+  /**
+   * Recorded support-judge verdicts, keyed by brief entry id. When this
+   * is set and the brief has entries, verifyClaims runs. Offline and live
+   * both use it; nothing here calls a model.
+   */
+  judgeVerdicts?: Record<string, unknown> | null;
 }
 
 /**
@@ -477,6 +491,8 @@ interface SessionRecord {
   runIds: string[];
   approvalToken: string | null;
   redactedText: string;
+  redactionSpans: { start: number; end: number; label: string }[];
+  verification: SessionVerification | null;
   approved: boolean;
   approvedText: string;
   result: AnalysisResult | null;
@@ -843,6 +859,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       receipts,
       offline,
       pressure: s.pressure,
+      verification: s.verification,
       draft:
         s.draft === null
           ? null
@@ -870,6 +887,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
     s.result = null;
     s.payload = null;
     s.pressure = null;
+    s.verification = null;
+    s.redactionSpans = [];
     s.draft = null;
     if (s.inFlight) {
       s.superseded = { ...s.inFlight, status: "sent" };
@@ -909,6 +928,8 @@ export function createSessionStore(options?: SessionStoreOptions) {
         runIds: [],
         approvalToken: null,
         redactedText: "",
+        redactionSpans: [],
+        verification: null,
         approved: false,
         approvedText: "",
         result: null,
@@ -958,6 +979,12 @@ export function createSessionStore(options?: SessionStoreOptions) {
           s.runId = prepared.runId;
           if (!s.runIds.includes(prepared.runId)) s.runIds.push(prepared.runId);
           s.redactedText = prepared.redactedText;
+          s.redactionSpans = prepared.spans.map((span) => ({
+            start: span.start,
+            end: span.end,
+            label: span.label,
+          }));
+          s.verification = null;
           s.approved = false;
           s.approvalToken = null;
           s.state = "review_required";
@@ -1111,6 +1138,24 @@ export function createSessionStore(options?: SessionStoreOptions) {
         try {
           if (!s.runId || !s.approvalToken) throw new Error("approval required");
           if (s.approvalExpired) throw new Error("approval is stale: test hook expired approvals");
+          // Fail closed before any send. The message is fixed and does not
+          // include the check's feedback, which can name span text.
+          const redaction = verifyApprovedRedaction(s.rawText, s.redactionSpans, approvedText);
+          if (redaction.blocked) {
+            if (s.runId) gate.revoke(s.runId);
+            s.approved = false;
+            s.approvalToken = null;
+            s.verification = redaction;
+            s.reason = redaction.message;
+            s.result = null;
+            s.draft = null;
+            s.state = "review_required";
+            if (!live) {
+              s.payload = { approvedText, status: "prepared", adapterLabel: analyzerLabel };
+            }
+            s.revision += 1;
+            return;
+          }
           // Resolve the pressure assessment from the approved segments.
           // Undefined classifier means the deterministic pattern layer is
           // the default in both modes; null means not_run; a throwing
@@ -1188,6 +1233,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
             return;
           }
           let result: AnalysisResult;
+          let briefWork: unknown;
           if (live) {
             // Live mode never substitutes the offline heuristic or a
             // fixture: unparseable or invalid output is an error.
@@ -1199,6 +1245,23 @@ export function createSessionStore(options?: SessionStoreOptions) {
               parsed = JSON.parse(raw) as unknown;
             } catch {
               throw new Error("live analysis: response is not JSON");
+            }
+            briefWork = parsed;
+            const briefCheck = verifySessionBrief(
+              briefWork,
+              approvedSegments,
+              sessionId,
+              options?.judgeVerdicts,
+            );
+            s.verification = briefCheck;
+            if (briefCheck.blocked) {
+              s.result = null;
+              s.draft = null;
+              s.pressure = null;
+              s.reason = briefCheck.message;
+              s.state = "blocked";
+              s.revision += 1;
+              return;
             }
             result = toLiveAnalysisResult(parsed, new Set(approvedSegments.map((g) => g.id)), sessionId);
           } else {
@@ -1221,6 +1284,22 @@ export function createSessionStore(options?: SessionStoreOptions) {
               }
             }
             if (result.entries.length === 0) result = { offline: result.offline, entries: [] };
+            const briefCheck = verifySessionBrief(
+              offlineEvidenceBrief(sessionId, result.entries),
+              approvedSegments,
+              sessionId,
+              options?.judgeVerdicts,
+            );
+            s.verification = briefCheck;
+            if (briefCheck.blocked) {
+              s.result = null;
+              s.draft = null;
+              s.pressure = null;
+              s.reason = briefCheck.message;
+              s.state = "blocked";
+              s.revision += 1;
+              return;
+            }
           }
           // Pressure evidence for this generation, assigned only after a
           // successful analysis: a failed analysis never leaves behind an
