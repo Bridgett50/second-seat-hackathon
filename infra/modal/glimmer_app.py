@@ -247,6 +247,7 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
     run_config_path = os.path.join(staging_dir, "run-config.json")
     staged_here = False
     reuse_error = None
+    staging_error = None
     if os.path.exists(run_dir) or os.path.exists(staging_dir):
         reuse_error = (
             f"run dir reuse refused (refusing reuse): {run_id} already "
@@ -255,20 +256,46 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
     else:
         try:
             os.makedirs(staging_dir, exist_ok=False)
+            staged_here = True
+            with open(run_config_path, "wb") as _fh:
+                _fh.write(_LAUNCH_CONFIG_BYTES)
         except FileExistsError:
+            staged_here = False
             reuse_error = (
                 f"run dir reuse refused (refusing reuse): staging dir "
                 f"{staging_dir} already exists (refusing)"
             )
         except OSError as exc:
-            reuse_error = (
-                f"run dir reuse refused (refusing reuse): cannot stage "
-                f"frozen config for {run_id} ({exc})"
-            )
-        else:
-            with open(run_config_path, "wb") as _fh:
-                _fh.write(_LAUNCH_CONFIG_BYTES)
-            staged_here = True
+            # Fail closed: creating the staging dir or writing the frozen
+            # config failed. Remove only the staging dir this call created
+            # and report a staging failure (distinct from reuse refusal).
+            # vLLM and the eval never start.
+            staging_error = f"staging failed: cannot stage frozen config for {run_id} ({exc})"
+            if staged_here:
+                shutil.rmtree(staging_dir, ignore_errors=True)
+                staged_here = False
+    if staging_error is not None:
+        result = {
+            "health": None,
+            "seconds_to_healthy": None,
+            "eval_returncode": None,
+            "eval_stdout": "",
+            "eval_stderr": staging_error[-2000:],
+            "ran_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "run_id": None,
+        }
+        live_eval_path = Path(os.path.join(_RESULTS_ROOT, "glimmer-live-eval.json"))
+        try:
+            live_eval_path.parent.mkdir(parents=True, exist_ok=True)
+            live_eval_path.write_text(json.dumps(result, indent=2))
+        except Exception:
+            pass
+        try:
+            results.commit()
+        except Exception:
+            pass
+        print("GLIMMER_RESULT_JSON " + json.dumps(result))
+        return result
     if reuse_error is not None:
         result = {
             "health": None,
@@ -362,8 +389,9 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
             if result["run_id"]
             else Path(os.path.join(_RESULTS_ROOT, "glimmer-live-eval.json"))
         )
-        live_eval_path.parent.mkdir(parents=True, exist_ok=True)
-        live_eval_path.write_text(json.dumps(result, indent=2))
+        # Tear down the vLLM process group FIRST so a failing evidence
+        # write cannot strand it; the evidence write then runs in its own
+        # try and a failure stays visible via evidence_write_error.
         try:
             if vllm.poll() is None:
                 os.killpg(vllm.pid, signal.SIGTERM)
@@ -372,7 +400,20 @@ def eval_in_container(dataset: str, config_sha256: str) -> dict:
                 except subprocess.TimeoutExpired:
                     os.killpg(vllm.pid, signal.SIGKILL)
         finally:
-            results.commit()
+            evidence_error = None
+            try:
+                live_eval_path.parent.mkdir(parents=True, exist_ok=True)
+                live_eval_path.write_text(json.dumps(result, indent=2))
+            except Exception as exc:
+                evidence_error = exc
+                result["evidence_write_error"] = str(exc)[:500]
+            try:
+                results.commit()
+            except Exception:
+                pass
+            print("GLIMMER_RESULT_JSON " + json.dumps(result))
+            if evidence_error is not None:
+                raise evidence_error
     print("GLIMMER_RESULT_JSON " + json.dumps(result))
     return result
 
