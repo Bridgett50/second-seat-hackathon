@@ -6,17 +6,17 @@ the earlier Second Seat idea and prototype live elsewhere and are not included.
 ## Submission facts (Oct 28, 2026)
 
 - Live end-to-end passed 3/3 on main `0365fdb`. Rehearsals passed at `8c00c32` and on the November 15 prompt fix (#116).
-- Verification is wired into the session (#113). The Shield report (#114) and resistance table (#115) are on dev fixtures. The sealed held-out run is scheduled for Nov 2.
+- Verification is wired into the session (#113). Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it (#114/#115).
 - The public link is demo mode with recorded examples. The live run was recorded and is labeled as a recorded run. Organizers confirmed recorded runs are fine if labeled.
 - Video URL, founder story, and user observations: PENDING.
 
 ## Oct 28 — Phase 08 resistance table
 
-- `eval/resistance-table.mjs` prints off, pattern-only, and pattern+Spark catch counts with Wilson 95% intervals for the public dev fixtures. pattern+Spark reads the frozen recorded Spark labels when they are present, and otherwise says pending live run. `--split heldout` exits before any held-out file is opened. No model call.
+- `eval/resistance-table.mjs` prints off, pattern-only, and pattern+Spark catch counts for the public dev fixtures. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. `--split heldout` exits before any held-out file is opened. No model call.
 
 ## Oct 28 — Phase 04b shield report
 
-- `eval/shield-report.mjs` prints pattern, spark, gate, and combined shield N/M with Wilson 95% intervals on the public dev fixtures, plus a mutation check. `--split heldout` is accepted and refused before any held-out file is opened.
+- `eval/shield-report.mjs` prints the dev-fixture check. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. `--split heldout` is accepted and refused before any held-out file is opened.
 
 ## Oct 26 — Phase 01: Repo bootstrap
 

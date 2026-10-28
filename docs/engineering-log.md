@@ -4,7 +4,7 @@ Pre-existing: the Second Seat idea and an earlier prototype in a separate repo (
 
 ## What it is
 
-Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, the redaction step masks PII for my review, I review and correct the redacted text, I approve it, the brief step writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. `#btn-copy` stays disabled until I approve the exact current draft text and finish pressure review of every item; approval requires an explicit click on `#btn-draft-approve`; it only writes that text to my clipboard; edits in the open page clear the approval, but a reload after an A->B->A edit during a held approval can still show Copy enabled (open; F4 partly open, approveDraft does not revoke on input). Second Seat never sends a reply or message to the vendor; I copy the approved draft myself. It never joins calls. It takes no action. Shield flags drafts that match the commitment checks we test. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
+Second Seat is a text-input meeting decision assistant. The connected workflow, in one session on `/session` (`apps/web`, PRs A4–A8), is: I paste meeting text, the redaction step masks PII for my review, I review and correct the redacted text, I approve it, the brief step writes a short brief with citations (what was offered, what was asked, what needs a decision), I edit the reply draft, I approve that exact text, and I copy it out myself. `#btn-copy` stays disabled until I approve the exact current draft text and finish pressure review of every item; approval requires an explicit click on `#btn-draft-approve`; it only writes that text to my clipboard; edits in the open page clear the approval, but a reload after an A->B->A edit during a held approval can still show Copy enabled (open; F4 partly open, approveDraft does not revoke on input). Second Seat never sends a reply or message to the vendor; I copy the approved draft myself. It never joins calls. It takes no action. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. Commitment checks are advisory, and copying a draft requires my explicit approval of that exact text. I decide. That is the whole deal.
 
 ## Demo modes: offline, recorded, live
 
@@ -14,7 +14,7 @@ Second Seat is a text-input meeting decision assistant. The connected workflow, 
 
 The deterministic pattern layer runs by default in both offline and live modes and surfaces pressure items under the source label "deterministic pattern detection"; each item quotes a substring of a current segment. Each item carries a status of `not_run`, `failed`, `valid_negative`, or `valid_positive`; not run and failed items are shown explicitly and block Copy until resolved. The unresolved term is shown only when it is a verbatim substring of the cited segment (not the whole segment), else the item shows "term not identified". In live mode the structured assessment is carried inside the single Spark analysis request. Every pressure item must be reviewed before Copy.
 
-The status table below is the per-PR ledger from when those PRs were tested. A cell that says live not performed describes that head, not the later Oct 28 session. Since then, verification is wired into the session (#113). The Shield report (#114) and the resistance table (#115) run on dev fixtures. The sealed held-out run is scheduled for Nov 2 and is not opened by this note. Video URL, founder story, and user observations stay pending in the section below.
+The status table below is the per-PR ledger from when those PRs were tested. A cell that says live not performed describes that head, not the later Oct 28 session. Since then, verification is wired into the session (#113). Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it (#114/#115). That held-out run is not opened by this note. Video URL, founder story, and user observations stay pending in the section below.
 
 ## Statuses
 
@@ -75,14 +75,14 @@ Founder story: PENDING — not yet supplied. User observations: PENDING — not 
 flowchart LR
     A[paste transcript text] --> B[Glimmer redact]
     B --> C[owner review + approve]
-    C --> D[Spark brief + Shield]
+    C --> D[Spark brief]
     D --> E[deterministic checks]
     E --> F[owner edits + approves exact draft]
     F --> G[owner copies]
     G -. Second Seat takes no action .-> A
 ```
 
-I am the only one who acts. The loop ends at me. Image/SAM features are experimental, outside this text-only core flow, and off by default (live calls require `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`); they appear in no step above and not in the core video.
+I am the only one who acts. The loop ends at me. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. Image/SAM features are experimental, outside this text-only core flow, and off by default (live calls require `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`); they appear in no step above and not in the core video.
 
 ## Models
 
@@ -93,7 +93,7 @@ I am the only one who acts. The loop ends at me. Image/SAM features are experime
 | muse-spark-1.3 (standalone/historical path only, not the current session path) | Shield classifier | Standard mode; reasoning low [eval/results/prompt-freeze.md] |
 | muse-spark-1.3 | support judge | Standard mode; reasoning medium [eval/results/prompt-freeze.md] |
 
-Model paths, per the official Meta docs: the current session pressure path uses deterministic offline patterns (`apps/web/src/session.ts`), not a model call. The `muse-spark-1.3` Shield classifier is a standalone/historical model path; the live demo is not credited with it. Brief and redactor live verification passed 3/3 on Oct 28, 2026 at `0365fdb`. Contributor mode (`muse-spark-1.3-contributor`) is live not performed; it is not configured anywhere. `muse-spark-1.3` is the Standard-mode ID; the `-contributor` suffix selects Contributor mode. A recursive `json_schema` (a `$ref` cycle) is rejected with HTTP 400; recursive structures must be flattened to fixed depth.
+Model paths, per the official Meta docs: the current session pressure path uses deterministic offline patterns (`apps/web/src/session.ts`), not a model call. The `muse-spark-1.3` Shield classifier is a standalone/historical model path; the live demo is not credited with it. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. Brief and redactor live verification passed 3/3 on Oct 28, 2026 at `0365fdb`. Contributor mode (`muse-spark-1.3-contributor`) is live not performed; it is not configured anywhere. `muse-spark-1.3` is the Standard-mode ID; the `-contributor` suffix selects Contributor mode. A recursive `json_schema` (a `$ref` cycle) is rejected with HTTP 400; recursive structures must be flattened to fixed depth.
 
 Redact sampling (E10, draft PR #76, unmerged, unreviewed): temperature 0.0 with no top_p/top_k, reasoning_strength low unchanged, following the cookbook structured-output recipe (meta-oss-cookbook/muse-glimmer/recipes/structured-output/README.md, structured_output.py:83); this deliberately departs from meta-oss-cookbook/muse-glimmer/inference-server/vllm.md:112 (which advises against greedy decoding). The system prompt's empty answer is {"spans":[],"boxes":[]} (the shape the validator accepts) plus "never guess". Tested by services/bot/test/e10-redact-temp.test.ts [eval/results/prompt-freeze.md]. Changing decoding and the inline prompt changes the frozen prompt hash and decoding row, so any prepared holdout config must be re-frozen before a launch.
 

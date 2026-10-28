@@ -21,6 +21,7 @@ as a recorded run. The sealed held-out run is scheduled for Nov 2.
 
 - `muse-spark-1.3` — brief, Shield classifier, and support judge
   (`BRIEF_MODEL` in `services/bot/src/brief/muse.ts`).
+  Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it.
 - `meta-models/Muse-Glimmer-30B` — redaction (`GLIMMER_MODEL` in
   `services/bot/src/private/redact.ts`); served as
   `--served-model-name meta-models/Muse-Glimmer-30B` from image

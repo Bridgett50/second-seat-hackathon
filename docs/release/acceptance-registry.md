@@ -46,7 +46,7 @@ general/structured-output.md). Model names are identifiers only.
 | Path | Model / mechanism | Mode | Live verification |
 |---|---|---|---|
 | Current session pressure path | deterministic offline patterns (`apps/web/src/session.ts`), no model call | n/a (code, not a model) | ran inside the Oct 28 live session (3/3 at 0365fdb); no separate model call |
-| Standalone/historical Shield classifier | `muse-spark-1.3` | Standard mode | dev-fixture report #114 and resistance table #115 on recorded labels; sealed held-out scheduled Nov 2; live not performed on that held-out split |
+| Standalone/historical Shield classifier | `muse-spark-1.3` | Standard mode | Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it; live not performed on that held-out split |
 | Contributor variant (not used) | `muse-spark-1.3-contributor` | Contributor mode | live not performed; not configured anywhere |
 | Brief / support judge | `muse-spark-1.3` | Standard mode | live end-to-end 3/3 on Oct 28 at 0365fdb; rehearsals at 8c00c32 and on #116 |
 | Redactor | `meta-models/Muse-Glimmer-30B` (self-hosted vLLM on Modal) | n/a | live end-to-end 3/3 on Oct 28 at 0365fdb (that recording used the previous calendar-date prompt); rehearsals passed at 8c00c32 and on the #116 prompt fix; no new live model call for #116 |
