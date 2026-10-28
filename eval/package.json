@@ -17,7 +17,8 @@
     "presupport": "pnpm --filter @second-seat/bot build",
     "support": "node support.mjs",
     "prerules": "pnpm --filter @second-seat/core build",
-    "rules": "node rules/run.mjs"
+    "rules": "node rules/run.mjs",
+    "resistance": "node resistance-table.mjs --split dev"
   },
   "devDependencies": {
     "@second-seat/core": "workspace:*",
