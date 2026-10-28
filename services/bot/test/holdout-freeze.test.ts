@@ -90,6 +90,93 @@ describe("holdout freeze", () => {
     expect(result.output).toMatch(/hash mismatch/);
   });
 
+  it("CR1-confine", () => {
+    const clean = runFreeze(makeDummyDataset());
+    expect(clean.exit, "unconfined-path-accepted: clean dummy dataset should exit 0").toBe(0);
+    {
+      const dir = makeDummyDataset();
+      const sibling = mkdtempSync(join(tmpdir(), "freeze-sibling-"));
+      madeDirs.push(sibling);
+      const evilName = "evil-a.txt";
+      const evilText = "made-up sibling text A\n";
+      writeFileSync(join(sibling, evilName), evilText);
+      const sibBase = sibling.split("/").pop()!;
+      const key = `../${sibBase}/${evilName}`;
+      const manifestPath = join(dir, "MANIFEST.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      manifest.files[key] = sha(evilText);
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+      const result = runFreeze(dir);
+      expect(result.exit, "unconfined-path-accepted: traversal manifest key must exit 1").toBe(1);
+      expect(
+        result.output,
+        "unconfined-path-accepted: traversal manifest key must report unsafe path",
+      ).toMatch(/unsafe path in manifest/);
+    }
+    {
+      const dir = makeDummyDataset();
+      const sibling = mkdtempSync(join(tmpdir(), "freeze-sibling-"));
+      madeDirs.push(sibling);
+      const evilName = "evil-b.txt";
+      const evilText = "made-up sibling text B\n";
+      const absKey = join(sibling, evilName);
+      writeFileSync(absKey, evilText);
+      const manifestPath = join(dir, "MANIFEST.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      manifest.files[absKey] = sha(evilText);
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+      const result = runFreeze(dir);
+      expect(result.exit, "unconfined-path-accepted: absolute manifest key must exit 1").toBe(1);
+      expect(
+        result.output,
+        "unconfined-path-accepted: absolute manifest key must report unsafe path",
+      ).toMatch(/unsafe path in manifest/);
+    }
+    {
+      const dir = makeDummyDataset();
+      const sibling = mkdtempSync(join(tmpdir(), "freeze-sibling-"));
+      madeDirs.push(sibling);
+      const evilName = "evil-c.txt";
+      writeFileSync(join(sibling, evilName), "made-up sibling text C\n");
+      const sibBase = sibling.split("/").pop()!;
+      const evilRef = `../${sibBase}/${evilName}`;
+      const casesPath = join(dir, "cases.json");
+      const cases = JSON.parse(readFileSync(casesPath, "utf8"));
+      cases.push({ file: evilRef, entities: [] });
+      const casesText = `${JSON.stringify(cases, null, 2)}\n`;
+      writeFileSync(casesPath, casesText);
+      const manifestPath = join(dir, "MANIFEST.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      manifest.files["cases.json"] = sha(casesText);
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+      const result = runFreeze(dir);
+      expect(result.exit, "unconfined-path-accepted: traversal case file must exit 1").toBe(1);
+      expect(
+        result.output,
+        "unconfined-path-accepted: traversal case file must report unsafe case file path",
+      ).toMatch(/unsafe case file path/);
+    }
+  });
+
+  it("CR1-all-failures", () => {
+    const dir = makeDummyDataset();
+    writeFileSync(join(dir, "dummy-01.txt"), `${readFileSync(join(dir, "dummy-01.txt"), "utf8")}tampered-01\n`);
+    writeFileSync(join(dir, "dummy-02.txt"), `${readFileSync(join(dir, "dummy-02.txt"), "utf8")}tampered-02\n`);
+    writeFileSync(join(dir, "cases.json"), "{ invalid json !!!\n");
+    const result = runFreeze(dir);
+    expect(result.exit, "failures-dropped: tampered files plus bad cases.json must exit 1").toBe(1);
+    expect(result.output, "failures-dropped: must report dummy-01 hash mismatch").toMatch(
+      /hash mismatch dummy-01\.txt/,
+    );
+    expect(result.output, "failures-dropped: must report dummy-02 hash mismatch").toMatch(
+      /hash mismatch dummy-02\.txt/,
+    );
+    expect(result.output, "failures-dropped: must report the cases.json error").toMatch(
+      /cases\.json/,
+    );
+    expect(result.output, "failures-dropped: must report the FAIL summary").toMatch(/FAIL \(/);
+  });
+
   it("exits 1 when an annotation no longer occurs verbatim", () => {
     const dir = makeDummyDataset();
     const cases = JSON.parse(readFileSync(join(dir, "cases.json"), "utf8"));
