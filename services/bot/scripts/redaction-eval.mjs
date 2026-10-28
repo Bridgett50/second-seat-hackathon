@@ -114,9 +114,15 @@ if (runConfig !== null) {
   runnerSettings = toRunnerSettings(runConfig);
   clientOptions = sparkProofClientOptions(runConfig);
   runRevision = runConfig?.model?.revision ?? null;
-  // The frozen token limit drives the live client, which reads
-  // GLIMMER_MAX_TOKENS per request; the frozen config is authoritative.
+  // The frozen token/decoding limits drive the live client, which reads
+  // GLIMMER_MAX_TOKENS / GLIMMER_TEMPERATURE / GLIMMER_SEED /
+  // GLIMMER_REASONING / GLIMMER_CONTEXT_TOKENS per request; the frozen
+  // config is authoritative.
   process.env["GLIMMER_MAX_TOKENS"] = String(runnerSettings.maxTokens);
+  process.env["GLIMMER_TEMPERATURE"] = String(runnerSettings.decoding.temperature);
+  process.env["GLIMMER_SEED"] = String(runnerSettings.decoding.seed);
+  process.env["GLIMMER_REASONING"] = String(runnerSettings.decoding.reasoning);
+  process.env["GLIMMER_CONTEXT_TOKENS"] = String(runnerSettings.contextTokens);
   // The eval dataset is bound to the frozen config: --cases must name the
   // configured dataset id.
   const configuredDataset = runConfig?.dataset?.id;
