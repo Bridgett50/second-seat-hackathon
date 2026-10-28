@@ -34,7 +34,7 @@ SECOND_SEAT_MODE=live GLIMMER_BASE_URL=<your Modal Glimmer URL> META_API_KEY=<se
   pnpm --filter @second-seat/web serve
 ```
 
-Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. The live session path has been tested only with fake transports. It has not yet been run end-to-end against the real endpoints.
+Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The record is the owner's run summary `second-seat-live3-run-summary.md` (private, in the owner's Drive).
 
 The image / SAM path is experimental. It is hidden from the UI and makes no calls unless `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`.
 
@@ -60,7 +60,17 @@ The image / SAM path is experimental. It is hidden from the UI and makes no call
 
 - Dev meetings (live Spark, recorded): 10/10 validator-clean, recall 13/16, about $0.0547 total (`eval/results/dev-briefs.md`).
 - Glimmer redaction, historical Modal run (Oct 26): 6/8 requests completed, `complete: false`. It's shown with its limits, not as a headline (`services/bot/fixtures/glimmer-run/`).
+- Live end-to-end (Oct 28, 2026, `main` `0365fdb`): 3/3 runs passed. Glimmer on Modal A100 redaction about 12.5 s, Spark `muse-spark-1.3` brief 13–19 s, all names/phones/emails masked, about $0.22 GPU (owner's private run summary).
 - Seeded-error support judge: caught 9/9 with 0/4 false alarms on a small synthetic suite (`eval/results/support-score.json`).
+
+## Known Issues
+
+- **Contract dates are masked as `date_of_birth` in Live mode.** In the Oct 28 live runs, Glimmer masked the contract start date "November 15" as `[REDACTED_date_of_birth]`, so the brief loses the start date.
+  - *Cause:* the frozen Glimmer redaction prompt tells the model to mask every calendar date as `date_of_birth`, and the frozen label schema has no generic date label (`services/bot/src/private/redact.ts`).
+  - *Why not fixed now:* any fix changes the prompt, the label schema or the redacted text the owner approves, and that would force a re-freeze. A display-only relabel would break the rule that Spark sees exactly the text you approved.
+  - *Impact:* over-masking only. No personal data is exposed, but a business date is hidden from the brief.
+  - *Workaround:* in the editable redacted preview, change `[REDACTED_date_of_birth]` back to "November 15" before you click Approve.
+  - *Offline mode:* local masking only matches dates that include a year, so "November 15" is left as is.
 
 ## More
 

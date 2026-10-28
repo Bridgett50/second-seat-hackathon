@@ -8,8 +8,11 @@ and log tokens and cost with a $5/day spend cap plus a daily call-count cap
 
 Live mode is chosen ONLY by `SECOND_SEAT_MODE=live` together with
 `GLIMMER_BASE_URL` and `META_API_KEY`; `SECOND_SEAT_TEST_MODE=1` always
-forces offline (`apps/web/src/liveConfig.ts`). The live adapter path was
-tested only with fake transports — no live model execution performed.
+forces offline (`apps/web/src/liveConfig.ts`). Live end-to-end was verified
+on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed (Glimmer on Modal A100
+redaction about 12.5 s, Spark `muse-spark-1.3` brief 13–19 s, all names/phones/emails
+masked, about $0.22 GPU). The owner's private run summary
+(`second-seat-live3-run-summary.md`, Drive) is the record.
 
 ## Pinned models
 
