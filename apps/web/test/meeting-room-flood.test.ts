@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { IncomingHttpHeaders } from "node:http";
+import type { MeetingRoomService } from "../src/meetingRoom.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createMeetingRoomService } from "../src/meetingRoom.js";
@@ -148,5 +149,51 @@ describe("meeting room flood isolation", () => {
     expect(handler, "GET /meeting-room must send the busy message").toContain(
       "Meeting room is busy. Try again later.",
     );
+  });
+
+  it("MR-F6 store key K survives 150 then 60 other visitors and two tabs produce exactly one send", async () => {
+    const svc = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "1" } });
+    const prepare = async (s: MeetingRoomService, roomId: string): Promise<void> => {
+      const state = await s.act({ roomId, action: "state" }, HEADERS);
+      const meetingId = state.body.snapshot?.view.meetings[0]?.id;
+      if (meetingId !== undefined) {
+        await s.act({ roomId, action: "select-meeting", id: meetingId }, HEADERS);
+      }
+      let last = -1;
+      for (let i = 0; i < 20; i += 1) {
+        const res = await s.act({ roomId, action: "stream-next" }, HEADERS);
+        const length = res.body.snapshot?.view.transcript.length ?? -2;
+        if (length === last) break;
+        last = length;
+      }
+    };
+    const visit = (n: number): void => {
+      for (let i = 0; i < n; i += 1) {
+        try {
+          svc.open("", HEADERS, randomUUID());
+        } catch {
+          // a busy refusal is fine; it must never evict K
+        }
+      }
+    };
+    const keyK = randomUUID();
+    svc.open("", HEADERS, keyK);
+    visit(150);
+    const tabA = svc.open("", HEADERS, keyK);
+    visit(60);
+    const tabB = svc.open("", HEADERS, keyK);
+    const statuses: number[] = [];
+    for (const tab of [tabA, tabB]) {
+      const state = await svc.act({ roomId: tab.roomId, action: "state" }, HEADERS);
+      if (state.status !== 200) {
+        statuses.push(state.status);
+        continue;
+      }
+      await prepare(svc, tab.roomId);
+      statuses.push((await svc.act({ roomId: tab.roomId, action: "approve" }, HEADERS)).status);
+      statuses.push((await svc.act({ roomId: tab.roomId, action: "send" }, HEADERS)).status);
+    }
+    expect(svc.sentBodies(), "exactly one Send for one store key").toHaveLength(1);
+    for (const s of statuses) expect([200, 403, 404]).toContain(s);
   });
 });
