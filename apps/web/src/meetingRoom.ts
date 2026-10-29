@@ -122,28 +122,51 @@ export type MeetingRoomService = {
   sentBodies(): readonly string[];
 };
 
+/** Thrown by open() when no idle store key can be evicted to admit a new one. */
+export class MeetingRoomBusyError extends Error {
+  constructor() {
+    super("Meeting room is busy. Try again later.");
+    this.name = "MeetingRoomBusyError";
+  }
+}
+
 type RoomEntry = {
   readonly room: TwinRoom;
   readonly demo: DemoController | null;
   readonly testMode: boolean;
   readonly reused: boolean;
+  readonly storeKey: string;
 };
 
 /**
  * Create a meeting room service. `env` defaults to `process.env` and is read
  * at each call (never cached), so flipping `SECOND_SEAT_TEST_MODE` later
- * changes later gates. Rooms live in a Map capped at `maxRooms` (default
- * 200) by evicting the oldest entry.
+ * changes later gates. Stores are capped at `maxStores` (default 200): when
+ * open() needs a new store key, the least-recently-active key idle for at
+ * least `idleMs` (default 30 minutes) is evicted with its shared rooms and
+ * pages; when no key is idle a `MeetingRoomBusyError` is thrown and nothing
+ * is evicted. Pages are capped at `maxPagesPerKey` (default 20) per store
+ * key by evicting only that key's own oldest page, so one browser flooding
+ * the page can never evict another browser's rooms.
  */
 export function createMeetingRoomService(opts?: {
   env?: Readonly<Record<string, string | undefined>>;
-  maxRooms?: number;
+  maxStores?: number;
+  maxPagesPerKey?: number;
+  idleMs?: number;
+  now?: () => number;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
-  const maxRooms = opts?.maxRooms ?? 200;
+  const maxStores = opts?.maxStores ?? 200;
+  const maxPagesPerKey = opts?.maxPagesPerKey ?? 20;
+  const idleMs = opts?.idleMs ?? 30 * 60_000;
+  const now = opts?.now ?? Date.now;
   const stores = new Map<string, RoomStore>();
   const sent: string[] = [];
   const rooms = new Map<string, RoomEntry>();
+  // Last activity per store key, set on open() and on every act() for a
+  // page of that key. Drives idle eviction of whole store keys.
+  const lastActive = new Map<string, number>();
   // One shared twin room per store key and test-mode flag (the flag is
   // fixed at creation). Two tabs with the same cookie share one room so a
   // send in one tab is visible in the other and cannot go out twice.
@@ -152,23 +175,27 @@ export function createMeetingRoomService(opts?: {
     sent.push(body);
   };
 
-  /** Store for one browser key, created on first use (cap 200, evict oldest). */
+  /** Store for one browser key, created on first use (no eviction here). */
   function storeFor(storeKey: string): RoomStore {
     const existing = stores.get(storeKey);
     if (existing !== undefined) return existing;
     const created = createInMemoryRoomStore();
-    if (stores.size >= 200) {
-      const oldest = stores.keys().next();
-      if (!oldest.done) {
-        stores.delete(oldest.value);
-        // The evicted store's shared rooms go with it (both test-mode
-        // variants count under the one store key).
-        shared.delete(`${oldest.value}:t`);
-        shared.delete(`${oldest.value}:p`);
-      }
-    }
     stores.set(storeKey, created);
     return created;
+  }
+
+  /**
+   * Drop a whole store key: its store, both shared rooms (`${key}:t` and
+   * `${key}:p`), all its pages, and its activity record.
+   */
+  function evictStoreKey(storeKey: string): void {
+    stores.delete(storeKey);
+    shared.delete(`${storeKey}:t`);
+    shared.delete(`${storeKey}:p`);
+    for (const [roomId, entry] of rooms) {
+      if (entry.storeKey === storeKey) rooms.delete(roomId);
+    }
+    lastActive.delete(storeKey);
   }
 
   function snap(roomId: string, entry: RoomEntry, view: TwinRoomView): MeetingRoomSnapshot {
@@ -204,6 +231,24 @@ export function createMeetingRoomService(opts?: {
   return {
     open(search: string, headers: IncomingHttpHeaders, storeKey = "default"): MeetingRoomSnapshot {
       const testMode = meetingRoomFakeSendAllowed(env, headers);
+      // A new store key past the cap admits only by evicting an idle key;
+      // when every key is still active nothing is evicted and the page is
+      // refused, so one flooding browser can never push out other browsers.
+      if (!stores.has(storeKey) && stores.size >= maxStores) {
+        const at = now();
+        let victim: string | null = null;
+        let victimActive = Infinity;
+        for (const key of stores.keys()) {
+          const active = lastActive.get(key) ?? Number.NEGATIVE_INFINITY;
+          if (at - active >= idleMs && active < victimActive) {
+            victim = key;
+            victimActive = active;
+          }
+        }
+        if (victim === null) throw new MeetingRoomBusyError();
+        evictStoreKey(victim);
+      }
+      lastActive.set(storeKey, now());
       const sharedKey = `${storeKey}:${testMode ? "t" : "p"}`;
       const existingRoom = shared.get(sharedKey);
       const reused = existingRoom !== undefined;
@@ -221,11 +266,19 @@ export function createMeetingRoomService(opts?: {
       // The demo controller and roomId stay per page (per open() call).
       const demo = isDemoMode(search) ? createDemoController(room) : null;
       const roomId = randomUUID();
-      if (rooms.size >= maxRooms) {
-        const oldest = rooms.keys().next();
-        if (!oldest.done) rooms.delete(oldest.value);
+      // Cap pages per store key, evicting only this key's own oldest page.
+      let pages = 0;
+      let oldestOfKey: string | null = null;
+      for (const [id, entry] of rooms) {
+        if (entry.storeKey === storeKey) {
+          pages += 1;
+          if (oldestOfKey === null) oldestOfKey = id;
+        }
       }
-      const entry: RoomEntry = { room, demo, testMode, reused };
+      if (pages >= maxPagesPerKey && oldestOfKey !== null) {
+        rooms.delete(oldestOfKey);
+      }
+      const entry: RoomEntry = { room, demo, testMode, reused, storeKey };
       rooms.set(roomId, entry);
       return snap(roomId, entry, room.view());
     },
@@ -238,6 +291,7 @@ export function createMeetingRoomService(opts?: {
       if (typeof roomId !== "string") return notFound();
       const entry = rooms.get(roomId);
       if (entry === undefined) return notFound();
+      lastActive.set(entry.storeKey, now());
       const bad = (
         message: string,
       ): { status: number; body: MeetingRoomActionResult } => ({

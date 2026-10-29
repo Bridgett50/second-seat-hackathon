@@ -16,6 +16,7 @@ import {
   MEETING_ROOM_COOKIE,
   MEETING_ROOM_PATH,
   MEETING_ROOM_POST_FIELDS,
+  MeetingRoomBusyError,
   meetingRoomStoreKey,
 } from "./meetingRoom.js";
 import {
@@ -345,7 +346,21 @@ export function createWebServer(deps?: WebServerDeps) {
     ) {
       const storeKey = meetingRoomStoreKey(req.headers.cookie);
       const key = storeKey ?? randomUUID();
-      const html = renderMeetingRoomPage(meetingRoom.open(url.search, req.headers, key));
+      let snapshot;
+      try {
+        snapshot = meetingRoom.open(url.search, req.headers, key);
+      } catch (err) {
+        if (err instanceof MeetingRoomBusyError) {
+          res.writeHead(503, {
+            "content-type": "text/plain",
+            "cache-control": "no-store",
+          });
+          res.end("Meeting room is busy. Try again later.");
+          return;
+        }
+        throw err;
+      }
+      const html = renderMeetingRoomPage(snapshot);
       const headers: Record<string, string> = {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
