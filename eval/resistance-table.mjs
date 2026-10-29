@@ -11,9 +11,12 @@
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { toNodeImportSpecifier } from "../services/bot/test/support/import-url.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const core = await import(join(here, "..", "packages", "core", "dist", "src", "index.js"));
+const core = await import(
+  toNodeImportSpecifier(join(here, "..", "packages", "core", "dist", "src", "index.js"))
+);
 const { detectPressurePatterns } = core;
 
 export const DEV_ROWS = join(here, "shield", "dev-40-55.jsonl");
