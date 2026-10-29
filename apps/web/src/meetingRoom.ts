@@ -29,6 +29,18 @@ export const MEETING_ROOM_PATH = "/meeting-room";
 export const MEETING_ROOM_API = "/api/meeting-room";
 export const MEETING_ROOM_POST_FIELDS = ["roomId", "action", "text", "id"] as const;
 
+/** Largest accepted `text` for the "guide" action, in characters. */
+export const MEETING_ROOM_MAX_GUIDANCE_CHARS = 2_000;
+
+/** Largest accepted `text` for the "edit-draft" action, in characters. */
+export const MEETING_ROOM_MAX_DRAFT_CHARS = 20_000;
+
+/** Largest accepted `text` for the "compare" action, in characters. */
+export const MEETING_ROOM_MAX_COMPARE_CHARS = 20_000;
+
+/** Largest number of guidance entries recorded per meeting. */
+export const MEETING_ROOM_MAX_GUIDANCE_ENTRIES = 50;
+
 /** Cookie carrying one browser's meeting-room store key. */
 export const MEETING_ROOM_COOKIE = "mr_store";
 
@@ -256,6 +268,48 @@ export function createMeetingRoomService(opts?: {
         typeof text !== "string"
       ) {
         return bad(`Action ${action} needs string text.`);
+      }
+      // Input caps: refuse over-limit text (or a full guidance log) before
+      // calling any room method. Only `text.length` is checked; over-limit
+      // text is never scanned or redacted. The room is left unchanged.
+      const overLimit = (
+        message: string,
+      ): { status: number; body: MeetingRoomActionResult } => ({
+        status: 413,
+        body: {
+          snapshot: snap(roomId, entry, entry.room.view()),
+          announcements: [message],
+        },
+      });
+      if (
+        action === "guide" &&
+        (text as string).length > MEETING_ROOM_MAX_GUIDANCE_CHARS
+      ) {
+        return overLimit("Guidance is limited to 2,000 characters.");
+      }
+      if (
+        action === "edit-draft" &&
+        (text as string).length > MEETING_ROOM_MAX_DRAFT_CHARS
+      ) {
+        return overLimit("Draft edits are limited to 20,000 characters.");
+      }
+      if (
+        action === "compare" &&
+        (text as string).length > MEETING_ROOM_MAX_COMPARE_CHARS
+      ) {
+        return overLimit("Compared text is limited to 20,000 characters.");
+      }
+      if (
+        action === "guide" &&
+        entry.room.view().guidance.length >= MEETING_ROOM_MAX_GUIDANCE_ENTRIES
+      ) {
+        return {
+          status: 400,
+          body: {
+            snapshot: snap(roomId, entry, entry.room.view()),
+            announcements: ["At most 50 guidance entries per meeting."],
+          },
+        };
       }
       const before = entry.room.view();
       switch (action) {

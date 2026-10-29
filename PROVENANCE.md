@@ -109,3 +109,14 @@ twin room only through services/bot/src/t2-room.ts.
 - scripts/meeting-room-demo.mjs
 - README.md (walkthrough section)
 - services/bot/test/t2-port-wiring.test.ts (T2P-6)
+
+### Review fix B-1 (Oct 29, 2026)
+
+`act()` in apps/web/src/meetingRoom.ts now enforces input caps before calling
+any room method: at most 2,000 characters of guide text, 20,000 characters of
+edit-draft or compare text (over a length cap returns 413 with the room
+unchanged), and at most 50 guidance entries per meeting (the 51st returns
+400). Only `text.length` is checked; over-limit text is never scanned or
+redacted. `packages/core/src/t2/redaction.ts` `EMAIL_PATTERN` was bounded
+(local part 1-64, domain 1-253, TLD 2-24) to stop quadratic backtracking on
+long non-email input; core behavior on normal emails is unchanged.
