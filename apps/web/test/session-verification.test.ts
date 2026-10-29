@@ -23,7 +23,8 @@ describe("verifyApprovedRedaction", () => {
       "Call [REDACTED_person] at [REDACTED_phone] today.",
     );
     expect(view.blocked).toBe(false);
-    expect(view.status).toBe("verified");
+    expect(view.status).toBe("redaction_checked");
+    expect(view.title).toBe("Redaction check passed");
     expect(view.checks.find((c) => c.id === "redaction")?.result).toBe("passed");
     expect(JSON.stringify(view)).not.toContain(PHONE);
     expect(JSON.stringify(view)).not.toContain("Ana");
@@ -44,7 +45,8 @@ describe("verifySessionBrief", () => {
   it("passes an empty offline brief and leaves claims not run", () => {
     const view = verifySessionBrief(offlineEvidenceBrief("m", []), segments, "m", null);
     expect(view.blocked).toBe(false);
-    expect(view.status).toBe("verified");
+    expect(view.status).toBe("structural");
+    expect(view.title).toBe("Structural checks passed");
     expect(view.checks.map((c) => `${c.id}:${c.result}`)).toEqual([
       "redaction:passed",
       "brief:passed",
@@ -61,7 +63,7 @@ describe("verifySessionBrief", () => {
     );
     expect(view.blocked).toBe(false);
     expect(view.status).toBe("needs_owner_review");
-    expect(view.message).toBe(VERIFICATION_WARN_MESSAGE);
+    expect(view.message).toBe(`${VERIFICATION_WARN_MESSAGE} Claim support not checked.`);
     expect(view.checks.find((c) => c.id === "brief")?.result).toBe("escalated");
   });
 
@@ -87,7 +89,8 @@ describe("session wiring", () => {
     store.approve(id);
     const s = await store.analyze(id);
     expect(s.state).toBe("completed");
-    expect(s.verification?.status).toBe("verified");
+    expect(s.verification?.status).toBe("structural");
+    expect(s.verification?.title).toBe("Structural checks passed");
     expect(s.verification?.checks.find((c) => c.id === "redaction")?.result).toBe("passed");
     expect(s.verification?.checks.find((c) => c.id === "brief")?.result).toBe("passed");
     expect(s.verification?.checks.find((c) => c.id === "claims")?.result).toBe("not_run");
