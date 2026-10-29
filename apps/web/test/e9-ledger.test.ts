@@ -9,6 +9,7 @@ const rd = (p: string) => readFileSync(resolve(root, p), "utf8");
 const README = rd("docs/engineering-log.md");
 const READINESS = rd("docs/release/c9-readiness.md");
 const VIDEO = rd("docs/submission/video-script.md");
+const NOTES = rd("docs/release/video-status-notes.md");
 const THREE = [README, READINESS, VIDEO].join("\n");
 
 describe("E9 ledger draft fixes", () => {
@@ -35,16 +36,19 @@ describe("E9 ledger draft fixes", () => {
     expect(THREE).not.toMatch(/F4 closed/i);
   });
 
-  it("E9-4 video script mentions the reload fix is in draft E7", () => {
-    expect(VIDEO).toMatch(/reload/i);
-    expect(VIDEO).toMatch(/draft[^.\n]*E7|E7[^.\n]*draft/i);
+  it("E9-4 historical notes, not current narration, keep the reload fix in draft E7", () => {
+    expect(NOTES).toMatch(/reload/i);
+    expect(NOTES).toMatch(/draft[^.\n]*E7|E7[^.\n]*draft/i);
+    expect(NOTES).toMatch(/not current narration/i);
   });
 
   it("E9-5 no file says F4 closed or merged about E7/E8", () => {
-    expect(THREE).not.toMatch(/F4 closed/i);
-    expect(THREE).not.toMatch(/E7[^.\n]*\bmerged\b/i);
-    expect(THREE).not.toMatch(/E8[^.\n]*\bmerged\b/i);
-    expect(THREE).not.toMatch(/\bmerged\b[^.\n]*E7/i);
-    expect(THREE).not.toMatch(/\bmerged\b[^.\n]*E8/i);
+    const NOTES = rd("docs/release/video-status-notes.md");
+    const GUARDED = [THREE, NOTES].join("\n");
+    expect(GUARDED).not.toMatch(/F4 closed/i);
+    expect(GUARDED).not.toMatch(/E7[^.\n]*\bmerged\b/i);
+    expect(GUARDED).not.toMatch(/E8[^.\n]*\bmerged\b/i);
+    expect(GUARDED).not.toMatch(/\bmerged\b[^.\n]*E7/i);
+    expect(GUARDED).not.toMatch(/\bmerged\b[^.\n]*E8/i);
   });
 });
