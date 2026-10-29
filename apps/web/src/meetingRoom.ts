@@ -126,6 +126,7 @@ type RoomEntry = {
   readonly room: TwinRoom;
   readonly demo: DemoController | null;
   readonly testMode: boolean;
+  readonly reused: boolean;
 };
 
 /**
@@ -143,6 +144,13 @@ export function createMeetingRoomService(opts?: {
   const stores = new Map<string, RoomStore>();
   const sent: string[] = [];
   const rooms = new Map<string, RoomEntry>();
+  // One shared twin room per store key and test-mode flag (the flag is
+  // fixed at creation). Two tabs with the same cookie share one room so a
+  // send in one tab is visible in the other and cannot go out twice.
+  const shared = new Map<string, TwinRoom>();
+  const transport = async (body: string): Promise<void> => {
+    sent.push(body);
+  };
 
   /** Store for one browser key, created on first use (cap 200, evict oldest). */
   function storeFor(storeKey: string): RoomStore {
@@ -151,7 +159,13 @@ export function createMeetingRoomService(opts?: {
     const created = createInMemoryRoomStore();
     if (stores.size >= 200) {
       const oldest = stores.keys().next();
-      if (!oldest.done) stores.delete(oldest.value);
+      if (!oldest.done) {
+        stores.delete(oldest.value);
+        // The evicted store's shared rooms go with it (both test-mode
+        // variants count under the one store key).
+        shared.delete(`${oldest.value}:t`);
+        shared.delete(`${oldest.value}:p`);
+      }
     }
     stores.set(storeKey, created);
     return created;
@@ -172,7 +186,7 @@ export function createMeetingRoomService(opts?: {
               caption: current?.caption ?? null,
             },
       fakeSend: entry.testMode,
-      restored: entry.room.restoredFromStore(),
+      restored: entry.reused || entry.room.restoredFromStore(),
       view,
       approvalNote: entry.room.approvalNote(),
       copyText: entry.room.copyText(),
@@ -190,20 +204,28 @@ export function createMeetingRoomService(opts?: {
   return {
     open(search: string, headers: IncomingHttpHeaders, storeKey = "default"): MeetingRoomSnapshot {
       const testMode = meetingRoomFakeSendAllowed(env, headers);
-      const room = createTwinRoom({
-        testMode,
-        store: storeFor(storeKey),
-        transport: async (body: string): Promise<void> => {
-          sent.push(body);
-        },
-      });
+      const sharedKey = `${storeKey}:${testMode ? "t" : "p"}`;
+      const existingRoom = shared.get(sharedKey);
+      const reused = existingRoom !== undefined;
+      const room =
+        existingRoom ??
+        (() => {
+          const created = createTwinRoom({
+            testMode,
+            store: storeFor(storeKey),
+            transport,
+          });
+          shared.set(sharedKey, created);
+          return created;
+        })();
+      // The demo controller and roomId stay per page (per open() call).
       const demo = isDemoMode(search) ? createDemoController(room) : null;
       const roomId = randomUUID();
       if (rooms.size >= maxRooms) {
         const oldest = rooms.keys().next();
         if (!oldest.done) rooms.delete(oldest.value);
       }
-      const entry: RoomEntry = { room, demo, testMode };
+      const entry: RoomEntry = { room, demo, testMode, reused };
       rooms.set(roomId, entry);
       return snap(roomId, entry, room.view());
     },

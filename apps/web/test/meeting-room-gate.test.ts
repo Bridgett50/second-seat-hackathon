@@ -214,8 +214,9 @@ describe("meeting room fake-send gate", () => {
     expect(reopened.view.transcript).toEqual(before.view.transcript);
     expect(reopened.view.transcript.length).toBeGreaterThan(0);
     expect(reopened.view.draft.body).toBe(before.view.draft.body);
-    expect(reopened.view.draft.approved).toBe(false);
-    expect(reopened.approvalNote).not.toBeNull();
+    // Same browser, same live shared room (review fix B-2): approval is not reset by a reopen.
+    expect(reopened.view.draft.approved).toBe(true);
+    expect(reopened.approvalNote).toBeNull();
   });
 
   it("MR-G8 different store keys are isolated and the same key restores", async () => {
