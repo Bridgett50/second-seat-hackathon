@@ -2,6 +2,7 @@
  * FR3: a structural pass is not a claim-support verification.
  * Offline only. No provider, Modal, or sealed data.
  */
+import type { Server } from "node:http";
 import { describe, expect, it } from "vitest";
 import { createSessionStore } from "../src/session.js";
 import { createWebServer } from "../src/server.js";
@@ -17,7 +18,7 @@ import {
 const SEG = [{ id: "seg-1", text: "Discussed options." }];
 const ONE = [{ kind: "decision", text: "Discussed options.", segmentIds: ["seg-1"] }];
 
-function listen(server: ReturnType<typeof createServer>): Promise<number> {
+function listen(server: Server): Promise<number> {
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
