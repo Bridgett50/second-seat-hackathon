@@ -63,6 +63,7 @@ describe("C8 claims reconciliation", () => {
     expect(copy).toBeGreaterThan(review);
     expect(VIDEO).toMatch(/ONE meeting/);
     expect(rows.join("\n")).not.toMatch(/live analysis/i);
+    expect(rd("docs/release/video-status-notes.md")).not.toMatch(/live analysis/i);
   });
   it("C8-8 founder story is supplied; user observations and video stay pending", () => {
     expect(README).toMatch(/Founder story: done/);

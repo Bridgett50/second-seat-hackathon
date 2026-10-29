@@ -10,6 +10,7 @@ const README = rd("docs/engineering-log.md");
 const READINESS = rd("docs/release/c9-readiness.md");
 const REGISTRY = rd("docs/release/acceptance-registry.md");
 const VIDEO = rd("docs/submission/video-script.md");
+const NOTES = rd("docs/release/video-status-notes.md");
 const FOUR = [README, READINESS, REGISTRY, VIDEO].join("\n");
 
 const STALE = [
@@ -70,9 +71,10 @@ describe("E6 ledger correction", () => {
     const line7 = README.split("\n")[6] ?? "";
     expect(line7).not.toMatch(/any edit[^.\n]*clears the approval/i);
     expect(line7).toMatch(/reload/i);
-    const draftRow = VIDEO.split("\n").find((l) => /1:35–1:50/.test(l)) ?? "";
+    const draftRow = VIDEO.split("\n").find((l) => /Click `#btn-copy`/.test(l)) ?? "";
     expect(draftRow).not.toMatch(/any edit[^.\n]*clears the approval/i);
-    expect(VIDEO).toMatch(/reload after an A->B->A edit/i);
+    expect(NOTES).toMatch(/reload after an A->B->A edit/i);
+    expect(NOTES).toMatch(/not current narration/i);
   });
 
   it("E6-5 E-series draft note with E1/E2/E4/E5, E3 not fixed, review link, no invented PR/SHA or founder facts", () => {
