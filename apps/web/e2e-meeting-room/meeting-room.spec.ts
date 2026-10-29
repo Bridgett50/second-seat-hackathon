@@ -105,7 +105,7 @@ test("C7-owner-flow-guide-takeover-approve-send-evidence", async ({ page }) => {
   await expect(page.locator("#evidence-json")).toContainText("packageHash");
   await expect(page.locator("#evidence-json")).toContainText('"sendState": "sent"');
   await page.locator("#takeover").click();
-  await expect(page.getByText("You took over. The twin is paused.")).toBeVisible();
+  await expect(page.getByLabel("Take over", { exact: true }).getByText("You took over. The twin is paused.")).toBeVisible();
 });
 
 test("C8-reload-restores-the-room-in-the-same-browser", async ({ page, browser }) => {
