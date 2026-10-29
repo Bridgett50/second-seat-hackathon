@@ -21,21 +21,28 @@ Approve plus Analyze while the email remains returns to review required, with ze
 
 The later Copy calls `navigator.clipboard.writeText` once. That argument equals the approved draft exactly. On this Linux Chromium, `readText()` also equals that draft, including its spaces. Those are separate checks. A Windows LF-to-CRLF readback was not run.
 
-The approval flag is true only when the stored `approvedHash` matches `hashDraft` from `apps/web/src/draftApproval.ts` (FNV-1a 32-bit, hex). The browser check reads that stored hash from the session state and compares it with `hashDraft` of the exact `writeText` argument. Editing the draft clears that approval and disables Copy. The same session id is used from paste through that edit. Each citation target's text is contained in the corrected approved text.
+The server reports that exact draft as approved, and Copy writes it once. On this Linux Chromium, `readText()` also equals that draft, including its spaces. Those are separate checks. A Windows LF-to-CRLF readback was not run. The state response does not include the stored approval hash. Editing the draft clears approval and disables Copy. The same session id is used from paste through that edit. Each citation target's text is contained in the corrected approved text.
 
 ## Stored approval hash
 
-The session state draft now includes the stored `approvedHash`. The spec compares that value with production `hashDraft` of the exact `writeText` argument.
+Seed, not committed. Only this assignment changed, and the approval comparison stayed `approvedHash === hashDraft(text)`:
 
-Seed, not committed. `approveDraft` stored `"seed-corrupt"` instead of `hashDraft(text)`, and the snapshot's approved bit ignored the hash mismatch so the earlier `approved === true` check still passed. The hash assertion then failed:
-
-```text
-Expected: "a246f4ec"
-Received: "seed-corrupt"
-expect(sameDraft.approvedHash).toBe(productionHashDraft(writes[0]))
+```diff
+-      s.draft.approvedHash = hashDraft(text);
++      s.draft.approvedHash = "seed-corrupt";
 ```
 
-That seed was restored before the clean run.
+Copy stayed disabled. The focused spec failed at the normal enablement check:
+
+```text
+Error: expect(locator).toBeEnabled() failed
+Locator: locator('#btn-copy')
+Expected: enabled
+Received: disabled
+await expect(page.locator("#btn-copy")).toBeEnabled();
+```
+
+The seed was restored before the clean run. The state object does not expose `approvedHash`.
 
 ## B-8 sensitivity
 

@@ -6,25 +6,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, expect, type Page } from "@playwright/test";
-import { hashDraft as productionHashDraft } from "../src/draftApproval.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TRANSCRIPT = readFileSync(join(HERE, "..", "..", "..", "demo", "synthetic-transcript.txt"), "utf8");
-const DRAFT_SRC = readFileSync(join(HERE, "..", "src", "draftApproval.ts"), "utf8");
 const PHONE = "555-013-8844";
 const EMAIL = "ellis.ward@northglass-retail.example";
 const DRAFT = "Please send a corrected written quote. I have not accepted the deadline.";
 const BLOCKED_LABEL = "Review required — check the redacted preview, then approve.";
-
-/** FNV-1a 32-bit hex, the algorithm documented on hashDraft in draftApproval.ts. */
-function hashDraft(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
-}
 
 async function open(page: Page): Promise<string> {
   const resp = page.waitForResponse(
@@ -173,10 +161,6 @@ test("FR9 offline synthetic transcript reaches copy without a provider call", as
     await links.nth(i).click();
   }
 
-  expect(DRAFT_SRC).toContain("FNV-1a 32-bit, hex");
-  expect(DRAFT_SRC).toContain("0x811c9dc5");
-  expect(DRAFT_SRC).toContain("Math.imul(hash, 0x01000193)");
-  expect(DRAFT_SRC).toContain("return (hash >>> 0).toString(16)");
   await page.locator("#draft-text").fill(DRAFT);
   await page.locator("#btn-draft-approve").click();
   await expect(page.locator("#btn-copy")).toBeEnabled();
@@ -186,13 +170,11 @@ test("FR9 offline synthetic transcript reaches copy without a provider call", as
   expect(writes).toHaveLength(1);
   expect(writes[0]).toBe(DRAFT);
   const same = await state(page, id);
-  const sameDraft = same.draft as { text: string; approved: boolean; approvedHash: string | null };
+  const sameDraft = same.draft as { text: string; approved: boolean };
   expect(same.state).toBe("completed");
   expect(sameDraft.text).toBe(DRAFT);
   expect(sameDraft.approved).toBe(true);
   expect(writes[0]).toBe(sameDraft.text);
-  expect(sameDraft.approvedHash).toBe(productionHashDraft(writes[0]));
-  expect(hashDraft(`${DRAFT} extra`)).not.toBe(hashDraft(DRAFT));
   expect(readback).toBe(DRAFT);
   expect(requested.length).toBeGreaterThan(0);
   expect(requested.map(foreignHost).filter((host) => host !== null)).toEqual([]);

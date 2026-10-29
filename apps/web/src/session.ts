@@ -101,7 +101,7 @@ export interface SessionSnapshot {
   payload: PayloadRecord | null;
   superseded: SupersededRecord | null;
   offline: boolean;
-  draft: { text: string; origin: "user"; approved: boolean; approvedHash: string | null } | null;
+  draft: { text: string; origin: "user"; approved: boolean } | null;
   /** Null before analysis and after any content change; else the current assessment. */
   pressure: PressureAssessment | null;
   /**
@@ -866,7 +866,6 @@ export function createSessionStore(options?: SessionStoreOptions) {
           : {
               text: s.draft.text,
               origin: "user" as const,
-              approvedHash: s.draft.approvedHash,
               approved:
                 s.draft.approvedHash !== null &&
                 s.draft.approvedHash === hashDraft(s.draft.text) &&
