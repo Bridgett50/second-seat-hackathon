@@ -5,14 +5,18 @@
  *
  * Jobs are authoritative server-issued records: `issueJob` binds a trusted
  * owner, meeting, session, source revision and authority generation under a
- * server-generated jobId. `resolveCallback` and `replay` honor only an
- * envelope that matches a pending issued job AND current state. Caller-built
- * callbacks without an issued jobId are rejected, never trusted. Source
- * edits, revocation, deletion, expiry and session suspension invalidate
- * dependent pending jobs immediately. Replay of one dispatch intent invokes
- * the transport at most once; distinct jobs are independent (no global
- * exactly-once claim).
+ * server-generated random-UUID jobId. `resolveCallback` honors only an
+ * envelope that matches a pending issued job AND current state, and
+ * `replay(principal, ...)` additionally requires the principal to own the
+ * job. Caller-built callbacks without an issued jobId are rejected, never
+ * trusted. Source edits, revocation, deletion, expiry and session suspension
+ * invalidate dependent pending jobs immediately. Replay claims the job
+ * before sending: a transport throw moves the job to a terminal failed
+ * state (never retried) and the outbound counter advances only after the
+ * transport returns; distinct jobs are independent (no global exactly-once
+ * claim).
  */
+import { randomUUID } from "node:crypto";
 export const MEETING_CONNECTOR_PROTOCOL = "meeting-connector/1" as const;
 
 export class MeetingDenied extends Error {
@@ -73,7 +77,7 @@ export type StoredCallback = {
 
 export type ProviderKind = "brain" | "capture" | "voice" | "avatar" | "email";
 
-type JobStatus = "pending" | "consumed" | "invalidated";
+type JobStatus = "pending" | "consumed" | "invalidated" | "failed";
 
 type JobRecord = {
   jobId: string;
@@ -97,7 +101,6 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
   const meetings = new Map<string, Meeting>();
   const sessions = new Map<string, Session>();
   const jobs = new Map<string, JobRecord>();
-  let seq = 0;
   let outbound = 0;
 
   function requirePrincipal(principal: OwnerPrincipal | null | undefined): OwnerPrincipal {
@@ -184,8 +187,7 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
     outboundCount: () => outbound,
     createMeeting(principal: OwnerPrincipal | null, text: string): { meetingId: string } {
       const owner = requirePrincipal(principal);
-      seq += 1;
-      const id = `m-${seq}`;
+      const id = randomUUID();
       meetings.set(id, {
         id,
         ownerId: owner.ownerId,
@@ -205,9 +207,7 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
       claimedOwnerId?: string,
     ): { text?: string } {
       const owner = requirePrincipal(principal);
-      if (claimedOwnerId !== undefined && claimedOwnerId !== owner.ownerId) {
-        // The client claim is ignored. Authorization stays on the principal.
-      }
+      void claimedOwnerId;
       const meeting = owned(owner, meetingId, action.type);
       if (action.type === "read" || action.type === "export") {
         if (!policyOpen(meeting)) throw new MeetingDenied(action.type);
@@ -237,8 +237,7 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
         owned(owner, meetingId, "open-session");
         boundMeetingId = meetingId;
       }
-      seq += 1;
-      const generationId = `g-${seq}`;
+      const generationId = randomUUID();
       sessions.set(generationId, {
         ownerId: owner.ownerId,
         generationId,
@@ -259,8 +258,7 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
       const session = ownedSession(owner, generationId, "issue");
       if (session.suspended) throw new MeetingDenied("issue");
       bindSession(session, meetingId, "issue");
-      seq += 1;
-      const jobId = `j-${seq}`;
+      const jobId = randomUUID();
       const record: JobRecord = {
         jobId,
         ownerId: owner.ownerId,
@@ -337,15 +335,28 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
       const meeting = owned(owner, meetingId, "read");
       return meeting.approvedRevision === meeting.sourceRevision && policyOpen(meeting);
     },
-    replay(callback: StoredCallback, transport: () => void): { ran: boolean } {
+    replay(
+      principal: OwnerPrincipal | null,
+      callback: StoredCallback,
+      transport: () => void,
+    ): { ran: boolean } {
+      const who = requirePrincipal(principal);
       if (!callback || typeof callback.jobId !== "string") return { ran: false };
       const record = jobs.get(callback.jobId);
-      if (!record || record.status === "invalidated" || record.dispatched) return { ran: false };
+      if (!record || record.status === "invalidated" || record.status === "failed" || record.dispatched) {
+        return { ran: false };
+      }
+      if (who.ownerId !== record.ownerId) return { ran: false };
       if (!envelopeMatches(callback, record)) return { ran: false };
       if (!currentStateOk(record)) return { ran: false };
-      outbound += 1;
-      transport();
       record.dispatched = true;
+      try {
+        transport();
+      } catch (err) {
+        record.status = "failed";
+        throw err;
+      }
+      outbound += 1;
       return { ran: true };
     },
   };
