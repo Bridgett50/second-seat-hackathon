@@ -1,6 +1,6 @@
 # Final repair acceptance
 
-Authored by the Cursor cloud agent, not Muse Code. Reviewed target `005201ef83c2c94b110a643b6f89606928d3d349`. Platform for every local command below is Linux. GitHub CI is listed separately and is not treated as a local run. This run's token usage was not reported by the environment. No zero-cost claim is made.
+Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This ledger was written by the Cursor cloud agent. Reviewed target `005201ef83c2c94b110a643b6f89606928d3d349`. Platform for every local command below is Linux. GitHub CI is listed separately and is not treated as a local run. This run's token usage was not reported by the environment. No zero-cost claim is made.
 
 Not recording-ready. FR1–FR3 are fixed and the offline script matches the executed synthetic flow, but the Windows citation and clipboard checks are UNVERIFIED.
 
@@ -119,7 +119,7 @@ A failure counts only when the named assertion ran on the parent and failed. The
 | R6 deterministic-output guarantee | Documented in #126. |
 | R7 transcript and script mismatch | Script matched to the executed offline flow in #125. |
 | R8 real-upload promise | Documented in #126. |
-| R9 hard-coded mutation result | Fixed in #128. Rules 0/13 gap untouched. |
+| R9 hard-coded mutation result | Relabeled in #128 as an analytical baseline (all layers off). `eval/shield-report.mjs` still hard-codes `mutantCaught = 0`. That is not a measured fix. The rules 0/13 gap was not edited. |
 | R10 timeout, retry, accounting, startup prose | Documented in #126. Frozen runtime unchanged. |
 | R11 verification timing | Documented in #126, with a session control. |
 | R12 chronology, reload, video status | Documented in #126 and #125. Owner-attested, not independently verified. |

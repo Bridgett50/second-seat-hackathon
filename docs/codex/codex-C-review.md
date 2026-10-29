@@ -200,7 +200,7 @@ Claims still needing correction:
 
 The historical-rescore test still overwrites tracked evidence with a new timestamp; B7 works around that by excluding `generatedAt` from its comparison. Stop the write instead. [glimmer-eval.test.ts:151](https://github.com/Bridgett50/second-seat-hackathon/blob/b536174/services/bot/test/glimmer-eval.test.ts#L151), [rescorer:124](https://github.com/Bridgett50/second-seat-hackathon/blob/b536174/services/bot/scripts/rescore-glimmer-run.mjs#L124), [b7-docs.test.ts:56](https://github.com/Bridgett50/second-seat-hackathon/blob/b536174/apps/web/test/b7-docs.test.ts#L56)
 
-The reported hand-edited status line is **not a technical defect**. “Built with Muse Code” does not claim exclusive authorship. Do not turn it into “every line was written by Muse.” [README.md:95](https://github.com/Bridgett50/second-seat-hackathon/blob/b536174/README.md#L95)
+The reported hand-edited status line is **not a technical defect**. That old line named Muse Code and does not claim exclusive authorship. Do not turn it into “every line was written by Muse.” [README.md:95](https://github.com/Bridgett50/second-seat-hackathon/blob/b536174/README.md#L95)
 
 ### #51 — B8, `e0721dd`: **MERGE its own documentation changes**
 

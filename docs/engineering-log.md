@@ -121,7 +121,7 @@ On privacy, what the code does and what is tested: the session flow sends the ap
 
 ## Built with
 
-Built with Muse Code (Meta's coding agent) as the build agent. Grok Bot drove and verified. I supervised and take the blame.
+Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This history's token usage was not reported here. I supervised and take the blame.
 
 ## How to run
 
