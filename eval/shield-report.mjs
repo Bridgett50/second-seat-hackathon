@@ -140,7 +140,7 @@ export function scoreRows(rows, sparkLabels) {
       mutated: mutantCaught,
       n: positives.length,
       shieldOnly: shieldCaught - mutantCaught,
-      note: "mutated checker: patterns off, spark tactics none, gate off",
+      note: "analytical all-layers-off baseline; not a measured mutant",
     },
   };
 }
@@ -157,7 +157,7 @@ export function formatReport(score) {
   );
   const mutation = score.mutation;
   lines.push(
-    `mutation: shield ${mutation.shield}/${mutation.n}; mutated ${mutation.mutated}/${mutation.n}; shield catches ${mutation.shieldOnly} seeded pressure rows the mutated checker missed (${mutation.note})`,
+    `analytical baseline (all layers off): ${mutation.mutated}/${mutation.n}. ${mutation.note}`,
   );
   return `${lines.join("\n")}\n`;
 }
