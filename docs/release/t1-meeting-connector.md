@@ -44,6 +44,56 @@ The connector is not mounted on the web server. Production dispatch throws `prod
 API change: `replay(callback, transport)` is now
 `replay(principal, callback, transport)`.
 
+## T2 connector slice
+
+Connector-side boundary for execution plan v2 T2, plus the Opus review items
+left open after #136. All invented data; no claims of real Gmail, Meet, or
+model behaviour.
+
+- B5 fixed: approval is bound to the exact package, not a revision number.
+  `resolveCallback` stores the delivered artifact and its server-computed
+  `packageHash` (sha256 hex of the UTF-8 bytes) on the job record.
+  `approvePackage(principal, jobId, packageHash)` succeeds only for the job
+  owner, a `consumed` job, current state, and a hash equal to the
+  server-computed `artifactHash` (a client digest compared with itself is
+  never trusted). The approved hash is re-verified at send time.
+- N1 fixed: the transport is async
+  `(pkg: { jobId; packageHash; body }) => Promise<void>`. All send checks run
+  synchronously before any await; the job is claimed (`dispatched = true`)
+  before the transport is called, so two concurrent replays make exactly one
+  transport call. The transport is awaited inside `try`: a throw/rejection
+  moves the job to terminal `failed` (never resent) and rejects the returned
+  promise. `outboundCount()` advances only after the await succeeds.
+- N2 decision (enforced): ONLY a consumed job with a current exact-package
+  approval may be sent, at most once. A pending job can never be sent or
+  approved; a consumed but unapproved job cannot be sent.
+- Takeover: `takeover(principal, generationId)` is owner-only and marks the
+  session taken over, which bars it from issuing, resolving, approving, or
+  sending (like suspension). It immediately invalidates that session's
+  pending AND consumed-but-unsent jobs and clears their approvals.
+  Edit/revoke/delete/expire/suspend likewise invalidate consumed-but-unsent
+  jobs and clear `approvedHash` (previously only pending jobs).
+- `exportApproved(principal, jobId)` returns the exact approved body as a
+  copy/export read (no state change, no outbound) only for the owner while
+  the exact-package approval is current; otherwise it throws
+  `MeetingDenied("export-approved")`. An edit after approval makes it stale.
+- `appendTranscript` / `transcript` record owner-scoped transcript events per
+  session: an event appends only for the session owner, a live (not
+  suspended/taken-over) session, the session's bound meeting (binding an
+  unbound session when the principal owns the meeting), and an open meeting.
+  A stale event from a different meeting returns `{ appended: false }`;
+  `transcript` returns `[]` for a non-owner.
+
+API changes: new `packageHash`, `approvePackage`, `takeover`,
+`exportApproved`, `appendTranscript`, `transcript`; `replay` is now async and
+takes an async transport receiving the stored `{ jobId, packageHash, body }`.
+
+What remains for T2 in the original app repo (out of scope here): T2-1 DOM
+twin/takeover controls, T2-2 owner-scoped reasoning context, and the UI
+halves of T2-3 (transcript) / T2-4 (approved-package export). NOT done: T9
+items — durable intent across restarts and the unknown/needs-reconciliation
+send state.
+
 ## What is missing for integration
 
 These unit tests prove nothing about authenticated routes, saved workspaces, full network blocking, live models, or any real provider. No real HTTP is performed and no redirect is followed by the stub gate.
