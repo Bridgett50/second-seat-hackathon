@@ -17,6 +17,7 @@ import {
   MEETING_ROOM_PATH,
   MEETING_ROOM_POST_FIELDS,
   MeetingRoomBusyError,
+  meetingRoomSetCookie,
   meetingRoomStoreKey,
 } from "./meetingRoom.js";
 import {
@@ -366,8 +367,7 @@ export function createWebServer(deps?: WebServerDeps) {
         "cache-control": "no-store",
       };
       if (storeKey === null) {
-        headers["set-cookie"] =
-          `${MEETING_ROOM_COOKIE}=${key}; Path=/meeting-room; HttpOnly; SameSite=Strict; Max-Age=86400`;
+        headers["set-cookie"] = meetingRoomSetCookie(key, req.headers);
       }
       res.writeHead(200, headers);
       res.end(html);

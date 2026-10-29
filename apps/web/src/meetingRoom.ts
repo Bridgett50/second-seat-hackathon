@@ -89,6 +89,32 @@ export function meetingRoomFakeSendAllowed(
   });
 }
 
+const COOKIE_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function cookieHostIsLoopback(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const name = value.trim().toLowerCase().replace(/:\d+$/, "");
+  return COOKIE_LOOPBACK_HOSTS.has(name);
+}
+
+/**
+ * Set-Cookie value for the meeting room store key. Adds `Secure` unless the
+ * request is plain http on a loopback Host (local dev and the loopback test
+ * server, where browsers would drop a Secure cookie). Duplicated headers,
+ * a non-loopback Host or X-Forwarded-Host, or X-Forwarded-Proto https all
+ * get `Secure`.
+ */
+export function meetingRoomSetCookie(key: string, headers: IncomingHttpHeaders): string {
+  const base = `${MEETING_ROOM_COOKIE}=${key}; Path=/meeting-room; HttpOnly; SameSite=Strict; Max-Age=86400`;
+  const host = headers.host;
+  const fwdHost = headers["x-forwarded-host"];
+  const fwdProto = headers["x-forwarded-proto"];
+  if (Array.isArray(host) || Array.isArray(fwdHost) || Array.isArray(fwdProto)) return `${base}; Secure`;
+  if (typeof fwdProto === "string" && fwdProto.split(",")[0]?.trim().toLowerCase() !== "http") return `${base}; Secure`;
+  if (fwdHost !== undefined && !cookieHostIsLoopback(fwdHost)) return `${base}; Secure`;
+  return cookieHostIsLoopback(host) ? base : `${base}; Secure`;
+}
+
 export type MeetingRoomSnapshot = {
   readonly roomId: string;
   readonly demo: null | {

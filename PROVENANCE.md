@@ -139,3 +139,9 @@ Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
 The meeting room page now always shows a "Run plugins" button (`#run-plugins`, disabled once plugins
 cannot run: after takeover or once the package leaves "unsent"), so plugins run outside the guided
 demo. Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fix B-7 (Oct 29, 2026)
+
+The `mr_store` cookie now carries `Secure` except for plain-http loopback requests
+(`meetingRoomSetCookie` in apps/web/src/meetingRoom.ts). Written by Muse Code on
+meta-models/muse-spark-open-1026 via Baseten.
