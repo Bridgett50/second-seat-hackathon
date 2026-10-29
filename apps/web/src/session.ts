@@ -888,7 +888,6 @@ export function createSessionStore(options?: SessionStoreOptions) {
     s.payload = null;
     s.pressure = null;
     s.verification = null;
-    s.redactionSpans = [];
     s.draft = null;
     if (s.inFlight) {
       s.superseded = { ...s.inFlight, status: "sent" };
@@ -956,6 +955,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       s.segments = lines.map((line, i) => ({ id: `seg-${i + 1}`, text: line }));
       s.rawText = text;
       s.runId = null;
+      s.redactionSpans = [];
       s.approvalExpired = false;
       s.redactedText = "";
       s.redactPending = null;
@@ -1020,6 +1020,7 @@ export function createSessionStore(options?: SessionStoreOptions) {
       if (scope === "transcript") {
         s.runId = null;
         s.redactedText = "";
+        s.redactionSpans = [];
         s.segments = [];
         s.redactPending = null;
         s.state = "input";
