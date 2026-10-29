@@ -20,6 +20,7 @@ import fsp from "node:fs/promises";
 import child_process from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { toNodeImportSpecifier } from "./import-url.mjs";
 import { syncBuiltinESMExports } from "node:module";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -530,7 +531,7 @@ function guardChild(orig) {
       const env = options.env;
       if (env !== undefined && env !== null && typeof env === "object") {
         try {
-          const flag = `--import ${ownPath}`;
+          const flag = `--import ${toNodeImportSpecifier(ownPath)}`;
           const cur = env["NODE_OPTIONS"] ?? "";
           if (typeof cur === "string" && !cur.includes(ownPath)) {
             env["NODE_OPTIONS"] = cur ? `${cur} ${flag}` : flag;
@@ -596,7 +597,7 @@ if (!globalThis.__sealedGuardInstalled) {
 
 // Propagate to spawned node subprocesses that inherit this env.
 try {
-  const flag = `--import ${ownPath}`;
+  const flag = `--import ${toNodeImportSpecifier(ownPath)}`;
   const cur = process.env["NODE_OPTIONS"] ?? "";
   if (!cur.includes(ownPath)) {
     process.env["NODE_OPTIONS"] = cur ? `${cur} ${flag}` : flag;

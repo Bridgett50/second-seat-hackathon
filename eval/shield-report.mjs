@@ -8,11 +8,12 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { toNodeImportSpecifier } from "../services/bot/test/support/import-url.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
 const core = await import(
-  join(here, "..", "packages", "core", "dist", "src", "index.js")
+  toNodeImportSpecifier(join(here, "..", "packages", "core", "dist", "src", "index.js"))
 );
 const { detectPressurePatterns, gateApproval } = core;
 
