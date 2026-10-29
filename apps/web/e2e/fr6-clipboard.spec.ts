@@ -54,9 +54,14 @@ test("FR6-1 writeText receives the exact approved draft", async ({ page, context
   await page.locator("#btn-copy").click();
   const captured = await writes(page);
   const snap = await state(page, id);
+  const readback = await page.evaluate(() => navigator.clipboard.readText());
+  // Boundary A: the argument writeText received.
   expect(captured).toEqual([DRAFT]);
   expect(snap.draft?.text).toBe(DRAFT);
   expect(captured[0]).toBe(snap.draft?.text);
+  // Boundary B, this Linux Chromium only: native readback is exact, including LF.
+  expect(readback).toBe(DRAFT);
+  expect(readback).toBe(captured[0]);
 });
 
 test("FR6-4 copy stays unused until a fresh explicit approval", async ({ page, context }) => {
