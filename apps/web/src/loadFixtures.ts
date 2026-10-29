@@ -37,7 +37,7 @@ export const WEB_ROOT = findWebRoot(here);
 
 export function parseTranscript(text: string): TranscriptSegment[] {
   const out: TranscriptSegment[] = [];
-  for (const line of text.split("\n")) {
+  for (const line of text.split(/\r\n|\n|\r/)) {
     const m = line.match(/^\[(\d{2}:\d{2})\]\s+([^:]+):\s*(.*)$/);
     if (!m || m[1] === undefined || m[2] === undefined || m[3] === undefined) {
       continue;
