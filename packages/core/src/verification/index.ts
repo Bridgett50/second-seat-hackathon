@@ -30,11 +30,11 @@ export interface VerificationPoint {
 /** The fixed points, in pipeline order. VERIFICATION.md mirrors this list (a test keeps them in sync). */
 export const VERIFICATION_POINTS: readonly VerificationPoint[] = [
   {
-    when: "After redaction, before the owner's approval preview",
+    when: "After the owner reviews the redaction preview, before analysis is dispatched",
     file: "packages/core/src/verification/verifyRedaction.ts",
     check: "verifyRedaction",
     builtBy: "Second Seat (pattern adapted from Meta legal-agent-workshop)",
-    onFailure: "Blocked: nothing is shown for approval or sent; feedback names span index and label",
+    onFailure: "Blocked: the preview can already be on screen; analysis dispatch does not proceed; feedback names span index and label",
   },
   {
     when: "After the brief is generated, before it is presented as source-backed",

@@ -73,7 +73,7 @@ describe("B7 claims reconciliation", () => {
     expect(README).toContain("pnpm --filter @second-seat/web serve");
     expect(README).toContain("http://localhost:4173/session");
   });
-  it("B7-11 founder story, observations, URLs remain pending", () => {
+  it("B7-11 founder story is supplied; observations and video URLs stay pending", () => {
     expect(README).toMatch(/Founder story: done/);
     expect(README).toMatch(/User observations: PENDING/);
     expect(README).toMatch(/Video URLs: PENDING/);

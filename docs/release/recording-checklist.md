@@ -59,4 +59,4 @@ while true; do scripts/warmup.sh glimmer; sleep 240; done
 python3 -m modal app stop second-seat-glimmer
 ```
 
-On-screen date note: the Oct 28 live recording at `0365fdb` still shows the contract date "November 15" masked as `[REDACTED_date_of_birth]`, because that run used the previous prompt. PR #116 leaves ordinary meeting dates unmasked. Rehearsals of that fix passed; it was not a new live model call. The live endpoint uses the new prompt only after that re-freeze is deployed. See README "Known Issues". Label any clip of the Oct 28 run as a recorded run.
+On-screen date note: the Oct 28 owner-attested run summary at `0365fdb` still shows the contract date "November 15" masked as `[REDACTED_date_of_birth]`, because that run used the previous prompt. PR #116 leaves ordinary meeting dates unmasked. The #116 rehearsal is an owner-attested live call, not an independently verified summary in this repo, and it is not a screen-recorded video. The live endpoint uses the new prompt only after that re-freeze is deployed. See README "Known Issues".
