@@ -106,6 +106,6 @@ These are human tasks. They are not done by tests or by this repair:
 - Keep user tryouts and the video URL pending until she supplies them.
 - Review any X post herself before it is posted. Nothing here sends it.
 
-Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This history's token usage was not reported here.
+Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This history's token usage was not reported here. Bridgett Sanders directed the work and made hand edits. Cursor implemented the FR1–FR10 repairs; Grok and Codex reviewed the work. Those commit counts name the git author. They are not a line-by-line proof of which model wrote each line.
 
 License: MIT. See [LICENSE](LICENSE).
