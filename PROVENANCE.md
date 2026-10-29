@@ -120,3 +120,9 @@ unchanged), and at most 50 guidance entries per meeting (the 51st returns
 redacted. `packages/core/src/t2/redaction.ts` `EMAIL_PATTERN` was bounded
 (local part 1-64, domain 1-253, TLD 2-24) to stop quadratic backtracking on
 long non-email input; core behavior on normal emails is unchanged.
+
+### Review fix B-4 (Oct 29, 2026)
+
+A refused Send now renders its reason in `#send-notice` (role="alert") next to the Send
+button (snapshot field `sendNotice`). Written by Muse Code on meta-models/muse-spark-open-1026
+via Baseten (owner-approved after the Meta credits ran out).

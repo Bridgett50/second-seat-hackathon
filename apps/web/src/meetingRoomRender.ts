@@ -229,6 +229,9 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
     sendNote +
     `<div><button type="button" id="approve" aria-label="${esc(A11Y_LABELS.approve)}" data-mr-action="approve"${dis}>Approve</button> ` +
     `<button type="button" id="send" aria-label="${esc(A11Y_LABELS.send)}" data-mr-action="send">Send (test fake transport)</button></div>` +
+    (snap.sendNotice
+      ? `<p id="send-notice" role="alert" class="mr-send-notice">${esc(snap.sendNotice)}</p>`
+      : "") +
     `</section>`
   );
 }

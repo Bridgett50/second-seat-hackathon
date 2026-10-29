@@ -104,6 +104,8 @@ export type MeetingRoomSnapshot = {
   readonly approvalNote: string | null;
   readonly copyText: string | null;
   readonly mailtoHref: string | null;
+  /** Visible notice for a refused Send; null otherwise. */
+  readonly sendNotice: string | null;
 };
 
 export type MeetingRoomActionResult = {
@@ -198,7 +200,7 @@ export function createMeetingRoomService(opts?: {
     lastActive.delete(storeKey);
   }
 
-  function snap(roomId: string, entry: RoomEntry, view: TwinRoomView): MeetingRoomSnapshot {
+  function snap(roomId: string, entry: RoomEntry, view: TwinRoomView, sendNotice: string | null = null): MeetingRoomSnapshot {
     const current = entry.demo?.current() ?? null;
     return {
       roomId,
@@ -218,6 +220,7 @@ export function createMeetingRoomService(opts?: {
       approvalNote: entry.room.approvalNote(),
       copyText: entry.room.copyText(),
       mailtoHref: entry.room.mailtoHref(),
+      sendNotice,
     };
   }
 
@@ -310,7 +313,7 @@ export function createMeetingRoomService(opts?: {
           return {
             status: 403,
             body: {
-              snapshot: snap(roomId, entry, entry.room.view()),
+              snapshot: snap(roomId, entry, entry.room.view(), SEND_DISABLED_REASON),
               announcements: [SEND_DISABLED_REASON],
             },
           };
@@ -318,10 +321,11 @@ export function createMeetingRoomService(opts?: {
         const before = entry.room.view();
         const outcome = await entry.room.send();
         const after = entry.room.view();
+        const notice = outcome.ok ? null : (outcome.reason || "Send was refused.");
         return {
           status: 200,
           body: {
-            snapshot: snap(roomId, entry, after),
+            snapshot: snap(roomId, entry, after, notice),
             announcements: diffAnnouncements(before, after, {
               sendReason: outcome.reason,
             }),
