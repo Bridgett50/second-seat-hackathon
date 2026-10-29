@@ -12,7 +12,7 @@ throws), it blocks and says why. It never passes silently.
 
 | When | File | Check | Built by | On failure |
 |---|---|---|---|---|
-| After redaction, before the owner's approval preview | `packages/core/src/verification/verifyRedaction.ts` | `verifyRedaction` | Second Seat (pattern adapted from Meta legal-agent-workshop) | Blocked: nothing is shown for approval or sent; feedback names span index and label |
+| After the owner reviews the redaction preview, before analysis is dispatched | `packages/core/src/verification/verifyRedaction.ts` | `verifyRedaction` | Second Seat (pattern adapted from Meta legal-agent-workshop) | Blocked: the preview can already be on screen; analysis dispatch does not proceed; feedback names span index and label |
 | After the brief is generated, before it is presented as source-backed | `packages/core/src/verification/verifyBrief.ts` | `verifyBrief` | Second Seat (pattern adapted from Meta legal-agent-workshop) | Blocked on structure or dangling citations; heuristic findings escalate the entry to the owner |
 | After the support judge grades each entry, before an entry is marked verified | `packages/core/src/verification/verifyClaims.ts` | `verifyClaims` | Second Seat (pattern adapted from Meta legal-agent-workshop) | Blocked: partial/unsupported, missing, or unreadable verdicts (fail-closed) |
 

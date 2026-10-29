@@ -64,7 +64,7 @@ describe("C8 claims reconciliation", () => {
     expect(VIDEO).toMatch(/ONE meeting/);
     expect(rows.join("\n")).not.toMatch(/live analysis/i);
   });
-  it("C8-8 human evidence stays pending; nothing invented", () => {
+  it("C8-8 founder story is supplied; user observations and video stay pending", () => {
     expect(README).toMatch(/Founder story: done/);
     expect(README).toMatch(/User observations: PENDING/);
     expect(README).toMatch(/Video URLs: PENDING/);

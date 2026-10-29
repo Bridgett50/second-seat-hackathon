@@ -185,7 +185,7 @@ describe("D6 acceptance ledger", () => {
     }
   });
 
-  it("D6-5: founder/customer/partner facts remain marked pending.", () => {
+  it("D6-5: founder story is supplied; user observations, video, and partner facts stay pending where marked", () => {
     expect(README).toMatch(/Founder story: done/);
     expect(README).toMatch(/User observations: PENDING/);
     expect(README).toMatch(/Video URLs: PENDING/);

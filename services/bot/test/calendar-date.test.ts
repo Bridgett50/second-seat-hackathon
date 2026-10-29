@@ -1,4 +1,6 @@
-// Ordinary meeting dates stay in the text. A stated date of birth is still
+// The November 15 example below has no year and stays unmasked. Offline
+// MockRedactor still masks a fully specified ordinary date such as
+// "March 4, 2027" as date_of_birth. A stated date of birth is still
 // masked, and names, phones, and emails are still masked. No model calls.
 import { describe, expect, it } from "vitest";
 import {
@@ -64,5 +66,10 @@ describe("calendar dates vs dates of birth", () => {
     expect(redacted.maskedText).toContain("[REDACTED_person]");
     expect(redacted.maskedText).toContain("[REDACTED_phone]");
     expect(redacted.maskedText).toContain("[REDACTED_email]");
+  });
+
+  it("offline fixture still masks a fully specified ordinary date", async () => {
+    const redacted = await new MockRedactor().redactText("Delivery is March 4, 2027.");
+    expect(redacted.maskedText).toBe("Delivery is [REDACTED_date_of_birth].");
   });
 });

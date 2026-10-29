@@ -56,8 +56,7 @@ When the owner acts (approves, re-approves, or corrects and re-approves):
   hash.
 - Values minted under any earlier approval stay dead. Resuming never revives
   an old approval.
-- The run continues from the stored state, with exactly one send per
-  approval and no replay of earlier attempts.
+- The run continues from the stored state. A still-valid approval of the current text can authorize more than one dispatch attempt, including a retry. Each attempt checks that the approval is still valid. This is not an exactly-once send.
 
 ## Attribution
 
