@@ -29,7 +29,24 @@ async function outbound(page: Page): Promise<string[]> {
   return ((await res.json()).analyzerCalls ?? []) as string[];
 }
 
+function foreignHost(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const host = parsed.hostname;
+  if (host === "127.0.0.1" || host === "localhost" || host === "::1") return null;
+  return host;
+}
+
 test("FR9 offline synthetic transcript reaches copy without a provider call", async ({ page, context }) => {
+  const requested: string[] = [];
+  page.on("request", (request) => {
+    requested.push(request.url());
+  });
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.addInitScript(() => {
     const bag = window as unknown as { __writes: string[] };
@@ -64,12 +81,20 @@ test("FR9 offline synthetic transcript reaches copy without a provider call", as
 
   await page.locator("#btn-approve").click();
   await page.locator("#btn-analyze").click();
-  await expect(page.locator("#session-state")).toContainText(/Review required|Needs owner review|Blocked|Error/, {
-    timeout: 15000,
-  });
+  await expect(page.locator("#session-state")).toHaveText(
+    "Review required — check the redacted preview, then approve.",
+    { timeout: 15000 },
+  );
   const leaked = (await outbound(page)).slice(before.length);
   expect(leaked.some((call) => call.includes(EMAIL) || call.includes(PHONE))).toBe(false);
-  expect(await page.locator("#draft-text").count()).toBeGreaterThanOrEqual(0);
+  expect(await page.locator("#draft-text").inputValue()).toBe("");
+  await expect(page.locator("#btn-copy")).toBeDisabled();
+  const blockedRes = await page.request.get(`/api/session/state?sessionId=${encodeURIComponent(id)}`);
+  expect(blockedRes.ok()).toBe(true);
+  const blocked = await blockedRes.json();
+  expect(blocked.state).toBe("review_required");
+  expect(blocked.result).toBeNull();
+  expect(blocked.verification?.blocked).toBe(true);
 
   const corrected = masked.split(EMAIL).join("[REDACTED_email]");
   await preview.fill(corrected);
@@ -108,7 +133,14 @@ test("FR9 offline synthetic transcript reaches copy without a provider call", as
   await page.locator("#btn-copy").click();
   const writes = await page.evaluate(() => (window as unknown as { __writes?: string[] }).__writes ?? []);
   expect(writes).toEqual([DRAFT]);
-  expect(page.url()).toContain(id === id ? "" : "");
+  const sameRes = await page.request.get(`/api/session/state?sessionId=${encodeURIComponent(id)}`);
+  expect(sameRes.ok()).toBe(true);
+  const same = await sameRes.json();
+  expect(same.state).toBe("completed");
+  expect(same.draft?.text).toBe(DRAFT);
+  expect(same.draft?.approved).toBe(true);
+  expect(requested.length).toBeGreaterThan(0);
+  expect(requested.map(foreignHost).filter((host) => host !== null)).toEqual([]);
 
   await page.locator("#draft-text").fill(`${DRAFT} extra`);
   await expect(page.locator("#btn-copy")).toBeDisabled();
