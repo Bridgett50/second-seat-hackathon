@@ -266,6 +266,18 @@ export function createMeetingRoomService(opts?: {
           break;
         case "demo-next": {
           if (entry.demo === null) return bad("Demo is not enabled for this room.");
+          if (
+            entry.demo.current()?.id === "demo-send" &&
+            (!meetingRoomFakeSendAllowed(env, headers) || !entry.testMode)
+          ) {
+            return {
+              status: 403,
+              body: {
+                snapshot: snap(roomId, entry, entry.room.view()),
+                announcements: [SEND_DISABLED_REASON],
+              },
+            };
+          }
           const step = await entry.demo.next();
           const after = entry.room.view();
           const announcements = diffAnnouncements(before, after);

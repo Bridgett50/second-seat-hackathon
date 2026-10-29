@@ -9,6 +9,16 @@ import { readFileSync } from "node:fs";
 import { loadDemo, WEB_ROOT } from "./loadFixtures.js";
 import { findAiSelf } from "./theme.js";
 import { renderBriefPage, renderSessionPage } from "./render.js";
+import {
+  createMeetingRoomService,
+  MEETING_ROOM_API,
+  MEETING_ROOM_PATH,
+  MEETING_ROOM_POST_FIELDS,
+} from "./meetingRoom.js";
+import {
+  renderMeetingRoomBody,
+  renderMeetingRoomPage,
+} from "./meetingRoomRender.js";
 
 const PORT = Number(process.env.PORT ?? 4173);
 /** Loopback only. The demo process does not listen on other interfaces. */
@@ -54,6 +64,7 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/session/draft/reject": new Set(["sessionId", "expectedRevision"]),
   "/api/session/invalidate": new Set(["sessionId", "scope", "expectedRevision"]),
   "/api/session/pressure-review": new Set(["sessionId", "itemId", "expectedRevision", "assessmentId", "reviewed"]),
+  [MEETING_ROOM_API]: new Set(MEETING_ROOM_POST_FIELDS),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -269,6 +280,7 @@ export function createWebServer(deps?: WebServerDeps) {
       : null;
   const liveAvailable = liveStore !== null;
   const sessions = routeSessions(offlineStore, liveStore);
+  const meetingRoom = createMeetingRoomService();
   const gate = deps?.gate ?? createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
   const sent: { text: string } = deps?.lastSent ?? { text: "" };
   const sender =
@@ -321,6 +333,18 @@ export function createWebServer(deps?: WebServerDeps) {
         aiSelfSrc: aiSelf?.url ?? null,
       });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(html);
+      return;
+    }
+    if (
+      req.method === "GET" &&
+      (url.pathname === MEETING_ROOM_PATH || url.pathname === `${MEETING_ROOM_PATH}/`)
+    ) {
+      const html = renderMeetingRoomPage(meetingRoom.open(url.search, req.headers));
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      });
       res.end(html);
       return;
     }
@@ -383,6 +407,15 @@ export function createWebServer(deps?: WebServerDeps) {
             return;
           }
           const body = asRecord(parsed);
+          if (url.pathname === MEETING_ROOM_API) {
+            void meetingRoom.act(body ?? {}, req.headers).then((r) =>
+              json(res, r.status, {
+                ...r.body,
+                html: r.body.snapshot ? renderMeetingRoomBody(r.body.snapshot) : null,
+              }),
+            );
+            return;
+          }
           if (url.pathname === "/api/prepare") {
             const text = body?.["text"];
             if (typeof text !== "string" || text === "") {
