@@ -67,7 +67,7 @@ function meetingSection(snap: MeetingRoomSnapshot): string {
     )
     .join("");
   const restored = snap.restored
-    ? `<p>Restored from the shared room store (draft and send state survive reloads; approval never does).</p>`
+    ? `<p>Restored from the shared room store (draft, send state and approval stay while this server keeps the room).</p>`
     : "";
   return (
     `${sectionOpen("meeting")}${esc(headingFor("meeting", snap))}</h2>` +

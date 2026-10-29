@@ -145,3 +145,10 @@ demo. Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
 The `mr_store` cookie now carries `Secure` except for plain-http loopback requests
 (`meetingRoomSetCookie` in apps/web/src/meetingRoom.ts). Written by Muse Code on
 meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fix R2-1 and owner decision MR-G7 (Oct 29, 2026)
+
+Bridgett confirmed MR-G7 as an owner decision (Oct 29, 4:55 PM CT): approval stays on a
+same-browser reopen while the server keeps the room. The restored-room line now says so
+("draft, send state and approval stay while this server keeps the room") instead of claiming
+approval never survives. Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
