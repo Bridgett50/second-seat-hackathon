@@ -16,7 +16,7 @@ As a small business owner, my livelihood depends on vendor calls. Just last mont
 
 I caught the difference, emailed the vendor, and he corrected it. But it made me realize: what happens on the weeks when I don't catch it? What happens to the business owner who is exhausted, juggling ten other things, and just trusts the written quote or an AI summary to be accurate? They lose money. They miss the hidden price increase, the conditional deadline, or the liability shift.
 
-When I looked for an AI meeting assistant, I wanted one that would keep the financial details I have to act on, and that would not make me send private client data, vendor names, and proprietary numbers to a cloud service. That is my requirement, not a finding about every other product.
+In the meeting assistants I tried, I hit two problems. They summarized the whole call and missed the specific financial details I actually needed to act on. And to get those summaries, I had to send private client data, vendor names, and proprietary numbers to someone else's cloud. As a business owner, that was a privacy risk I couldn't take.
 
 So I built Second Seat for myself first. The idea predates this hackathon; this week's build is the live engine. It takes the messy transcript, uses Meta's open-weights model (Glimmer) on GPU hardware I control to mask the supported sensitive-data categories, and asks for my explicit approval. I still review every mask. This is not a guarantee that every sensitive detail is gone. Only then does it use Meta's Spark model to hand me a bulleted brief of what was offered, what was asked, and what needs a decision—with every single claim cited back to the transcript.
 
@@ -41,7 +41,7 @@ SECOND_SEAT_TEST_MODE=1 pnpm --filter @second-seat/web serve
 Open http://localhost:4173/session. The header has:
 
 - **Mode: Offline | Live (Glimmer + Spark).** Offline is the default for every session. Offline redaction and briefs come from deterministic local code, not from Glimmer or Spark, and the page says "Offline demo".
-- **Demo Mode.** A streamlined view for recording: a step bar (Paste, Redact, approve the redacted text, Analyze, approve the draft, Copy), larger action buttons, and the payload panel tucked away. Owner approval is unchanged. Demo Mode is presentation only. `SECOND_SEAT_TEST_MODE=1` is what forces offline. Dedicated sealed runners exist in the repo; they are not authorized and have not been run here. That does not promise that no tracked script can ever read a sealed path. You still click Approve on the redacted text and Approve draft on the reply. Add `?demo=1` to the URL to start with it on.
+- **Demo Mode.** A streamlined view for recording: a step bar (Paste, Redact, approve the redacted text, Analyze, approve the draft, Copy), larger action buttons, and the payload panel tucked away. Demo Mode is presentation only; owner approval is unchanged. You still click Approve on the redacted text and Approve draft on the reply. Add `?demo=1` to the URL to start with it on.
 
 Live mode (Glimmer on Modal, then Spark) is available only when the server is started with all three of these, and never when `SECOND_SEAT_TEST_MODE=1`:
 

@@ -143,3 +143,7 @@ That repository publishes no license file (checked 2026-10-28; GitHub reports
 no license). So **no code or prose is copied**. This is an independent
 TypeScript implementation of the publicly described pattern, credited here
 and in each module header.
+
+## Demo Mode is not the offline switch
+
+Demo Mode is presentation only. `SECOND_SEAT_TEST_MODE=1` is what forces offline, even when live credentials are present. Dedicated sealed runners exist in the repo. They are not authorized and have not been run here. That does not promise that no tracked script can ever read a sealed path.
