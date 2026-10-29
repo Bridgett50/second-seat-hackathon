@@ -54,6 +54,34 @@ Then choose **Live** in the header, or open http://localhost:4173/session?mode=l
 
 The image / SAM path is experimental. It is hidden from the UI and makes no calls unless `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`.
 
+## Meeting room demo walkthrough
+
+The twin meeting room has a guided demo that walks all nine steps of the
+owner flow against synthetic data only. Run the headless check first:
+
+```sh
+node scripts/meeting-room-demo.mjs
+```
+
+Then start the server locally on loopback and open the live page:
+
+```sh
+SECOND_SEAT_TEST_MODE=1 pnpm --filter @second-seat/web serve
+```
+
+Open `http://localhost:4173/meeting-room?demo=1` and press Next (or → / n;
+r restarts) through the nine steps. Send uses a fake transport that only
+works with `SECOND_SEAT_TEST_MODE=1` on a loopback Host and is refused
+everywhere else; never set it on Render. The Playwright suite covers the
+same flow in a real browser:
+
+```sh
+pnpm --filter @second-seat/web exec playwright test -c playwright.meeting-room.config.ts
+```
+
+It drives system Chrome via `PLAYWRIGHT_CHROME_PATH` (default
+`/usr/bin/google-chrome`).
+
 ## Security
 
 The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-run sessions and stopped right after (`modal app stop second-seat-glimmer -y`, 0 containers). The public link is demo-only.

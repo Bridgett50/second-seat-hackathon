@@ -87,3 +87,25 @@ None found (Opus copy check, Oct 29, 2026).
 - Bridgett50 (GitHub): 96 commits, 81 of them merge commits.
 - Cursor Agent: 60 commits.
 - Grok Bot: 10 commits.
+
+## Session B: meeting room page (written fresh in the event repo, Oct 29, 2026)
+
+These files were written fresh in this repo on Oct 29, 2026 by Muse Code
+(sessions B1–B3 via scripts/muse_pr.sh); behavior follows holo PR #6 (holo
+main 8499e74: meeting-room.tsx, page.tsx, demo-flow.spec.ts, demo-e2e
+script, README) as a spec only; no holo code copied; the page drives the
+twin room only through services/bot/src/t2-room.ts.
+
+- apps/web/src/meetingRoom.ts
+- apps/web/src/meetingRoomRender.ts
+- apps/web/src/server.ts (routes added)
+- apps/web/test/meeting-room-gate.test.ts
+- apps/web/test/meeting-room-imports.test.ts
+- apps/web/test/meeting-room-render.test.ts (T17-6)
+- apps/web/test/meeting-room-demo-docs.test.ts (T18-6)
+- apps/web/test/meeting-room-deploy-guard.test.ts
+- apps/web/playwright.meeting-room.config.ts
+- apps/web/e2e-meeting-room/meeting-room.spec.ts
+- scripts/meeting-room-demo.mjs
+- README.md (walkthrough section)
+- services/bot/test/t2-port-wiring.test.ts (T2P-6)
