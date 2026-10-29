@@ -2,7 +2,7 @@
 
 Ported Oct 29, 2026 by Muse Code (muse-spark-1.3 via scripts/muse_pr.sh) from
 Bridgett50/loving-grace-holo-demo PR #6 (https://github.com/Bridgett50/loving-grace-holo-demo/pull/6),
-merged as holo main `8499e74`. PR #6 was built during the hackathon (Oct 26–Nov 4, 2026).
+merged as holo main `8499e74`. PR #6 was built on Oct 29, 2026.
 SHAs below are the holo commits that touched each source file.
 
 ## Ported core (packages/core/src/t2/ ← holo second-seat/packages/core/src/t2/)
