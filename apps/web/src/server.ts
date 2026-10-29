@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { createPrivacyGate, type PrivacyGate } from "@second-seat/bot/dist/src/private/gate.js";
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
@@ -12,8 +13,10 @@ import { renderBriefPage, renderSessionPage } from "./render.js";
 import {
   createMeetingRoomService,
   MEETING_ROOM_API,
+  MEETING_ROOM_COOKIE,
   MEETING_ROOM_PATH,
   MEETING_ROOM_POST_FIELDS,
+  meetingRoomStoreKey,
 } from "./meetingRoom.js";
 import {
   renderMeetingRoomBody,
@@ -340,11 +343,18 @@ export function createWebServer(deps?: WebServerDeps) {
       req.method === "GET" &&
       (url.pathname === MEETING_ROOM_PATH || url.pathname === `${MEETING_ROOM_PATH}/`)
     ) {
-      const html = renderMeetingRoomPage(meetingRoom.open(url.search, req.headers));
-      res.writeHead(200, {
+      const storeKey = meetingRoomStoreKey(req.headers.cookie);
+      const key = storeKey ?? randomUUID();
+      const html = renderMeetingRoomPage(meetingRoom.open(url.search, req.headers, key));
+      const headers: Record<string, string> = {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
-      });
+      };
+      if (storeKey === null) {
+        headers["set-cookie"] =
+          `${MEETING_ROOM_COOKIE}=${key}; Path=/meeting-room; HttpOnly; SameSite=Strict; Max-Age=86400`;
+      }
+      res.writeHead(200, headers);
       res.end(html);
       return;
     }
@@ -408,12 +418,15 @@ export function createWebServer(deps?: WebServerDeps) {
           }
           const body = asRecord(parsed);
           if (url.pathname === MEETING_ROOM_API) {
-            void meetingRoom.act(body ?? {}, req.headers).then((r) =>
-              json(res, r.status, {
-                ...r.body,
-                html: r.body.snapshot ? renderMeetingRoomBody(r.body.snapshot) : null,
-              }),
-            );
+            void meetingRoom
+              .act(body ?? {}, req.headers)
+              .then((r) =>
+                json(res, r.status, {
+                  ...r.body,
+                  html: r.body.snapshot ? renderMeetingRoomBody(r.body.snapshot) : null,
+                }),
+              )
+              .catch(() => json(res, 500, { error: "meeting room action failed" }));
             return;
           }
           if (url.pathname === "/api/prepare") {

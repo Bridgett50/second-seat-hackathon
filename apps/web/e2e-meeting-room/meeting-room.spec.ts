@@ -106,3 +106,23 @@ test("C7-owner-flow-guide-takeover-approve-send-evidence", async ({ page }) => {
   await page.locator("#takeover").click();
   await expect(page.getByText("You took over. The twin is paused.")).toBeVisible();
 });
+
+test("C8-reload-restores-the-room-in-the-same-browser", async ({ page, browser }) => {
+  await page.goto("/meeting-room");
+  await expect(page.locator("#mr-meeting-heading")).toBeVisible();
+  await page.locator("#stream-next").click();
+  await expect(page.locator("#mr-transcript li")).toHaveCount(1);
+  const unique = `c8-reload-probe-${Date.now()}`;
+  await page.locator("#package-editor").fill(unique);
+  await page.locator("#package-save").click();
+  await expect(page.locator("#package-editor")).toHaveValue(unique);
+  await page.reload();
+  await expect(page.getByText("Restored from the shared room store")).toBeVisible();
+  await expect(page.locator("#package-editor")).toHaveValue(unique);
+  const fresh = await browser.newContext();
+  const other = await fresh.newPage();
+  await other.goto("/meeting-room");
+  await expect(other.locator("#package-editor")).not.toHaveValue(unique);
+  await expect(other.getByText("Restored from the shared room store")).toHaveCount(0);
+  await fresh.close();
+});

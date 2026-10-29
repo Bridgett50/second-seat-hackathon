@@ -1,9 +1,10 @@
 // Written fresh in the event repo on Oct 29, 2026 by Muse Code; behavior
 // follows holo PR #6 (8499e74); no holo code copied.
 //
-// Socket-free meeting room service (no HTML in this session). One shared
-// in-memory room store per service so a reopened room restores its state; a
-// fake transport that only records bodies (no network ever); and a per-request
+// Socket-free meeting room service (no HTML in this session). One in-memory
+// room store per store key (one per browser via cookie) so a reopened room
+// restores its own state without leaking into other browsers; a fake
+// transport that only records bodies (no network ever); and a per-request
 // fake-send gate (exact "1" test mode plus a loopback host).
 
 import { randomUUID } from "node:crypto";
@@ -27,6 +28,34 @@ import {
 export const MEETING_ROOM_PATH = "/meeting-room";
 export const MEETING_ROOM_API = "/api/meeting-room";
 export const MEETING_ROOM_POST_FIELDS = ["roomId", "action", "text", "id"] as const;
+
+/** Cookie carrying one browser's meeting-room store key. */
+export const MEETING_ROOM_COOKIE = "mr_store";
+
+const STORE_KEY_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Read the meeting-room store key from a Cookie header. Returns the
+ * `mr_store` value only when it is a UUID, else null (absent, malformed,
+ * or duplicated-then-joined headers included).
+ */
+export function meetingRoomStoreKey(
+  cookieHeader: string | string[] | undefined,
+): string | null {
+  const raw = Array.isArray(cookieHeader) ? cookieHeader.join("; ") : (cookieHeader ?? "");
+  for (const part of raw.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== MEETING_ROOM_COOKIE) continue;
+    let value = part.slice(eq + 1).trim();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1);
+    }
+    return STORE_KEY_RE.test(value) ? value : null;
+  }
+  return null;
+}
 
 /**
  * Server-side fake-send gate for one request. OFF BY DEFAULT: without exactly
@@ -73,7 +102,7 @@ export type MeetingRoomActionResult = {
 };
 
 export type MeetingRoomService = {
-  open(search: string, headers: IncomingHttpHeaders): MeetingRoomSnapshot;
+  open(search: string, headers: IncomingHttpHeaders, storeKey?: string): MeetingRoomSnapshot;
   act(
     body: Readonly<Record<string, unknown>>,
     headers: IncomingHttpHeaders,
@@ -99,9 +128,22 @@ export function createMeetingRoomService(opts?: {
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxRooms = opts?.maxRooms ?? 200;
-  const store: RoomStore = createInMemoryRoomStore();
+  const stores = new Map<string, RoomStore>();
   const sent: string[] = [];
   const rooms = new Map<string, RoomEntry>();
+
+  /** Store for one browser key, created on first use (cap 200, evict oldest). */
+  function storeFor(storeKey: string): RoomStore {
+    const existing = stores.get(storeKey);
+    if (existing !== undefined) return existing;
+    const created = createInMemoryRoomStore();
+    if (stores.size >= 200) {
+      const oldest = stores.keys().next();
+      if (!oldest.done) stores.delete(oldest.value);
+    }
+    stores.set(storeKey, created);
+    return created;
+  }
 
   function snap(roomId: string, entry: RoomEntry, view: TwinRoomView): MeetingRoomSnapshot {
     const current = entry.demo?.current() ?? null;
@@ -134,11 +176,11 @@ export function createMeetingRoomService(opts?: {
   }
 
   return {
-    open(search: string, headers: IncomingHttpHeaders): MeetingRoomSnapshot {
+    open(search: string, headers: IncomingHttpHeaders, storeKey = "default"): MeetingRoomSnapshot {
       const testMode = meetingRoomFakeSendAllowed(env, headers);
       const room = createTwinRoom({
         testMode,
-        store,
+        store: storeFor(storeKey),
         transport: async (body: string): Promise<void> => {
           sent.push(body);
         },

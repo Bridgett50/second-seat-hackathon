@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { IncomingHttpHeaders } from "node:http";
+import { randomUUID } from "node:crypto";
 import {
   createMeetingRoomService,
   meetingRoomFakeSendAllowed,
+  meetingRoomStoreKey,
   type MeetingRoomService,
 } from "../src/meetingRoom.js";
 
@@ -214,5 +216,60 @@ describe("meeting room fake-send gate", () => {
     expect(reopened.view.draft.body).toBe(before.view.draft.body);
     expect(reopened.view.draft.approved).toBe(false);
     expect(reopened.approvalNote).not.toBeNull();
+  });
+
+  it("MR-G8 different store keys are isolated and the same key restores", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const keyA = randomUUID();
+    const keyB = randomUUID();
+    const first = svc.open("", LOOPBACK, keyA);
+    expect(first.restored).toBe(false);
+    const roomId = first.roomId;
+    const guided = await svc.act(
+      { roomId, action: "guide", text: "per-browser persistence probe" },
+      LOOPBACK,
+    );
+    expect(guided.status).toBe(200);
+    await streamAllLines(svc, roomId, LOOPBACK);
+    const editedDraft = await svc.act(
+      { roomId, action: "edit-draft", text: "per-browser draft body probe" },
+      LOOPBACK,
+    );
+    expect(editedDraft.status).toBe(200);
+    const approved = await svc.act({ roomId, action: "approve" }, LOOPBACK);
+    expect(approved.body.snapshot?.view.draft.approved).toBe(true);
+    const before = (
+      await svc.act({ roomId, action: "state" }, LOOPBACK)
+    ).body.snapshot;
+    if (before === null) throw new Error("snapshot missing");
+    expect(before.view.transcript.length).toBeGreaterThan(0);
+    const sameKey = svc.open("", LOOPBACK, keyA);
+    expect(sameKey.roomId).not.toBe(roomId);
+    expect(sameKey.restored).toBe(true);
+    expect(sameKey.view.transcript).toEqual(before.view.transcript);
+    expect(sameKey.view.draft.body).toBe(before.view.draft.body);
+    const otherKey = svc.open("", LOOPBACK, keyB);
+    expect(otherKey.restored).toBe(false);
+    expect(otherKey.view.transcript).toHaveLength(0);
+    expect(otherKey.view.draft.body).not.toBe(before.view.draft.body);
+    expect(otherKey.view.guidance).not.toContain("per-browser persistence probe");
+  });
+
+  it("MR-G9 meetingRoomStoreKey accepts only a UUID cookie value", () => {
+    const id = randomUUID();
+    expect(meetingRoomStoreKey(undefined)).toBeNull();
+    expect(meetingRoomStoreKey("")).toBeNull();
+    expect(meetingRoomStoreKey("other=1")).toBeNull();
+    expect(meetingRoomStoreKey(`mr_store=${id}`)).toBe(id);
+    expect(meetingRoomStoreKey(`mr_store=${id.toUpperCase()}`)).toBe(
+      id.toUpperCase(),
+    );
+    expect(meetingRoomStoreKey(`other=1; mr_store=${id}; x=2`)).toBe(id);
+    expect(meetingRoomStoreKey([`mr_store=${id}`])).toBe(id);
+    expect(meetingRoomStoreKey("mr_store=not-a-uuid")).toBeNull();
+    expect(meetingRoomStoreKey("mr_store=")).toBeNull();
+    expect(meetingRoomStoreKey(`mr_store=${id}-extra`)).toBeNull();
+    expect(meetingRoomStoreKey(`mr_store=${id.slice(0, 8)}`)).toBeNull();
+    expect(meetingRoomStoreKey(`mr_store=${id}; mr_store=not-a-uuid`)).toBe(id);
   });
 });
