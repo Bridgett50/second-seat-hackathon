@@ -97,6 +97,7 @@ describe("meeting connector", () => {
     expect(store.approved(A, meetingId)).toBe(false);
     let calls = 0;
     const replayed = store.replay(
+      A,
       {
         ownerId: A.ownerId,
         meetingId,
@@ -143,42 +144,86 @@ describe("R134 reproductions", () => {
     const c = createMeetingConnector();
     const { meetingId } = c.createMeeting(A, "Synthetic scheduling note v1");
     const { generationId } = c.openSession(A);
+    const job = c.issueJob(A, meetingId, generationId);
     const cb: StoredCallback = {
-      ownerId: A.ownerId,
-      meetingId,
-      generationId,
-      authorityGeneration: c.authorityGeneration(A, meetingId),
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      meetingId: job.meetingId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
       artifact: "Synthetic answer v1",
     };
-    return { c, meetingId, generationId, cb };
+    return { c, meetingId, generationId, job, cb };
   }
 
   it("R134-1: a callback claiming another owner cannot execute replay transport", () => {
     const { c, cb } = setup();
     let calls = 0;
-    c.replay({ ...cb, ownerId: B.ownerId }, () => {
-      calls += 1;
-    });
+    expect(
+      c.replay(
+        A,
+        { ...cb, ownerId: B.ownerId },
+        () => {
+          calls += 1;
+        },
+      ).ran,
+    ).toBe(false);
     expect(calls).toBe(0);
+    expect(
+      c.replay(A, cb, () => {
+        calls += 1;
+      }).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
   });
 
   it("R134-2: a suspended generation cannot execute replay transport", () => {
-    const { c, cb, generationId } = setup();
+    const { c, meetingId, generationId, cb } = setup();
     let calls = 0;
     c.suspendGeneration(A, generationId);
-    c.replay(cb, () => {
-      calls += 1;
-    });
+    expect(
+      c.replay(A, cb, () => {
+        calls += 1;
+      }).ran,
+    ).toBe(false);
     expect(calls).toBe(0);
+    const fresh = c.openSession(A);
+    const job = c.issueJob(A, meetingId, fresh.generationId);
+    const live: StoredCallback = {
+      ...cb,
+      jobId: job.jobId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
+    };
+    expect(
+      c.replay(A, live, () => {
+        calls += 1;
+      }).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
   });
 
   it("R134-3: an unknown generation cannot execute replay transport", () => {
     const { c, cb } = setup();
     let calls = 0;
-    c.replay({ ...cb, generationId: "never-created" }, () => {
-      calls += 1;
-    });
+    expect(
+      c.replay(
+        A,
+        { ...cb, generationId: "never-created" },
+        () => {
+          calls += 1;
+        },
+      ).ran,
+    ).toBe(false);
     expect(calls).toBe(0);
+    expect(
+      c.replay(A, cb, () => {
+        calls += 1;
+      }).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
   });
 
   it("R134-4: editing source evidence rejects its older callback", () => {
@@ -192,7 +237,7 @@ describe("R134 reproductions", () => {
     const { c, generationId, cb } = setup();
     c.resolveCallback(A, cb);
     c.resolveCallback(A, cb);
-    expect(c.inbox(A, generationId).length).toBeLessThanOrEqual(1);
+    expect(c.inbox(A, generationId).length).toBe(1);
   });
 
   it("R134-6: documented IPv6 loopback accepts one injected fake transport", () => {
@@ -223,7 +268,7 @@ describe("R134 reproductions", () => {
     const { c, meetingId, cb } = setup();
     let calls = 0;
     c.revoke(A, meetingId);
-    c.replay(cb, () => {
+    c.replay(A, cb, () => {
       calls += 1;
     });
     expect(calls).toBe(0);
@@ -280,16 +325,16 @@ describe("M1 issued jobs", () => {
     const transport = () => {
       calls += 1;
     };
-    expect(c.replay({ ...base, ownerId: B.ownerId }, transport).ran).toBe(false);
+    expect(c.replay(A, { ...base, ownerId: B.ownerId }, transport).ran).toBe(false);
     expect(calls).toBe(0);
-    expect(c.replay({ ...base, generationId: "g-never-created" }, transport).ran).toBe(false);
+    expect(c.replay(A, { ...base, generationId: "g-never-created" }, transport).ran).toBe(false);
     expect(calls).toBe(0);
     const other = c.openSession(A);
     const suspended = c.issueJob(A, meetingId, other.generationId);
     c.suspendGeneration(A, other.generationId);
-    expect(c.replay(envelope(suspended, {}, suspended), transport).ran).toBe(false);
+    expect(c.replay(A, envelope(suspended, {}, suspended), transport).ran).toBe(false);
     expect(calls).toBe(0);
-    expect(c.replay(base, transport).ran).toBe(true);
+    expect(c.replay(A, base, transport).ran).toBe(true);
     expect(calls).toBe(1);
     expect(c.outboundCount()).toBe(1);
   });
@@ -303,7 +348,7 @@ describe("M1 issued jobs", () => {
     expect(c.inbox(A, generationId)).toEqual([]);
     let calls = 0;
     expect(
-      c.replay(oldCb, () => {
+      c.replay(A, oldCb, () => {
         calls += 1;
       }).ran,
     ).toBe(false);
@@ -314,7 +359,7 @@ describe("M1 issued jobs", () => {
     expect(c.resolveCallback(A, freshCb).delivered).toBe(true);
     expect(c.inbox(A, generationId)).toEqual(["answer v2"]);
     expect(
-      c.replay(freshCb, () => {
+      c.replay(A, freshCb, () => {
         calls += 1;
       }).ran,
     ).toBe(true);
@@ -344,18 +389,18 @@ describe("M1 issued jobs", () => {
       calls += 1;
     };
     expect(c.resolveCallback(A, env({ meetingId: m2 })).delivered).toBe(false);
-    expect(c.replay(env({ meetingId: m2 }), transport).ran).toBe(false);
+    expect(c.replay(A, env({ meetingId: m2 }), transport).ran).toBe(false);
     expect(c.resolveCallback(A, env({ generationId: g2 })).delivered).toBe(false);
-    expect(c.replay(env({ generationId: g2 }), transport).ran).toBe(false);
+    expect(c.replay(A, env({ generationId: g2 }), transport).ran).toBe(false);
     expect(c.resolveCallback(A, env({ authorityGeneration: 2 })).delivered).toBe(false);
-    expect(c.replay(env({ authorityGeneration: 2 }), transport).ran).toBe(false);
+    expect(c.replay(A, env({ authorityGeneration: 2 }), transport).ran).toBe(false);
     expect(c.resolveCallback(A, env({ sourceRevision: 2 })).delivered).toBe(false);
-    expect(c.replay(env({ sourceRevision: 2 }), transport).ran).toBe(false);
+    expect(c.replay(A, env({ sourceRevision: 2 }), transport).ran).toBe(false);
     expect(calls).toBe(0);
     expect(c.outboundCount()).toBe(0);
     const unknown = env({ jobId: "j-never-issued" });
     expect(c.resolveCallback(A, unknown).delivered).toBe(false);
-    expect(c.replay(unknown, transport).ran).toBe(false);
+    expect(c.replay(A, unknown, transport).ran).toBe(false);
     expect(calls).toBe(0);
     const valid = env({});
     const oldShape: StoredCallback = {
@@ -367,7 +412,7 @@ describe("M1 issued jobs", () => {
       artifact: valid.artifact,
     };
     expect(c.resolveCallback(A, oldShape).delivered).toBe(false);
-    expect(c.replay(oldShape, transport).ran).toBe(false);
+    expect(c.replay(A, oldShape, transport).ran).toBe(false);
     expect(calls).toBe(0);
     expect(c.resolveCallback(A, valid).delivered).toBe(true);
     expect(c.inbox(A, g1)).toEqual(["answer"]);
@@ -384,8 +429,8 @@ describe("M1 issued jobs", () => {
     const transport = () => {
       calls += 1;
     };
-    expect(c.replay(cb, transport).ran).toBe(true);
-    expect(c.replay(cb, transport).ran).toBe(false);
+    expect(c.replay(A, cb, transport).ran).toBe(true);
+    expect(c.replay(A, cb, transport).ran).toBe(false);
     expect(calls).toBe(1);
     expect(c.outboundCount()).toBe(1);
     const g2 = c.openSession(A).generationId;
@@ -393,7 +438,7 @@ describe("M1 issued jobs", () => {
     const cb2 = envelope(job2, { artifact: "answer 2" }, job2);
     expect(c.resolveCallback(A, cb2).delivered).toBe(true);
     expect(c.inbox(A, g2)).toEqual(["answer 2"]);
-    expect(c.replay(cb2, transport).ran).toBe(true);
+    expect(c.replay(A, cb2, transport).ran).toBe(true);
     expect(calls).toBe(2);
   });
 
@@ -409,7 +454,7 @@ describe("M1 issued jobs", () => {
       expect(c.inbox(A, generationId)).toEqual([]);
       let calls = 0;
       expect(
-        c.replay(cb, () => {
+        c.replay(A, cb, () => {
           calls += 1;
         }).ran,
       ).toBe(false);
@@ -426,6 +471,7 @@ describe("M1 issued jobs", () => {
       let calls = 0;
       expect(
         c.replay(
+          A,
           { ...cb, ownerId: B.ownerId },
           () => {
             calls += 1;
@@ -445,7 +491,7 @@ describe("M1 issued jobs", () => {
       const tampered = envelope(job, { authorityGeneration: job.authorityGeneration + 1 }, job);
       expect(c.resolveCallback(A, tampered).delivered).toBe(false);
       expect(
-        c.replay(tampered, () => {
+        c.replay(A, tampered, () => {
           calls += 1;
         }).ran,
       ).toBe(false);
@@ -461,7 +507,7 @@ describe("M1 issued jobs", () => {
       expect(c.resolveCallback(A, cb).delivered).toBe(false);
       let calls = 0;
       expect(
-        c.replay(cb, () => {
+        c.replay(A, cb, () => {
           calls += 1;
         }).ran,
       ).toBe(false);
@@ -477,7 +523,7 @@ describe("M1 issued jobs", () => {
       expect(c.resolveCallback(A, cb).delivered).toBe(false);
       let calls = 0;
       expect(
-        c.replay(cb, () => {
+        c.replay(A, cb, () => {
           calls += 1;
         }).ran,
       ).toBe(false);
@@ -543,5 +589,108 @@ describe("M1 issued jobs", () => {
       }),
     ).toThrow(MeetingDenied);
     expect(seen.length).toBe(stuck);
+  });
+});
+
+describe("M2 hardening", () => {
+  const UUID_SHAPE = /^[0-9a-f-]{36}$/;
+
+  function issuedEnvelope(c: ReturnType<typeof createMeetingConnector>, meetingId: string): {
+    generationId: string;
+    cb: StoredCallback;
+  } {
+    const { generationId } = c.openSession(A, meetingId);
+    const job = c.issueJob(A, meetingId, generationId);
+    const cb: StoredCallback = {
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      meetingId: job.meetingId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
+      artifact: "answer",
+    };
+    return { generationId, cb };
+  }
+
+  it("M2-B1: a transport that throws on first replay is never sent again", () => {
+    const c = createMeetingConnector();
+    const { meetingId } = c.createMeeting(A, "note");
+    const { cb } = issuedEnvelope(c, meetingId);
+    let calls = 0;
+    expect(() =>
+      c.replay(A, cb, () => {
+        calls += 1;
+        throw new Error("boom-transport");
+      }),
+    ).toThrow("boom-transport");
+    expect(calls).toBe(1);
+    expect(
+      c.replay(A, cb, () => {
+        calls += 1;
+      }).ran,
+    ).toBe(false);
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(0);
+    const { cb: fresh } = issuedEnvelope(c, meetingId);
+    expect(
+      c.replay(A, fresh, () => {
+        calls += 1;
+      }).ran,
+    ).toBe(true);
+    expect(calls).toBe(2);
+    expect(c.outboundCount()).toBe(1);
+  });
+
+  it("M2-B2a: a forged sequential-pattern envelope cannot replay", () => {
+    const c = createMeetingConnector();
+    const { meetingId } = c.createMeeting(A, "note");
+    const { generationId } = c.openSession(A, meetingId);
+    const job = c.issueJob(A, meetingId, generationId);
+    expect(job.jobId).toMatch(UUID_SHAPE);
+    expect(job.meetingId).toMatch(UUID_SHAPE);
+    expect(job.generationId).toMatch(UUID_SHAPE);
+    const forged: StoredCallback = {
+      jobId: "j-3",
+      ownerId: A.ownerId,
+      meetingId: "m-1",
+      generationId: "g-2",
+      authorityGeneration: 1,
+      sourceRevision: 1,
+      artifact: "x",
+    };
+    let calls = 0;
+    const transport = () => {
+      calls += 1;
+    };
+    expect(c.replay(B, forged, transport).ran).toBe(false);
+    expect(c.replay(A, forged, transport).ran).toBe(false);
+    expect(calls).toBe(0);
+    const real: StoredCallback = {
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      meetingId: job.meetingId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
+      artifact: "x",
+    };
+    expect(c.replay(A, real, transport).ran).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it("M2-B2b: another owner cannot replay a real issued envelope", () => {
+    const c = createMeetingConnector();
+    const { meetingId } = c.createMeeting(A, "note");
+    const { cb } = issuedEnvelope(c, meetingId);
+    let calls = 0;
+    const transport = () => {
+      calls += 1;
+    };
+    expect(c.replay(B, cb, transport).ran).toBe(false);
+    expect(calls).toBe(0);
+    expect(c.replay(A, cb, transport).ran).toBe(true);
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(1);
   });
 });

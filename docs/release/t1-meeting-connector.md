@@ -19,6 +19,31 @@ The connector is not mounted on the web server. Production dispatch throws `prod
 - The in-process fake adapter invokes the injected transport exactly once and propagates its errors; `http://127.0.0.1`, `http://localhost`, and bracketed `http://[::1]` each invoke the injected stub once, while non-loopback hosts, malformed URLs, unsupported schemes, and malformed fake targets invoke it zero times and throw `MeetingDenied`.
 - `apps/web/src/server.ts` does not import the meeting connector (asserted by the `T1 regression` test, which reads that file).
 
+## M2 hardening (Opus review fixes)
+
+- B1 fixed: `replay` marks the job dispatched (claimed) BEFORE calling the
+  transport. If the transport throws, the job moves to a terminal `failed`
+  state (never back to pending) and the error is rethrown, so a second
+  `replay` sends nothing.
+- B2 fixed: meeting, session/generation, and job IDs are `randomUUID()`
+  values, and `replay(principal, callback, transport)` requires the
+  principal via `requirePrincipal` with `principal.ownerId` equal to the
+  job's owner. A forged sequential-pattern envelope replays for nobody;
+  another owner cannot replay a real issued envelope.
+- B3 fixed: R134-1, R134-2, R134-3, and R134-5 are rebuilt on real issued
+  jobs (`openSession` + `issueJob`, tampering only the field under test),
+  each with a positive control; R134-5 asserts inbox length `toBe(1)`.
+- B4 fixed: `outboundCount()` advances only after the transport returns
+  successfully.
+- B5 remains OPEN (T2 item, not implemented): approval is bound to a
+  revision number, not a package hash.
+- B6 fixed: the dead `claimedOwnerId` branch in `act` is removed; the
+  parameter remains accepted and ignored — authorization stays on the
+  principal.
+
+API change: `replay(callback, transport)` is now
+`replay(principal, callback, transport)`.
+
 ## What is missing for integration
 
 These unit tests prove nothing about authenticated routes, saved workspaces, full network blocking, live models, or any real provider. No real HTTP is performed and no redirect is followed by the stub gate.
