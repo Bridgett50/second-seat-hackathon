@@ -41,9 +41,9 @@ Not recording-ready. FR1–FR3 are fixed and the offline script matches the exec
 | FR5-3 | CONTROL | PASS | File URL import of a path with a space and `#` returned 7 and ran once. Linux head `88b7664`. |
 | FR5-4 | CONTROL | PASS | Four forbidden spellings are refused by the guard predicates. Held-out wrappers exit 2 with no dataset read. No sealed file was opened. |
 | FR5-5 | CONTROL | PASS | Dev reports exit 0. A child with the guard file URL has `__sealedGuardInstalled`. |
-| FR6-1 | CONTROL | PASS | Linux Chromium: one `writeText`, exact LF draft. Head `401dc74`. |
-| FR6-2 | ENV | UNVERIFIED | Windows `G6-1g` readback was not run. |
-| FR6-3 | CONTROL | PASS | Comparator rejects word, line, space, punctuation, and bare-CR changes. |
+| FR6-1 | CONTROL | PASS | Linux boundary A only, on head `401dc74`: `writeText` argument equals the approved draft, including LF. Native readback was not asserted on that head. |
+| FR6-2 | ENV | UNVERIFIED | Windows native clipboard readback was not run. The LF-to-CRLF allowance was not exercised. |
+| FR6-3 | CONTROL | PASS | Comparator rejects word, line, space, punctuation, and bare-CR changes. This is not a native clipboard. |
 | FR6-4 | CONTROL | PASS | Zero `writeText` calls until a fresh approval. |
 | FR7-1 | RED | PASS | Parent report said a mutated checker missed rows. Head `c3b9894` says analytical baseline. |
 | FR7-2 | CONTROL | PASS | Pattern 14/14, spark 14/14, shield 14/14, gate 11/11, false alarms 0/16. Zero reference stays separate. |
@@ -70,7 +70,7 @@ Not recording-ready. FR1–FR3 are fixed and the offline script matches the exec
 | FR9-2 | CONTROL | PASS | Same spec. Email and phone are absent from analyzer calls before the correction. |
 | FR9-3 | CONTROL | PASS | Same spec. One analyzer call with the corrected text. Two entries. Zero pressure items. Claims `not_run`. Heading is "Needs owner review" because a line escalates. |
 | FR9-4 | CONTROL | PASS | Same spec. Each citation href matches one element. |
-| FR9-5 | CONTROL | PASS | Same spec. `writeText` equals the approved draft once. Same session. |
+| FR9-5 | CONTROL | PASS | Same spec, boundary A: `writeText` equals the approved draft once. Boundary B was not asserted on head `5d4c13e`. |
 | FR9-6 | CONTROL | PASS | Same spec. Editing the draft disables Copy. |
 | FR9-7 | DOC | DOCUMENTED | Scripts no longer tell the offline take to show "last chance" or to mask a phone that is already masked. |
 | FR9-8 | DOC | DOCUMENTED | Proof note `docs/release/fr9-offline-rehearsal.md`. No required `[seg-2]`. Take remains within 3:00. No video URL invented. |
@@ -79,8 +79,33 @@ Not recording-ready. FR1–FR3 are fixed and the offline script matches the exec
 | FR10-3 | CONTROL | PASS | `git diff --name-only 005201e HEAD` has no `config/live`, `redact.ts`, `muse.ts`, `glimmer_app.py`, prompt, schema, or redaction-eval scorer path. |
 | FR10-4 | CONTROL | PASS | Public pin file `config/live/glimmer-launch-config.json` still has prompt `287f1971…d1b5`, schema `fa3842b7…08ac`, scorer `ba0a0756…6481`. That file is not in the repair diff. Hashes were not recomputed from source in this step, and no sealed checksum was run. |
 | FR10-5 | CONTROL | PASS | Dev shield report on the FR7 head, analytical baseline labeled. No secret values printed. |
-| FR10-6 | ENV | UNVERIFIED | Final browser run on Bridgett's Windows machine was not executed. |
+| FR10-6 | ENV | UNVERIFIED | Final browser run on Bridgett's Windows machine was not executed. Both clipboard boundaries are UNVERIFIED there. |
 | FR10-7 | DOC | DOCUMENTED | Disposition table below. |
+
+## Clipboard boundaries
+
+Executed on Linux Chromium after the ledger's first draft, in `e2e/fr6-clipboard.spec.ts` and `e2e/fr9-synthetic.spec.ts`. Both commands exited 0 (3 tests).
+
+| Boundary | Linux | Windows |
+|---|---|---|
+| A. Argument passed to `navigator.clipboard.writeText` | PASS. Byte-exact match to the approved draft, including LF. FR6 draft `First synthetic line.\nSecond synthetic line.`. FR9 draft `Please send a corrected written quote. I have not accepted the deadline.` | UNVERIFIED. The spy was not run on Windows. |
+| B. Native OS clipboard readback | PASS on this Linux Chromium. `readText()` equaled the approved draft, including LF. No newline conversion occurred. | UNVERIFIED. The only allowed difference, LF to CRLF, was not observed because the native Windows clipboard was not read. |
+
+## RED assertion messages
+
+A failure counts only when the named assertion ran on the parent and failed. These are those messages.
+
+- FR1-1, FR1-2, FR1-3: `expect(sent.calls).toBe(0)` received `1`.
+- FR2-1, FR2-2: `expect(after.payload?.status).toBe("dispatched")` received `"prepared"`.
+- FR3-1: `expect(view.status).not.toBe("verified")` received `"verified"`.
+- FR3-2: `expect(view.title).not.toBe("Verified")` received `"Verified"`.
+- FR3-3: `expect(view.status).not.toBe("verified")` received `"verified"`.
+- FR3-6: warning message did not contain `"Claim support not checked."`.
+- FR3-7: `expect(state.verification.status).not.toBe("verified")` received `"verified"`, with state `completed`. An earlier run that stopped at `expectedRevision` never reached this assertion and is not RED evidence.
+- FR4-1: `expect(parsed).toEqual(ids(LF))` received `[]`.
+- FR4-3: `expect(segments.length).toBeGreaterThan(0)` received `0`.
+- FR4-4: `expect(fromLf).toEqual(fromCrlf)` failed because the CRLF row ended with an extra `""`.
+- FR7-1: `expect(result.report).toMatch(/analytical baseline \(all layers off\)/)` failed. The received report said a mutated checker missed seeded rows.
 
 ## R1–R16
 
@@ -123,5 +148,6 @@ On the machine Bridgett will record from, check out `cursor/fr9-synthetic-rehear
 2. `pnpm --filter @second-seat/core build`
 3. `pnpm --filter @second-seat/web exec playwright install chromium`
 4. `pnpm --filter @second-seat/web exec playwright test e2e/hero.spec.ts e2e/g6-rehearsal.spec.ts e2e/fr6-clipboard.spec.ts e2e/fr9-synthetic.spec.ts`
+5. Record the two clipboard boundaries separately. Boundary A is the string passed to `writeText`. Boundary B is the native Windows readback. The only allowed difference on B is LF becoming CRLF. Any boundary that does not run stays UNVERIFIED. A killed runner is not a pass.
 5. `node eval/shield-report.mjs --split dev` and `node eval/resistance-table.mjs --split dev` with no compatibility loader.
 6. Record pass and fail counts and the process exit code. A killed runner is not a pass. Do not call Linux results a Windows pass.

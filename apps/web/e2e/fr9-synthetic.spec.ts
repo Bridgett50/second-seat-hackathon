@@ -132,7 +132,9 @@ test("FR9 offline synthetic transcript reaches copy without a provider call", as
   await expect(page.locator("#btn-copy")).toBeEnabled();
   await page.locator("#btn-copy").click();
   const writes = await page.evaluate(() => (window as unknown as { __writes?: string[] }).__writes ?? []);
+  const readback = await page.evaluate(() => navigator.clipboard.readText());
   expect(writes).toEqual([DRAFT]);
+  expect(readback).toBe(DRAFT);
   const sameRes = await page.request.get(`/api/session/state?sessionId=${encodeURIComponent(id)}`);
   expect(sameRes.ok()).toBe(true);
   const same = await sameRes.json();
