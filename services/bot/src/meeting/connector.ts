@@ -346,12 +346,12 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
       }
       const meeting = meetings.get(event.meetingId);
       if (!meeting || meeting.ownerId !== owner.ownerId) return { appended: false };
+      if (!policyOpen(meeting)) return { appended: false };
       if (session.boundMeetingId === null) {
         session.boundMeetingId = event.meetingId;
       } else if (session.boundMeetingId !== event.meetingId) {
         return { appended: false };
       }
-      if (!policyOpen(meeting)) return { appended: false };
       session.transcriptLog.push(event.text);
       return { appended: true };
     },

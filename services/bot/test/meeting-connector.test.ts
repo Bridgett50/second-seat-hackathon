@@ -1112,4 +1112,102 @@ describe("T2 connector slice", () => {
   });
 });
 
+describe("M3 guards", () => {
+  it("M3-a another owner cannot replay A's approved exact package", async () => {
+    const c = createMeetingConnector();
+    const { meetingId } = c.createMeeting(A, "note");
+    const { generationId } = c.openSession(A);
+    const job = c.issueJob(A, meetingId, generationId);
+    const cb: StoredCallback = {
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      meetingId: job.meetingId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
+      artifact: "answer",
+    };
+    expect(c.resolveCallback(A, cb).delivered).toBe(true);
+    expect(c.approvePackage(A, job.jobId, packageHash(cb.artifact)).approved).toBe(true);
+    let calls = 0;
+    const transport = async () => {
+      calls += 1;
+    };
+    expect((await c.replay(B, cb, transport)).ran).toBe(false);
+    expect(calls).toBe(0);
+    expect((await c.replay(A, cb, transport)).ran).toBe(true);
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(1);
+  });
+
+  it("M3-b another owner cannot export A's approved package", async () => {
+    const c = createMeetingConnector();
+    const { meetingId } = c.createMeeting(A, "note");
+    const { generationId } = c.openSession(A);
+    const job = c.issueJob(A, meetingId, generationId);
+    const cb: StoredCallback = {
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      meetingId: job.meetingId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
+      artifact: "answer",
+    };
+    await approve(c, A, cb);
+    expect(() => c.exportApproved(B, job.jobId)).toThrow(MeetingDenied);
+    expect(c.exportApproved(A, job.jobId)).toBe("answer");
+  });
+
+  it("M3-c another owner cannot append a transcript line naming A's meeting from its own session", () => {
+    const c = createMeetingConnector();
+    const mA = c.createMeeting(A, "mA").meetingId;
+    const bGen = c.openSession(B).generationId;
+    expect(c.appendTranscript(B, bGen, { meetingId: mA, text: "forged" }).appended).toBe(false);
+    expect(c.transcript(B, bGen)).toEqual([]);
+  });
+
+  it("M3-d appendTranscript is refused after takeover", () => {
+    const c = createMeetingConnector();
+    const m = c.createMeeting(A, "m").meetingId;
+    const { generationId: gen } = c.openSession(A, m);
+    expect(c.appendTranscript(A, gen, { meetingId: m, text: "one" }).appended).toBe(true);
+    c.takeover(A, gen);
+    expect(c.appendTranscript(A, gen, { meetingId: m, text: "two" }).appended).toBe(false);
+    expect(c.transcript(A, gen)).toEqual(["one"]);
+  });
+
+  it("Y5 a first append to a revoked or expired meeting does not bind the session", () => {
+    {
+      const c = createMeetingConnector();
+      const closed = c.createMeeting(A, "closed note").meetingId;
+      const open = c.createMeeting(A, "open note").meetingId;
+      c.revoke(A, closed);
+      const gen = c.openSession(A).generationId;
+      expect(
+        c.appendTranscript(A, gen, { meetingId: closed, text: "closed line" }).appended,
+      ).toBe(false);
+      expect(c.appendTranscript(A, gen, { meetingId: open, text: "open line" }).appended).toBe(
+        true,
+      );
+      expect(c.transcript(A, gen)).toEqual(["open line"]);
+    }
+    {
+      const t = 1000000;
+      const d = createMeetingConnector({ now: () => t });
+      const closed = d.createMeeting(A, "closed note").meetingId;
+      const open = d.createMeeting(A, "open note").meetingId;
+      d.expire(A, closed, t);
+      const gen = d.openSession(A).generationId;
+      expect(
+        d.appendTranscript(A, gen, { meetingId: closed, text: "closed line" }).appended,
+      ).toBe(false);
+      expect(d.appendTranscript(A, gen, { meetingId: open, text: "open line" }).appended).toBe(
+        true,
+      );
+      expect(d.transcript(A, gen)).toEqual(["open line"]);
+    }
+  });
+});
+
 
