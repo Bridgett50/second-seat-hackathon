@@ -279,21 +279,23 @@ export function createMeetingRoomService(opts?: {
       }
       lastActive.set(storeKey, now());
       const sharedKey = `${storeKey}:${testMode ? "t" : "p"}`;
-      const existingRoom = shared.get(sharedKey);
+      // A ?demo=1 page always gets its own fresh, unshared room and store.
+      const demoMode = isDemoMode(search);
+      const existingRoom = demoMode ? undefined : shared.get(sharedKey);
       const reused = existingRoom !== undefined;
       const room =
         existingRoom ??
         (() => {
           const created = createTwinRoom({
             testMode,
-            store: storeFor(storeKey),
+            store: demoMode ? createInMemoryRoomStore() : storeFor(storeKey),
             transport,
           });
-          shared.set(sharedKey, created);
+          if (!demoMode) shared.set(sharedKey, created);
           return created;
         })();
       // The demo controller and roomId stay per page (per open() call).
-      const demo = isDemoMode(search) ? createDemoController(room) : null;
+      const demo = demoMode ? createDemoController(room) : null;
       const roomId = randomUUID();
       // Cap pages per store key, evicting only this key's own oldest page.
       let pages = 0;

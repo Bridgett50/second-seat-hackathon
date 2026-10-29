@@ -152,3 +152,9 @@ Bridgett confirmed MR-G7 as an owner decision (Oct 29, 4:55 PM CT): approval sta
 same-browser reopen while the server keeps the room. The restored-room line now says so
 ("draft, send state and approval stay while this server keeps the room") instead of claiming
 approval never survives. Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fix R2-3 (Oct 29, 2026)
+
+A `?demo=1` page now always starts on its own fresh, unshared room and store, so the guided demo
+never opens on (or writes into) the cookie's real room. Written by Muse Code on
+meta-models/muse-spark-open-1026 via Baseten.
