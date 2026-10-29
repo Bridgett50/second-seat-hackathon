@@ -102,7 +102,8 @@ test("C7-owner-flow-guide-takeover-approve-send-evidence", async ({ page }) => {
   await expect(page.getByText("Approved: yes · Send: sent")).toBeVisible();
   await expect(page.getByText("Sent — package locked.", { exact: false })).toBeVisible();
   await page.locator("#evidence-export").click();
-  await expect(page.locator("#evidence-json")).toContainText("sha256");
+  await expect(page.locator("#evidence-json")).toContainText("packageHash");
+  await expect(page.locator("#evidence-json")).toContainText('"sendState": "sent"');
   await page.locator("#takeover").click();
   await expect(page.getByText("You took over. The twin is paused.")).toBeVisible();
 });
