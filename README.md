@@ -87,7 +87,7 @@ The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-ru
 ## Known Issues
 
 - **Ordinary calendar dates are no longer instructed to be masked as `date_of_birth`.** Bridgett Sanders approved this prompt change on Oct 28, 2026. The Glimmer system prompt now says to mask a date as `date_of_birth` only when the text states it is a date of birth or birthday, and to leave ordinary meeting dates unmasked. A generic `DATE` label is not relabeled to `date_of_birth`. Real DOB aliases (`DOB`, `DATE_OF_BIRTH`, `BIRTHDATE`, `BIRTH_DATE`, `BIRTHDAY`) are still masked. The label schema and model pins are unchanged.
-  - *Live runs before this change:* the Oct 28 runs masked "November 15" because the previous prompt said to mask every calendar date. Those recorded outputs are unchanged. The live endpoint uses the new prompt only after this re-freeze is deployed.
+  - *Live runs before this change:* the Oct 28 runs masked "November 15" because the previous prompt said to mask every calendar date. Those recorded outputs are unchanged. The current client in `services/bot/src/private/redact.ts` already sends the new prompt on each redaction request. `infra/modal/glimmer_app.py` does not reference that prompt. Redeploying Modal does not activate it.
   - *Offline mode:* "November 15" as a meeting date stays in the text. A phrase such as "born on March 4, 1990" is still masked, as are names, phones, and emails.
 
 ## More
@@ -106,6 +106,6 @@ These are human tasks. They are not done by tests or by this repair:
 - Keep user tryouts and the video URL pending until she supplies them.
 - Review any X post herself before it is posted. Nothing here sends it.
 
-Built with Muse Code (Meta's coding agent) as the build agent. Grok Bot drove and verified.
+Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This history's token usage was not reported here.
 
 License: MIT. See [LICENSE](LICENSE).
