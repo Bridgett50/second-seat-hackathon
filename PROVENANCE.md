@@ -133,3 +133,9 @@ The meeting room import guard (apps/web/test/meeting-room-imports.test.ts) now a
 re-exports, require/createRequire, path specifiers into packages/core or node_modules/@second-seat/core,
 and destructured, bracket or non-literal dynamic imports, and scans .mts/.cts/.cjs/.jsx too.
 Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fix B-6 (Oct 29, 2026)
+
+The meeting room page now always shows a "Run plugins" button (`#run-plugins`, disabled once plugins
+cannot run: after takeover or once the package leaves "unsent"), so plugins run outside the guided
+demo. Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.

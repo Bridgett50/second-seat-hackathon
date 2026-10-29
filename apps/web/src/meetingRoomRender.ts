@@ -170,9 +170,13 @@ function packageSection(snap: MeetingRoomSnapshot): string {
 
 function pluginsSection(snap: MeetingRoomSnapshot): string {
   const view = snap.view;
+  const runnable = view.twinStatus === "active" && view.draft.sendState === "unsent";
+  const runBtn =
+    `<p><button type="button" id="run-plugins" aria-label="${esc(A11Y_LABELS["run-plugins"])}" ` +
+    `data-mr-action="run-plugins"${runnable ? "" : " disabled"}>Run plugins</button></p>`;
   const hint =
     view.plugins.length === 0
-      ? `<p>No plugin outputs yet. Run the guided demo to include one.</p>`
+      ? `<p>No plugin outputs yet. Stream transcript lines, then Run plugins.</p>`
       : "";
   const rows = view.plugins
     .map((p) => {
@@ -203,6 +207,7 @@ function pluginsSection(snap: MeetingRoomSnapshot): string {
   return (
     `${sectionOpen("plugins")}${esc(headingFor("plugins", snap))}</h2>` +
     `<p>Synthetic local-only helpers. Proposed outputs are excluded from the package until the owner includes them.</p>` +
+    runBtn +
     hint +
     rows +
     `</section>`

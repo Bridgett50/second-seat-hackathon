@@ -70,6 +70,7 @@ export const A11Y_LABELS = {
   takeover: "Take over from the twin",
   "package-editor": "Edit draft follow-up package",
   "package-save": "Save draft edit",
+  "run-plugins": "Run plugins on the transcript so far",
   approve: "Approve exact package",
   send: "Send through the test fake transport",
   "compare-input": "Paste imported draft for comparison",
@@ -91,6 +92,7 @@ export const A11Y_CONTROLS: readonly A11yControl[] = [
   { id: "takeover", role: "button", label: A11Y_LABELS.takeover, region: "takeover" },
   { id: "package-editor", role: "textbox", label: A11Y_LABELS["package-editor"], region: "package" },
   { id: "package-save", role: "button", label: A11Y_LABELS["package-save"], region: "package" },
+  { id: "run-plugins", role: "button", label: A11Y_LABELS["run-plugins"], region: "plugins" },
   { id: "approve", role: "button", label: A11Y_LABELS.approve, region: "approval" },
   { id: "send", role: "button", label: A11Y_LABELS.send, region: "approval" },
   { id: "compare-input", role: "textbox", label: A11Y_LABELS["compare-input"], region: "evidence" },
@@ -193,6 +195,9 @@ export function availableControls(
       case "package-save":
         // A sent package is locked: editing is refused, so hide the editor.
         if (sendState !== "sent") order.push(control);
+        break;
+      case "run-plugins":
+        if (pluginsRunnable) order.push(control);
         break;
       case "approve":
         if (canApprove) order.push(control);
@@ -471,6 +476,8 @@ export async function runKeyboardFlow(
       demo.reset();
     } else if (id === "stream-next") {
       room.streamNextLine();
+    } else if (id === "run-plugins") {
+      room.runPlugins();
     } else if (id === "guidance-input" || id === "guidance-send") {
       const text = bufferOf("guidance-input");
       if (text.trim().length > 0) room.guide(text);
