@@ -126,3 +126,10 @@ long non-email input; core behavior on normal emails is unchanged.
 A refused Send now renders its reason in `#send-notice` (role="alert") next to the Send
 button (snapshot field `sendNotice`). Written by Muse Code on meta-models/muse-spark-open-1026
 via Baseten (owner-approved after the Meta credits ran out).
+
+### Review fix B-5 (Oct 29, 2026)
+
+The meeting room import guard (apps/web/test/meeting-room-imports.test.ts) now also catches star
+re-exports, require/createRequire, path specifiers into packages/core or node_modules/@second-seat/core,
+and destructured, bracket or non-literal dynamic imports, and scans .mts/.cts/.cjs/.jsx too.
+Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
