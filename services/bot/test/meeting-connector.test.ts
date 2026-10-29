@@ -5,6 +5,7 @@ import {
   MeetingDenied,
   callProvider,
   createMeetingConnector,
+  packageHash,
   productionDispatch,
   type OwnerPrincipal,
   type StoredCallback,
@@ -25,6 +26,15 @@ function denied(fn: () => void): MeetingDenied {
     return error;
   }
   throw new Error("expected denial");
+}
+
+async function approve(
+  c: ReturnType<typeof createMeetingConnector>,
+  owner: OwnerPrincipal,
+  cb: StoredCallback,
+): Promise<void> {
+  expect(c.resolveCallback(owner, cb).delivered).toBe(true);
+  expect(c.approvePackage(owner, cb.jobId as string, packageHash(cb.artifact)).approved).toBe(true);
 }
 
 describe("meeting connector", () => {
@@ -86,7 +96,7 @@ describe("meeting connector", () => {
     expect(store.inbox(B, bSession.generationId)).toEqual([]);
   });
 
-  it("T1-4 revocation advances authority and a replayed job does not call out", () => {
+  it("T1-4 revocation advances authority and a replayed job does not call out", async () => {
     const store = createMeetingConnector();
     const { meetingId } = store.createMeeting(A, SECRET);
     store.act(A, meetingId, { type: "approve" });
@@ -96,7 +106,7 @@ describe("meeting connector", () => {
     expect(next).toBeGreaterThan(generation);
     expect(store.approved(A, meetingId)).toBe(false);
     let calls = 0;
-    const replayed = store.replay(
+    const replayed = await store.replay(
       A,
       {
         ownerId: A.ownerId,
@@ -105,7 +115,7 @@ describe("meeting connector", () => {
         authorityGeneration: generation,
         artifact: SECRET,
       },
-      () => {
+      async () => {
         calls += 1;
       },
     );
@@ -157,35 +167,43 @@ describe("R134 reproductions", () => {
     return { c, meetingId, generationId, job, cb };
   }
 
-  it("R134-1: a callback claiming another owner cannot execute replay transport", () => {
+  it("R134-1: a callback claiming another owner cannot execute replay transport", async () => {
     const { c, cb } = setup();
     let calls = 0;
     expect(
-      c.replay(
-        A,
-        { ...cb, ownerId: B.ownerId },
-        () => {
-          calls += 1;
-        },
+      (
+        await c.replay(
+          A,
+          { ...cb, ownerId: B.ownerId },
+          async () => {
+            calls += 1;
+          },
+        )
       ).ran,
     ).toBe(false);
     expect(calls).toBe(0);
+    await approve(c, A, cb);
     expect(
-      c.replay(A, cb, () => {
-        calls += 1;
-      }).ran,
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
     ).toBe(true);
     expect(calls).toBe(1);
   });
 
-  it("R134-2: a suspended generation cannot execute replay transport", () => {
+  it("R134-2: a suspended generation cannot execute replay transport", async () => {
     const { c, meetingId, generationId, cb } = setup();
     let calls = 0;
+    await approve(c, A, cb);
     c.suspendGeneration(A, generationId);
     expect(
-      c.replay(A, cb, () => {
-        calls += 1;
-      }).ran,
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
     ).toBe(false);
     expect(calls).toBe(0);
     const fresh = c.openSession(A);
@@ -197,31 +215,39 @@ describe("R134 reproductions", () => {
       authorityGeneration: job.authorityGeneration,
       sourceRevision: job.sourceRevision,
     };
+    await approve(c, A, live);
     expect(
-      c.replay(A, live, () => {
-        calls += 1;
-      }).ran,
+      (
+        await c.replay(A, live, async () => {
+          calls += 1;
+        })
+      ).ran,
     ).toBe(true);
     expect(calls).toBe(1);
   });
 
-  it("R134-3: an unknown generation cannot execute replay transport", () => {
+  it("R134-3: an unknown generation cannot execute replay transport", async () => {
     const { c, cb } = setup();
     let calls = 0;
     expect(
-      c.replay(
-        A,
-        { ...cb, generationId: "never-created" },
-        () => {
-          calls += 1;
-        },
+      (
+        await c.replay(
+          A,
+          { ...cb, generationId: "never-created" },
+          async () => {
+            calls += 1;
+          },
+        )
       ).ran,
     ).toBe(false);
     expect(calls).toBe(0);
+    await approve(c, A, cb);
     expect(
-      c.replay(A, cb, () => {
-        calls += 1;
-      }).ran,
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
     ).toBe(true);
     expect(calls).toBe(1);
   });
@@ -264,13 +290,17 @@ describe("R134 reproductions", () => {
     expect(calls).toBe(1);
   });
 
-  it("CONTROL: revoked authority blocks replay", () => {
+  it("CONTROL: revoked authority blocks replay", async () => {
     const { c, meetingId, cb } = setup();
     let calls = 0;
     c.revoke(A, meetingId);
-    c.replay(A, cb, () => {
-      calls += 1;
-    });
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(false);
     expect(calls).toBe(0);
   });
 
@@ -317,29 +347,34 @@ describe("M1 issued jobs", () => {
     };
   }
 
-  it("M1-1 forged owner, unknown generation and suspended generation cannot replay; fresh job dispatches", () => {
+  it("M1-1 forged owner, unknown generation and suspended generation cannot replay; fresh job dispatches", async () => {
     const { c, meetingId, generationId } = issued();
     const job = c.issueJob(A, meetingId, generationId);
     const base = envelope(job, {}, job);
+    await approve(c, A, base);
     let calls = 0;
-    const transport = () => {
+    const transport = async () => {
       calls += 1;
     };
-    expect(c.replay(A, { ...base, ownerId: B.ownerId }, transport).ran).toBe(false);
+    expect((await c.replay(A, { ...base, ownerId: B.ownerId }, transport)).ran).toBe(false);
     expect(calls).toBe(0);
-    expect(c.replay(A, { ...base, generationId: "g-never-created" }, transport).ran).toBe(false);
+    expect((await c.replay(A, { ...base, generationId: "g-never-created" }, transport)).ran).toBe(
+      false,
+    );
     expect(calls).toBe(0);
     const other = c.openSession(A);
     const suspended = c.issueJob(A, meetingId, other.generationId);
+    const suspendedCb = envelope(suspended, {}, suspended);
+    await approve(c, A, suspendedCb);
     c.suspendGeneration(A, other.generationId);
-    expect(c.replay(A, envelope(suspended, {}, suspended), transport).ran).toBe(false);
+    expect((await c.replay(A, suspendedCb, transport)).ran).toBe(false);
     expect(calls).toBe(0);
-    expect(c.replay(A, base, transport).ran).toBe(true);
+    expect((await c.replay(A, base, transport)).ran).toBe(true);
     expect(calls).toBe(1);
     expect(c.outboundCount()).toBe(1);
   });
 
-  it("M1-2 edited source rejects old work immediately; fresh revision-2 work succeeds", () => {
+  it("M1-2 edited source rejects old work immediately; fresh revision-2 work succeeds", async () => {
     const { c, meetingId, generationId } = issued("note v1");
     const old = c.issueJob(A, meetingId, generationId);
     const oldCb = envelope(old, { artifact: "answer v1" }, old);
@@ -348,25 +383,29 @@ describe("M1 issued jobs", () => {
     expect(c.inbox(A, generationId)).toEqual([]);
     let calls = 0;
     expect(
-      c.replay(A, oldCb, () => {
-        calls += 1;
-      }).ran,
+      (
+        await c.replay(A, oldCb, async () => {
+          calls += 1;
+        })
+      ).ran,
     ).toBe(false);
     expect(calls).toBe(0);
     const fresh = c.issueJob(A, meetingId, generationId);
     expect(fresh.sourceRevision).toBe(2);
     const freshCb = envelope(fresh, { artifact: "answer v2" }, fresh);
-    expect(c.resolveCallback(A, freshCb).delivered).toBe(true);
+    await approve(c, A, freshCb);
     expect(c.inbox(A, generationId)).toEqual(["answer v2"]);
     expect(
-      c.replay(A, freshCb, () => {
-        calls += 1;
-      }).ran,
+      (
+        await c.replay(A, freshCb, async () => {
+          calls += 1;
+        })
+      ).ran,
     ).toBe(true);
     expect(calls).toBe(1);
   });
 
-  it("M1-3 one-field tampering against valid same-owner records is rejected; unknown jobId fails", () => {
+  it("M1-3 one-field tampering against valid same-owner records is rejected; unknown jobId fails", async () => {
     const c = createMeetingConnector();
     const m1 = c.createMeeting(A, "m1").meetingId;
     const m2 = c.createMeeting(A, "m2").meetingId;
@@ -385,22 +424,22 @@ describe("M1 issued jobs", () => {
       sourceRevision?: number;
     }): StoredCallback => envelope(j1, over, j1);
     let calls = 0;
-    const transport = () => {
+    const transport = async () => {
       calls += 1;
     };
     expect(c.resolveCallback(A, env({ meetingId: m2 })).delivered).toBe(false);
-    expect(c.replay(A, env({ meetingId: m2 }), transport).ran).toBe(false);
+    expect((await c.replay(A, env({ meetingId: m2 }), transport)).ran).toBe(false);
     expect(c.resolveCallback(A, env({ generationId: g2 })).delivered).toBe(false);
-    expect(c.replay(A, env({ generationId: g2 }), transport).ran).toBe(false);
+    expect((await c.replay(A, env({ generationId: g2 }), transport)).ran).toBe(false);
     expect(c.resolveCallback(A, env({ authorityGeneration: 2 })).delivered).toBe(false);
-    expect(c.replay(A, env({ authorityGeneration: 2 }), transport).ran).toBe(false);
+    expect((await c.replay(A, env({ authorityGeneration: 2 }), transport)).ran).toBe(false);
     expect(c.resolveCallback(A, env({ sourceRevision: 2 })).delivered).toBe(false);
-    expect(c.replay(A, env({ sourceRevision: 2 }), transport).ran).toBe(false);
+    expect((await c.replay(A, env({ sourceRevision: 2 }), transport)).ran).toBe(false);
     expect(calls).toBe(0);
     expect(c.outboundCount()).toBe(0);
     const unknown = env({ jobId: "j-never-issued" });
     expect(c.resolveCallback(A, unknown).delivered).toBe(false);
-    expect(c.replay(A, unknown, transport).ran).toBe(false);
+    expect((await c.replay(A, unknown, transport)).ran).toBe(false);
     expect(calls).toBe(0);
     const valid = env({});
     const oldShape: StoredCallback = {
@@ -412,37 +451,41 @@ describe("M1 issued jobs", () => {
       artifact: valid.artifact,
     };
     expect(c.resolveCallback(A, oldShape).delivered).toBe(false);
-    expect(c.replay(A, oldShape, transport).ran).toBe(false);
+    expect((await c.replay(A, oldShape, transport)).ran).toBe(false);
     expect(calls).toBe(0);
-    expect(c.resolveCallback(A, valid).delivered).toBe(true);
+    await approve(c, A, valid);
     expect(c.inbox(A, g1)).toEqual(["answer"]);
+    expect((await c.replay(A, valid, transport)).ran).toBe(true);
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(1);
   });
 
-  it("M1-4 duplicate resolve yields one artifact; duplicate replay calls transport at most once", () => {
+  it("M1-4 duplicate resolve yields one artifact; duplicate replay calls transport at most once", async () => {
     const { c, meetingId, generationId } = issued();
     const job = c.issueJob(A, meetingId, generationId);
     const cb = envelope(job, { artifact: "answer" }, job);
     expect(c.resolveCallback(A, cb).delivered).toBe(true);
     expect(c.resolveCallback(A, cb).delivered).toBe(false);
     expect(c.inbox(A, generationId)).toEqual(["answer"]);
+    expect(c.approvePackage(A, job.jobId, packageHash(cb.artifact)).approved).toBe(true);
     let calls = 0;
-    const transport = () => {
+    const transport = async () => {
       calls += 1;
     };
-    expect(c.replay(A, cb, transport).ran).toBe(true);
-    expect(c.replay(A, cb, transport).ran).toBe(false);
+    expect((await c.replay(A, cb, transport)).ran).toBe(true);
+    expect((await c.replay(A, cb, transport)).ran).toBe(false);
     expect(calls).toBe(1);
     expect(c.outboundCount()).toBe(1);
     const g2 = c.openSession(A).generationId;
     const job2 = c.issueJob(A, meetingId, g2);
     const cb2 = envelope(job2, { artifact: "answer 2" }, job2);
-    expect(c.resolveCallback(A, cb2).delivered).toBe(true);
+    await approve(c, A, cb2);
     expect(c.inbox(A, g2)).toEqual(["answer 2"]);
-    expect(c.replay(A, cb2, transport).ran).toBe(true);
+    expect((await c.replay(A, cb2, transport)).ran).toBe(true);
     expect(calls).toBe(2);
   });
 
-  it("M1-5 each guard fails on its own: suspension, viewer, authority, expiry, revocation", () => {
+  it("M1-5 each guard fails on its own: suspension, viewer, authority, expiry, revocation", async () => {
     {
       const c = createMeetingConnector();
       const { meetingId } = c.createMeeting(A, "note");
@@ -454,9 +497,11 @@ describe("M1 issued jobs", () => {
       expect(c.inbox(A, generationId)).toEqual([]);
       let calls = 0;
       expect(
-        c.replay(A, cb, () => {
-          calls += 1;
-        }).ran,
+        (
+          await c.replay(A, cb, async () => {
+            calls += 1;
+          })
+        ).ran,
       ).toBe(false);
       expect(calls).toBe(0);
     }
@@ -470,12 +515,14 @@ describe("M1 issued jobs", () => {
       expect(c.inbox(A, generationId)).toEqual([]);
       let calls = 0;
       expect(
-        c.replay(
-          A,
-          { ...cb, ownerId: B.ownerId },
-          () => {
-            calls += 1;
-          },
+        (
+          await c.replay(
+            A,
+            { ...cb, ownerId: B.ownerId },
+            async () => {
+              calls += 1;
+            },
+          )
         ).ran,
       ).toBe(false);
       expect(calls).toBe(0);
@@ -491,9 +538,11 @@ describe("M1 issued jobs", () => {
       const tampered = envelope(job, { authorityGeneration: job.authorityGeneration + 1 }, job);
       expect(c.resolveCallback(A, tampered).delivered).toBe(false);
       expect(
-        c.replay(A, tampered, () => {
-          calls += 1;
-        }).ran,
+        (
+          await c.replay(A, tampered, async () => {
+            calls += 1;
+          })
+        ).ran,
       ).toBe(false);
       expect(calls).toBe(0);
     }
@@ -507,9 +556,11 @@ describe("M1 issued jobs", () => {
       expect(c.resolveCallback(A, cb).delivered).toBe(false);
       let calls = 0;
       expect(
-        c.replay(A, cb, () => {
-          calls += 1;
-        }).ran,
+        (
+          await c.replay(A, cb, async () => {
+            calls += 1;
+          })
+        ).ran,
       ).toBe(false);
       expect(calls).toBe(0);
     }
@@ -523,9 +574,11 @@ describe("M1 issued jobs", () => {
       expect(c.resolveCallback(A, cb).delivered).toBe(false);
       let calls = 0;
       expect(
-        c.replay(A, cb, () => {
-          calls += 1;
-        }).ran,
+        (
+          await c.replay(A, cb, async () => {
+            calls += 1;
+          })
+        ).ran,
       ).toBe(false);
       expect(calls).toBe(0);
     }
@@ -613,36 +666,42 @@ describe("M2 hardening", () => {
     return { generationId, cb };
   }
 
-  it("M2-B1: a transport that throws on first replay is never sent again", () => {
+  it("M2-B1: a transport that throws on first replay is never sent again", async () => {
     const c = createMeetingConnector();
     const { meetingId } = c.createMeeting(A, "note");
     const { cb } = issuedEnvelope(c, meetingId);
+    await approve(c, A, cb);
     let calls = 0;
-    expect(() =>
-      c.replay(A, cb, () => {
+    await expect(
+      c.replay(A, cb, async () => {
         calls += 1;
         throw new Error("boom-transport");
       }),
-    ).toThrow("boom-transport");
+    ).rejects.toThrow("boom-transport");
     expect(calls).toBe(1);
     expect(
-      c.replay(A, cb, () => {
-        calls += 1;
-      }).ran,
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
     ).toBe(false);
     expect(calls).toBe(1);
     expect(c.outboundCount()).toBe(0);
     const { cb: fresh } = issuedEnvelope(c, meetingId);
+    await approve(c, A, fresh);
     expect(
-      c.replay(A, fresh, () => {
-        calls += 1;
-      }).ran,
+      (
+        await c.replay(A, fresh, async () => {
+          calls += 1;
+        })
+      ).ran,
     ).toBe(true);
     expect(calls).toBe(2);
     expect(c.outboundCount()).toBe(1);
   });
 
-  it("M2-B2a: a forged sequential-pattern envelope cannot replay", () => {
+  it("M2-B2a: a forged sequential-pattern envelope cannot replay", async () => {
     const c = createMeetingConnector();
     const { meetingId } = c.createMeeting(A, "note");
     const { generationId } = c.openSession(A, meetingId);
@@ -660,11 +719,11 @@ describe("M2 hardening", () => {
       artifact: "x",
     };
     let calls = 0;
-    const transport = () => {
+    const transport = async () => {
       calls += 1;
     };
-    expect(c.replay(B, forged, transport).ran).toBe(false);
-    expect(c.replay(A, forged, transport).ran).toBe(false);
+    expect((await c.replay(B, forged, transport)).ran).toBe(false);
+    expect((await c.replay(A, forged, transport)).ran).toBe(false);
     expect(calls).toBe(0);
     const real: StoredCallback = {
       jobId: job.jobId,
@@ -675,22 +734,480 @@ describe("M2 hardening", () => {
       sourceRevision: job.sourceRevision,
       artifact: "x",
     };
-    expect(c.replay(A, real, transport).ran).toBe(true);
+    await approve(c, A, real);
+    expect((await c.replay(A, real, transport)).ran).toBe(true);
     expect(calls).toBe(1);
   });
 
-  it("M2-B2b: another owner cannot replay a real issued envelope", () => {
+  it("M2-B2b: another owner cannot replay a real issued envelope", async () => {
     const c = createMeetingConnector();
     const { meetingId } = c.createMeeting(A, "note");
     const { cb } = issuedEnvelope(c, meetingId);
     let calls = 0;
-    const transport = () => {
+    const transport = async () => {
       calls += 1;
     };
-    expect(c.replay(B, cb, transport).ran).toBe(false);
+    expect((await c.replay(B, cb, transport)).ran).toBe(false);
     expect(calls).toBe(0);
-    expect(c.replay(A, cb, transport).ran).toBe(true);
+    await approve(c, A, cb);
+    expect((await c.replay(A, cb, transport)).ran).toBe(true);
     expect(calls).toBe(1);
     expect(c.outboundCount()).toBe(1);
   });
 });
+
+describe("T2 connector slice", () => {
+  const BODY = "Subject: Recap\r\n\r\nThanks — café ✓";
+
+  function setupT2(artifact = BODY): {
+    c: ReturnType<typeof createMeetingConnector>;
+    meetingId: string;
+    generationId: string;
+    job: { jobId: string };
+    cb: StoredCallback;
+  } {
+    const c = createMeetingConnector();
+    const { meetingId } = c.createMeeting(A, "note");
+    const { generationId } = c.openSession(A);
+    const job = c.issueJob(A, meetingId, generationId);
+    const cb: StoredCallback = {
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      meetingId: job.meetingId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
+      artifact,
+    };
+    return { c, meetingId, generationId, job, cb };
+  }
+
+  it("B5-1 approved exact package sends once with the exact body and hash", async () => {
+    const { c, cb } = setupT2();
+    expect(c.resolveCallback(A, cb).delivered).toBe(true);
+    const hash = packageHash(BODY);
+    expect(c.approvePackage(A, cb.jobId as string, hash).approved).toBe(true);
+    const seen: { jobId: string; packageHash: string; body: string }[] = [];
+    const transport = async (pkg: { jobId: string; packageHash: string; body: string }) => {
+      seen.push(pkg);
+    };
+    expect((await c.replay(A, cb, transport)).ran).toBe(true);
+    expect(seen.length).toBe(1);
+    const first = seen[0];
+    expect(first?.body).toBe(BODY);
+    expect(first?.packageHash).toBe(hash);
+    expect(first?.jobId).toBe(cb.jobId);
+    expect(c.outboundCount()).toBe(1);
+    expect((await c.replay(A, cb, transport)).ran).toBe(false);
+    expect(seen.length).toBe(1);
+    expect(c.outboundCount()).toBe(1);
+  });
+
+  it("B5-2 a different artifact than the approved package is refused", async () => {
+    const { c, cb } = setupT2();
+    await approve(c, A, cb);
+    const tampered: StoredCallback = { ...cb, artifact: `${BODY} forged` };
+    let calls = 0;
+    const seen: string[] = [];
+    expect(
+      (
+        await c.replay(A, tampered, async (pkg) => {
+          calls += 1;
+          seen.push(pkg.body);
+        })
+      ).ran,
+    ).toBe(false);
+    expect(calls).toBe(0);
+    expect(c.outboundCount()).toBe(0);
+    expect(
+      (
+        await c.replay(A, cb, async (pkg) => {
+          calls += 1;
+          seen.push(pkg.body);
+        })
+      ).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
+    expect(seen).toEqual([BODY]);
+  });
+
+  it("B5-3 approval needs the server-computed hash of the delivered package and the job owner", async () => {
+    const { c, job, cb } = setupT2();
+    expect(c.approvePackage(A, job.jobId, packageHash(BODY)).approved).toBe(false);
+    expect(c.resolveCallback(A, cb).delivered).toBe(true);
+    expect(c.approvePackage(B, job.jobId, packageHash(BODY)).approved).toBe(false);
+    expect(c.approvePackage(A, job.jobId, packageHash("something else")).approved).toBe(false);
+    expect(c.approvePackage(A, "job-never-issued", packageHash(BODY)).approved).toBe(false);
+    expect(c.approvePackage(A, job.jobId, packageHash(BODY)).approved).toBe(true);
+    let calls = 0;
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it("B5-4 an edit after approval invalidates the approval", async () => {
+    const { c, meetingId, generationId, cb } = setupT2();
+    await approve(c, A, cb);
+    c.act(A, meetingId, { type: "edit", text: "note v2" });
+    let calls = 0;
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(false);
+    expect(calls).toBe(0);
+    expect(() => c.exportApproved(A, cb.jobId as string)).toThrow(/export-approved/);
+    expect(c.approvePackage(A, cb.jobId as string, packageHash(BODY)).approved).toBe(false);
+    const job2 = c.issueJob(A, meetingId, generationId);
+    const cb2: StoredCallback = { ...cb, jobId: job2.jobId, sourceRevision: 2, artifact: BODY };
+    await approve(c, A, cb2);
+    expect(
+      (
+        await c.replay(A, cb2, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
+    // Isolation probe for the same invalidation branch: a future expiry
+    // leaves the meeting open (currentStateOk still holds), so only the
+    // consumed-but-unsent invalidation can refuse the send.
+    const d = createMeetingConnector();
+    const mid = d.createMeeting(A, "note").meetingId;
+    const gen = d.openSession(A).generationId;
+    const j = d.issueJob(A, mid, gen);
+    const approved: StoredCallback = {
+      jobId: j.jobId,
+      ownerId: j.ownerId,
+      meetingId: j.meetingId,
+      generationId: j.generationId,
+      authorityGeneration: j.authorityGeneration,
+      sourceRevision: j.sourceRevision,
+      artifact: BODY,
+    };
+    await approve(d, A, approved);
+    d.expire(A, mid, Date.now() + 60000);
+    let late = 0;
+    expect(
+      (
+        await d.replay(A, approved, async () => {
+          late += 1;
+        })
+      ).ran,
+    ).toBe(false);
+    expect(late).toBe(0);
+    expect(() => d.exportApproved(A, j.jobId)).toThrow(/export-approved/);
+    const j3 = d.issueJob(A, mid, gen);
+    const live: StoredCallback = { ...approved, jobId: j3.jobId };
+    await approve(d, A, live);
+    expect(
+      (
+        await d.replay(A, live, async () => {
+          late += 1;
+        })
+      ).ran,
+    ).toBe(true);
+    expect(late).toBe(1);
+  });
+
+  it("N1-1 a rejecting async transport marks the job failed, counts no outbound and never resends", async () => {
+    const { c, cb } = setupT2();
+    await approve(c, A, cb);
+    let calls = 0;
+    await expect(
+      c.replay(A, cb, async () => {
+        calls += 1;
+        throw new Error("boom-send");
+      }),
+    ).rejects.toThrow("boom-send");
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(0);
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(false);
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(0);
+    expect(() => c.exportApproved(A, cb.jobId as string)).toThrow(/export-approved/);
+  });
+
+  it("N1-2 concurrent replays of one approved job make one transport call", async () => {
+    const { c, cb } = setupT2();
+    await approve(c, A, cb);
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((res) => {
+      release = res;
+    });
+    const transport = async () => {
+      calls += 1;
+      await gate;
+    };
+    const p1 = c.replay(A, cb, transport);
+    const p2 = c.replay(A, cb, transport);
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(Number(r1.ran) + Number(r2.ran)).toBe(1);
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(1);
+  });
+
+  it("N2-1 a resolved but unapproved job cannot be sent", async () => {
+    const { c, cb } = setupT2();
+    expect(c.resolveCallback(A, cb).delivered).toBe(true);
+    let calls = 0;
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(false);
+    expect(calls).toBe(0);
+    expect(c.outboundCount()).toBe(0);
+    expect(c.approvePackage(A, cb.jobId as string, packageHash(BODY)).approved).toBe(true);
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it("N2-2 a pending job cannot be approved or sent", async () => {
+    const { c, job, cb } = setupT2();
+    expect(c.approvePackage(A, job.jobId, packageHash(BODY)).approved).toBe(false);
+    let calls = 0;
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(false);
+    expect(calls).toBe(0);
+    expect(c.outboundCount()).toBe(0);
+    await approve(c, A, cb);
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it("TK-1 owner takeover invalidates approved unsent work and blocks new jobs", async () => {
+    const { c, meetingId, generationId, job, cb } = setupT2();
+    await approve(c, A, cb);
+    const pending = c.issueJob(A, meetingId, generationId);
+    const pendingCb: StoredCallback = {
+      ...cb,
+      jobId: pending.jobId,
+      artifact: "later answer",
+    };
+    c.takeover(A, generationId);
+    let calls = 0;
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(false);
+    expect(calls).toBe(0);
+    expect(() => c.exportApproved(A, job.jobId)).toThrow(/export-approved/);
+    expect(c.approvePackage(A, job.jobId, packageHash(BODY)).approved).toBe(false);
+    expect(c.resolveCallback(A, pendingCb).delivered).toBe(false);
+    expect(c.inbox(A, generationId)).toEqual([BODY]);
+    expect(() => c.issueJob(A, meetingId, generationId)).toThrow(MeetingDenied);
+    expect(c.outboundCount()).toBe(0);
+  });
+
+  it("TK-2 takeover invalidates a pending job so its callback cannot deliver", () => {
+    const { c, generationId, cb } = setupT2();
+    c.takeover(A, generationId);
+    expect(c.resolveCallback(A, cb).delivered).toBe(false);
+    expect(c.inbox(A, generationId)).toEqual([]);
+  });
+
+  it("TK-3 another owner cannot take over the session", async () => {
+    const { c, meetingId, generationId, cb } = setupT2();
+    expect(() => c.takeover(B, generationId)).toThrow(MeetingDenied);
+    await approve(c, A, cb);
+    let calls = 0;
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          calls += 1;
+        })
+      ).ran,
+    ).toBe(true);
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(1);
+    expect(() => c.issueJob(B, meetingId, generationId)).toThrow(MeetingDenied);
+  });
+
+  it("T2-4c exportApproved returns the exact approved string and refuses unapproved, stale or other-owner", async () => {
+    const { c, meetingId, job, cb } = setupT2();
+    expect(c.resolveCallback(A, cb).delivered).toBe(true);
+    expect(() => c.exportApproved(A, job.jobId)).toThrow(/export-approved/);
+    expect(() => c.exportApproved(B, job.jobId)).toThrow(/export-approved/);
+    const before = c.outboundCount();
+    expect(c.approvePackage(A, job.jobId, packageHash(BODY)).approved).toBe(true);
+    expect(c.exportApproved(A, job.jobId)).toBe(BODY);
+    expect(c.outboundCount()).toBe(before);
+    expect(
+      (
+        await c.replay(A, cb, async () => {
+          // accepted
+        })
+      ).ran,
+    ).toBe(true);
+    expect(c.exportApproved(A, job.jobId)).toBe(BODY);
+    c.act(A, meetingId, { type: "edit", text: "note v2" });
+    expect(() => c.exportApproved(A, job.jobId)).toThrow(/export-approved/);
+  });
+
+  it("T2-3c transcript events append only for the bound meeting and owner", () => {
+    const c = createMeetingConnector();
+    const m1 = c.createMeeting(A, "m1").meetingId;
+    const m2 = c.createMeeting(A, "m2").meetingId;
+    const { generationId } = c.openSession(A);
+    expect(c.appendTranscript(A, generationId, { meetingId: m1, text: "hello" }).appended).toBe(
+      true,
+    );
+    expect(c.transcript(A, generationId)).toEqual(["hello"]);
+    expect(c.appendTranscript(A, generationId, { meetingId: m2, text: "other" }).appended).toBe(
+      false,
+    );
+    expect(c.transcript(A, generationId)).toEqual(["hello"]);
+    expect(
+      c.appendTranscript(B, generationId, { meetingId: m1, text: "forged" }).appended,
+    ).toBe(false);
+    expect(c.transcript(B, generationId)).toEqual([]);
+    expect(c.transcript(A, generationId)).toEqual(["hello"]);
+    c.suspendGeneration(A, generationId);
+    expect(c.appendTranscript(A, generationId, { meetingId: m1, text: "late" }).appended).toBe(
+      false,
+    );
+    expect(c.transcript(A, generationId)).toEqual(["hello"]);
+    c.revoke(A, m1);
+    const g3 = c.openSession(A).generationId;
+    expect(c.appendTranscript(A, g3, { meetingId: m1, text: "closed" }).appended).toBe(false);
+    expect(c.transcript(A, g3)).toEqual([]);
+  });
+});
+
+describe("M3 guards", () => {
+  it("M3-a another owner cannot replay A's approved exact package", async () => {
+    const c = createMeetingConnector();
+    const { meetingId } = c.createMeeting(A, "note");
+    const { generationId } = c.openSession(A);
+    const job = c.issueJob(A, meetingId, generationId);
+    const cb: StoredCallback = {
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      meetingId: job.meetingId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
+      artifact: "answer",
+    };
+    expect(c.resolveCallback(A, cb).delivered).toBe(true);
+    expect(c.approvePackage(A, job.jobId, packageHash(cb.artifact)).approved).toBe(true);
+    let calls = 0;
+    const transport = async () => {
+      calls += 1;
+    };
+    expect((await c.replay(B, cb, transport)).ran).toBe(false);
+    expect(calls).toBe(0);
+    expect((await c.replay(A, cb, transport)).ran).toBe(true);
+    expect(calls).toBe(1);
+    expect(c.outboundCount()).toBe(1);
+  });
+
+  it("M3-b another owner cannot export A's approved package", async () => {
+    const c = createMeetingConnector();
+    const { meetingId } = c.createMeeting(A, "note");
+    const { generationId } = c.openSession(A);
+    const job = c.issueJob(A, meetingId, generationId);
+    const cb: StoredCallback = {
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      meetingId: job.meetingId,
+      generationId: job.generationId,
+      authorityGeneration: job.authorityGeneration,
+      sourceRevision: job.sourceRevision,
+      artifact: "answer",
+    };
+    await approve(c, A, cb);
+    expect(() => c.exportApproved(B, job.jobId)).toThrow(MeetingDenied);
+    expect(c.exportApproved(A, job.jobId)).toBe("answer");
+  });
+
+  it("M3-c another owner cannot append a transcript line naming A's meeting from its own session", () => {
+    const c = createMeetingConnector();
+    const mA = c.createMeeting(A, "mA").meetingId;
+    const bGen = c.openSession(B).generationId;
+    expect(c.appendTranscript(B, bGen, { meetingId: mA, text: "forged" }).appended).toBe(false);
+    expect(c.transcript(B, bGen)).toEqual([]);
+  });
+
+  it("M3-d appendTranscript is refused after takeover", () => {
+    const c = createMeetingConnector();
+    const m = c.createMeeting(A, "m").meetingId;
+    const { generationId: gen } = c.openSession(A, m);
+    expect(c.appendTranscript(A, gen, { meetingId: m, text: "one" }).appended).toBe(true);
+    c.takeover(A, gen);
+    expect(c.appendTranscript(A, gen, { meetingId: m, text: "two" }).appended).toBe(false);
+    expect(c.transcript(A, gen)).toEqual(["one"]);
+  });
+
+  it("Y5 a first append to a revoked or expired meeting does not bind the session", () => {
+    {
+      const c = createMeetingConnector();
+      const closed = c.createMeeting(A, "closed note").meetingId;
+      const open = c.createMeeting(A, "open note").meetingId;
+      c.revoke(A, closed);
+      const gen = c.openSession(A).generationId;
+      expect(
+        c.appendTranscript(A, gen, { meetingId: closed, text: "closed line" }).appended,
+      ).toBe(false);
+      expect(c.appendTranscript(A, gen, { meetingId: open, text: "open line" }).appended).toBe(
+        true,
+      );
+      expect(c.transcript(A, gen)).toEqual(["open line"]);
+    }
+    {
+      const t = 1000000;
+      const d = createMeetingConnector({ now: () => t });
+      const closed = d.createMeeting(A, "closed note").meetingId;
+      const open = d.createMeeting(A, "open note").meetingId;
+      d.expire(A, closed, t);
+      const gen = d.openSession(A).generationId;
+      expect(
+        d.appendTranscript(A, gen, { meetingId: closed, text: "closed line" }).appended,
+      ).toBe(false);
+      expect(d.appendTranscript(A, gen, { meetingId: open, text: "open line" }).appended).toBe(
+        true,
+      );
+      expect(d.transcript(A, gen)).toEqual(["open line"]);
+    }
+  });
+});
+
+

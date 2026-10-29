@@ -44,6 +44,95 @@ The connector is not mounted on the web server. Production dispatch throws `prod
 API change: `replay(callback, transport)` is now
 `replay(principal, callback, transport)`.
 
+## T2 connector slice
+
+Connector-side boundary for execution plan v2 T2, plus the Opus review items
+left open after #136. All invented data; no claims of real Gmail, Meet, or
+model behaviour.
+
+- B5 fixed: approval is bound to the exact package, not a revision number.
+  `resolveCallback` stores the delivered artifact and its server-computed
+  `packageHash` (sha256 hex of the UTF-8 bytes) on the job record.
+  `approvePackage(principal, jobId, packageHash)` succeeds only for the job
+  owner, a `consumed` job, current state, and a hash equal to the
+  server-computed `artifactHash` (a client digest compared with itself is
+  never trusted). The approved hash is re-verified at send time.
+- N1 fixed: the transport is async
+  `(pkg: { jobId; packageHash; body }) => Promise<void>`. All send checks run
+  synchronously before any await; the job is claimed (`dispatched = true`)
+  before the transport is called, so two concurrent replays make exactly one
+  transport call. The transport is awaited inside `try`: a throw/rejection
+  moves the job to terminal `failed` (never resent) and rejects the returned
+  promise. `outboundCount()` advances only after the await succeeds.
+- N2 decision (enforced): ONLY a consumed job with a current exact-package
+  approval may be sent, at most once. A pending job can never be sent or
+  approved; a consumed but unapproved job cannot be sent.
+- Takeover: `takeover(principal, generationId)` is owner-only and marks the
+  session taken over, which bars it from issuing, resolving, approving, or
+  sending (like suspension). It immediately invalidates that session's
+  pending AND consumed-but-unsent jobs and clears their approvals.
+  Edit/revoke/delete/expire/suspend likewise invalidate consumed-but-unsent
+  jobs and clear `approvedHash` (previously only pending jobs).
+- `exportApproved(principal, jobId)` returns the exact approved body as a
+  copy/export read (no state change, no outbound) only for the owner while
+  the exact-package approval is current; otherwise it throws
+  `MeetingDenied("export-approved")`. An edit after approval makes it stale.
+- `appendTranscript` / `transcript` record owner-scoped transcript events per
+  session: an event appends only for the session owner, a live (not
+  suspended/taken-over) session, the session's bound meeting (binding an
+  unbound session when the principal owns the meeting), and an open meeting.
+  A stale event from a different meeting returns `{ appended: false }`;
+  `transcript` returns `[]` for a non-owner.
+
+API changes: new `packageHash`, `approvePackage`, `takeover`,
+`exportApproved`, `appendTranscript`, `transcript`; `replay` is now async and
+takes an async transport receiving the stored `{ jobId, packageHash, body }`.
+
+What remains for T2 in the original app repo (out of scope here): T2-1 DOM
+twin/takeover controls, T2-2 owner-scoped reasoning context, and the UI
+halves of T2-3 (transcript) / T2-4 (approved-package export). NOT done: T9
+items — durable intent across restarts and the unknown/needs-reconciliation
+send state.
+
+## M3 follow-up (Opus review of #137)
+
+All invented data; no claims of real Gmail, Meet, or model behaviour.
+
+Four test gaps closed, each covering one single guard (verified: deleting
+that guard alone fails only its test):
+
+- M3-a "another owner cannot replay A's approved exact package": covers the
+  replay owner conjunct `who.ownerId === record.ownerId &&`. B's replay of
+  A's approved exact envelope runs nothing; A's own replay still sends once.
+- M3-b "another owner cannot export A's approved package": covers the line
+  `if (owned.ownerId !== (record as JobRecord).ownerId) deny();` in
+  `exportApproved`. B's export throws `MeetingDenied`; A's returns the body.
+- M3-c "another owner cannot append a transcript line naming A's meeting
+  from its own session": covers the `meeting.ownerId !== owner.ownerId`
+  part of `appendTranscript`'s meeting check. B's own session appends
+  nothing to A's meeting.
+- M3-d "appendTranscript is refused after takeover": covers the
+  `|| session.takenOver` part of `appendTranscript`'s
+  suspended/takenOver check. Post-takeover appends are refused.
+
+F1 fixed: in `appendTranscript` the session was bound to `event.meetingId`
+BEFORE `policyOpen(meeting)` was checked, so a first append to a
+revoked/expired meeting returned false but still bound the session, and
+later appends to the correct open meeting were wrongly refused. The fix
+checks `if (!policyOpen(meeting)) return { appended: false };` BEFORE the
+binding block, so a refused append never binds. Regression test Y5 "a first
+append to a revoked or expired meeting does not bind the session" covers
+both the revoked and the expired paths.
+
+F2 (known, not fixed): takeover does not cancel an already in-flight
+claimed send; a replay that claimed `dispatched` before takeover still
+completes its awaited transport.
+
+F3 (known, intended): a sent package remains exportable via
+`exportApproved` until a state change
+(edit/revoke/delete/expire/suspend/takeover) clears the approval; this is
+intended for the saved record.
+
 ## What is missing for integration
 
 These unit tests prove nothing about authenticated routes, saved workspaces, full network blocking, live models, or any real provider. No real HTTP is performed and no redirect is followed by the stub gate.

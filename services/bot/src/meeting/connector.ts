@@ -6,17 +6,28 @@
  * Jobs are authoritative server-issued records: `issueJob` binds a trusted
  * owner, meeting, session, source revision and authority generation under a
  * server-generated random-UUID jobId. `resolveCallback` honors only an
- * envelope that matches a pending issued job AND current state, and
- * `replay(principal, ...)` additionally requires the principal to own the
- * job. Caller-built callbacks without an issued jobId are rejected, never
- * trusted. Source edits, revocation, deletion, expiry and session suspension
- * invalidate dependent pending jobs immediately. Replay claims the job
- * before sending: a transport throw moves the job to a terminal failed
- * state (never retried) and the outbound counter advances only after the
- * transport returns; distinct jobs are independent (no global exactly-once
- * claim).
+ * envelope that matches a pending issued job AND current state, and stores
+ * the delivered artifact plus its server-computed package hash on the job
+ * record. `approvePackage` binds an approval to that exact package hash
+ * (never to a client-supplied digest or a bare revision number).
+ * `replay(principal, ...)` sends only a consumed job with a current
+ * exact-package approval, at most once.
+ *
+ * N2 decision (enforced): ONLY a consumed job with a current exact-package
+ * approval may be sent. A pending (unresolved) job can never be sent or
+ * approved. A consumed but unapproved job cannot be sent. Each approved job
+ * is sent at most once: `replay` claims the job (`dispatched = true`)
+ * synchronously before awaiting the async transport, so two concurrent
+ * replays make exactly one transport call. A transport rejection moves the
+ * job to a terminal failed state (never retried) and the outbound counter
+ * advances only after the transport resolves.
+ *
+ * Source edits, revocation, deletion, expiry, session suspension and owner
+ * takeover invalidate dependent pending AND consumed-but-unsent jobs
+ * immediately (approvals cleared). Takeover additionally bars the session
+ * from issuing, resolving, approving or sending further work.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 export const MEETING_CONNECTOR_PROTOCOL = "meeting-connector/1" as const;
 
 export class MeetingDenied extends Error {
@@ -26,6 +37,11 @@ export class MeetingDenied extends Error {
     this.name = "MeetingDenied";
     this.operation = operation;
   }
+}
+
+/** sha256 hex of the UTF-8 bytes of an exact package body. */
+export function packageHash(body: string): string {
+  return createHash("sha256").update(body, "utf8").digest("hex");
 }
 
 export type OwnerPrincipal = { readonly ownerId: string };
@@ -52,7 +68,9 @@ type Session = {
   ownerId: string;
   generationId: string;
   suspended: boolean;
+  takenOver: boolean;
   inbox: string[];
+  transcriptLog: string[];
   boundMeetingId: string | null;
 };
 
@@ -88,6 +106,9 @@ type JobRecord = {
   sourceRevision: number;
   status: JobStatus;
   dispatched: boolean;
+  artifact: string | null;
+  artifactHash: string | null;
+  approvedHash: string | null;
 };
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -132,18 +153,25 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
     return true;
   }
 
+  function invalidateJobRecord(job: JobRecord): void {
+    if (job.status === "pending" || (job.status === "consumed" && !job.dispatched)) {
+      job.status = "invalidated";
+    }
+    job.approvedHash = null;
+  }
+
   function invalidateMeetingJobs(meetingId: string): void {
     for (const job of jobs.values()) {
-      if (job.meetingId === meetingId && job.status === "pending") {
-        job.status = "invalidated";
+      if (job.meetingId === meetingId) {
+        invalidateJobRecord(job);
       }
     }
   }
 
   function invalidateSessionJobs(generationId: string): void {
     for (const job of jobs.values()) {
-      if (job.generationId === generationId && job.status === "pending") {
-        job.status = "invalidated";
+      if (job.generationId === generationId) {
+        invalidateJobRecord(job);
       }
     }
   }
@@ -177,7 +205,9 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
     ) {
       return false;
     }
-    if (!session || session.ownerId !== record.ownerId || session.suspended) return false;
+    if (!session || session.ownerId !== record.ownerId || session.suspended || session.takenOver) {
+      return false;
+    }
     if (session.boundMeetingId !== null && session.boundMeetingId !== record.meetingId) return false;
     return true;
   }
@@ -242,7 +272,9 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
         ownerId: owner.ownerId,
         generationId,
         suspended: false,
+        takenOver: false,
         inbox: [],
+        transcriptLog: [],
         boundMeetingId,
       });
       return { generationId };
@@ -256,7 +288,7 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
       const meeting = owned(owner, meetingId, "issue");
       if (!policyOpen(meeting)) throw new MeetingDenied("issue");
       const session = ownedSession(owner, generationId, "issue");
-      if (session.suspended) throw new MeetingDenied("issue");
+      if (session.suspended || session.takenOver) throw new MeetingDenied("issue");
       bindSession(session, meetingId, "issue");
       const jobId = randomUUID();
       const record: JobRecord = {
@@ -268,6 +300,9 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
         sourceRevision: meeting.sourceRevision,
         status: "pending",
         dispatched: false,
+        artifact: null,
+        artifactHash: null,
+        approvedHash: null,
       };
       jobs.set(jobId, record);
       return {
@@ -285,11 +320,46 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
       session.suspended = true;
       invalidateSessionJobs(generationId);
     },
+    takeover(principal: OwnerPrincipal | null, generationId: string): void {
+      const owner = requirePrincipal(principal);
+      const session = ownedSession(owner, generationId, "takeover");
+      session.takenOver = true;
+      invalidateSessionJobs(generationId);
+    },
     inbox(principal: OwnerPrincipal | null, generationId: string): string[] {
       const owner = requirePrincipal(principal);
       const session = sessions.get(generationId);
       if (!session || session.ownerId !== owner.ownerId) return [];
       return [...session.inbox];
+    },
+    appendTranscript(
+      principal: OwnerPrincipal | null,
+      generationId: string,
+      event: { meetingId: string; text: string },
+    ): { appended: boolean } {
+      const owner = requirePrincipal(principal);
+      const session = sessions.get(generationId);
+      if (!session || session.ownerId !== owner.ownerId) return { appended: false };
+      if (session.suspended || session.takenOver) return { appended: false };
+      if (!event || typeof event.meetingId !== "string" || typeof event.text !== "string") {
+        return { appended: false };
+      }
+      const meeting = meetings.get(event.meetingId);
+      if (!meeting || meeting.ownerId !== owner.ownerId) return { appended: false };
+      if (!policyOpen(meeting)) return { appended: false };
+      if (session.boundMeetingId === null) {
+        session.boundMeetingId = event.meetingId;
+      } else if (session.boundMeetingId !== event.meetingId) {
+        return { appended: false };
+      }
+      session.transcriptLog.push(event.text);
+      return { appended: true };
+    },
+    transcript(principal: OwnerPrincipal | null, generationId: string): string[] {
+      const owner = requirePrincipal(principal);
+      const session = sessions.get(generationId);
+      if (!session || session.ownerId !== owner.ownerId) return [];
+      return [...session.transcriptLog];
     },
     resolveCallback(viewer: OwnerPrincipal | null, callback: StoredCallback): { delivered: boolean } {
       const who = requirePrincipal(viewer);
@@ -304,11 +374,53 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
       if (who.ownerId !== record.ownerId) return fail();
       if (!envelopeMatches(callback, record)) return fail();
       if (!currentStateOk(record)) return fail();
+      if (typeof callback.artifact !== "string") return fail();
       const session = sessions.get(record.generationId);
       if (!session) return fail();
       session.inbox.push(callback.artifact);
+      record.artifact = callback.artifact;
+      record.artifactHash = packageHash(callback.artifact);
       record.status = "consumed";
       return { delivered: true };
+    },
+    approvePackage(
+      principal: OwnerPrincipal | null,
+      jobId: string,
+      suppliedHash: string,
+    ): { approved: boolean } {
+      const who = requirePrincipal(principal);
+      const record = jobs.get(jobId);
+      if (!record) return { approved: false };
+      // Single B5 gate: the owner approves the server-computed hash of the
+      // delivered package on a consumed job in current state. Deleting this
+      // gate approves pending jobs, other owners, or foreign digests.
+      const acceptable =
+        who.ownerId === record.ownerId &&
+        record.status === "consumed" &&
+        currentStateOk(record) &&
+        typeof suppliedHash === "string" &&
+        suppliedHash === record.artifactHash;
+      if (!acceptable) return { approved: false };
+      record.approvedHash = suppliedHash;
+      return { approved: true };
+    },
+    exportApproved(principal: OwnerPrincipal | null, jobId: string): string {
+      const deny = (): never => {
+        throw new MeetingDenied("export-approved");
+      };
+      if (!principal || typeof principal.ownerId !== "string" || principal.ownerId.length === 0) {
+        deny();
+      }
+      const record = jobs.get(jobId);
+      if (!record) deny();
+      const owned = principal as OwnerPrincipal;
+      if (owned.ownerId !== (record as JobRecord).ownerId) deny();
+      const job = record as JobRecord;
+      if (job.status !== "consumed") deny();
+      if (!job.artifact || !job.artifactHash || !job.approvedHash) deny();
+      if (job.approvedHash !== job.artifactHash) deny();
+      if (!currentStateOk(job)) deny();
+      return job.artifact as string;
     },
     revoke(principal: OwnerPrincipal | null, meetingId: string): number {
       const owner = requirePrincipal(principal);
@@ -335,23 +447,41 @@ export function createMeetingConnector(opts?: { now?: () => number }) {
       const meeting = owned(owner, meetingId, "read");
       return meeting.approvedRevision === meeting.sourceRevision && policyOpen(meeting);
     },
-    replay(
+    async replay(
       principal: OwnerPrincipal | null,
       callback: StoredCallback,
-      transport: () => void,
-    ): { ran: boolean } {
+      transport: (pkg: { jobId: string; packageHash: string; body: string }) => Promise<void>,
+    ): Promise<{ ran: boolean }> {
       const who = requirePrincipal(principal);
       if (!callback || typeof callback.jobId !== "string") return { ran: false };
       const record = jobs.get(callback.jobId);
-      if (!record || record.status === "invalidated" || record.status === "failed" || record.dispatched) {
+      if (!record) return { ran: false };
+      if (typeof callback.artifact !== "string") return { ran: false };
+      // Single N2 gate: only a consumed job with a current exact-package
+      // approval sends, at most once. Deleting this statement sends
+      // unapproved or substituted packages. (The null checks also narrow
+      // the stored body/hash for the send below.)
+      const sendable =
+        record.status === "consumed" &&
+        !record.dispatched &&
+        who.ownerId === record.ownerId &&
+        record.approvedHash !== null &&
+        record.artifactHash !== null &&
+        record.approvedHash === record.artifactHash &&
+        packageHash(callback.artifact) === record.approvedHash;
+      if (!sendable || record.approvedHash === null || record.artifact === null) {
         return { ran: false };
       }
-      if (who.ownerId !== record.ownerId) return { ran: false };
       if (!envelopeMatches(callback, record)) return { ran: false };
       if (!currentStateOk(record)) return { ran: false };
       record.dispatched = true;
+      const pkg = {
+        jobId: record.jobId,
+        packageHash: record.approvedHash,
+        body: record.artifact,
+      };
       try {
-        transport();
+        await transport(pkg);
       } catch (err) {
         record.status = "failed";
         throw err;
