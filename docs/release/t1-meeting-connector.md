@@ -94,6 +94,45 @@ halves of T2-3 (transcript) / T2-4 (approved-package export). NOT done: T9
 items — durable intent across restarts and the unknown/needs-reconciliation
 send state.
 
+## M3 follow-up (Opus review of #137)
+
+All invented data; no claims of real Gmail, Meet, or model behaviour.
+
+Four test gaps closed, each covering one single guard (verified: deleting
+that guard alone fails only its test):
+
+- M3-a "another owner cannot replay A's approved exact package": covers the
+  replay owner conjunct `who.ownerId === record.ownerId &&`. B's replay of
+  A's approved exact envelope runs nothing; A's own replay still sends once.
+- M3-b "another owner cannot export A's approved package": covers the line
+  `if (owned.ownerId !== (record as JobRecord).ownerId) deny();` in
+  `exportApproved`. B's export throws `MeetingDenied`; A's returns the body.
+- M3-c "another owner cannot append a transcript line naming A's meeting
+  from its own session": covers the `meeting.ownerId !== owner.ownerId`
+  part of `appendTranscript`'s meeting check. B's own session appends
+  nothing to A's meeting.
+- M3-d "appendTranscript is refused after takeover": covers the
+  `|| session.takenOver` part of `appendTranscript`'s
+  suspended/takenOver check. Post-takeover appends are refused.
+
+F1 fixed: in `appendTranscript` the session was bound to `event.meetingId`
+BEFORE `policyOpen(meeting)` was checked, so a first append to a
+revoked/expired meeting returned false but still bound the session, and
+later appends to the correct open meeting were wrongly refused. The fix
+checks `if (!policyOpen(meeting)) return { appended: false };` BEFORE the
+binding block, so a refused append never binds. Regression test Y5 "a first
+append to a revoked or expired meeting does not bind the session" covers
+both the revoked and the expired paths.
+
+F2 (known, not fixed): takeover does not cancel an already in-flight
+claimed send; a replay that claimed `dispatched` before takeover still
+completes its awaited transport.
+
+F3 (known, intended): a sent package remains exportable via
+`exportApproved` until a state change
+(edit/revoke/delete/expire/suspend/takeover) clears the approval; this is
+intended for the saved record.
+
 ## What is missing for integration
 
 These unit tests prove nothing about authenticated routes, saved workspaces, full network blocking, live models, or any real provider. No real HTTP is performed and no redirect is followed by the stub gate.
