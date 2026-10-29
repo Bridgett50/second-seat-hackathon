@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, expect, type Page } from "@playwright/test";
+import { hashDraft as productionHashDraft } from "../src/draftApproval.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TRANSCRIPT = readFileSync(join(HERE, "..", "..", "..", "demo", "synthetic-transcript.txt"), "utf8");
@@ -108,9 +109,9 @@ test("FR9 offline synthetic transcript reaches copy without a provider call", as
   await page.locator("#btn-approve").click();
   await page.locator("#btn-analyze").click();
   await expect(page.locator("#session-state")).toHaveText(BLOCKED_LABEL, { timeout: 15000 });
-  const leaked = (await outbound(page)).slice(beforeCalls.length);
-  expect(leaked).toEqual([]);
-  expect(leaked.some((call) => call.includes(EMAIL) || call.includes(PHONE))).toBe(false);
+  const newAnalyzerCalls = (await outbound(page)).slice(beforeCalls.length);
+  expect(newAnalyzerCalls).toEqual([]);
+  expect(newAnalyzerCalls.some((call) => call.includes(EMAIL) || call.includes(PHONE))).toBe(false);
   const blocked = await state(page, id);
   expect(blocked.state).toBe("review_required");
   expect(blocked.result).toBeNull();
@@ -185,12 +186,12 @@ test("FR9 offline synthetic transcript reaches copy without a provider call", as
   expect(writes).toHaveLength(1);
   expect(writes[0]).toBe(DRAFT);
   const same = await state(page, id);
-  const sameDraft = same.draft as { text: string; approved: boolean };
+  const sameDraft = same.draft as { text: string; approved: boolean; approvedHash: string | null };
   expect(same.state).toBe("completed");
   expect(sameDraft.text).toBe(DRAFT);
   expect(sameDraft.approved).toBe(true);
   expect(writes[0]).toBe(sameDraft.text);
-  expect(hashDraft(sameDraft.text)).toBe(hashDraft(DRAFT));
+  expect(sameDraft.approvedHash).toBe(productionHashDraft(writes[0]));
   expect(hashDraft(`${DRAFT} extra`)).not.toBe(hashDraft(DRAFT));
   expect(readback).toBe(DRAFT);
   expect(requested.length).toBeGreaterThan(0);

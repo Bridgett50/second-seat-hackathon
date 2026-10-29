@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TRANSPORT_FAILURE_REASON, buildOfflineBrief, createSessionStore } from "../src/session.js";
+import { hashDraft } from "../src/draftApproval.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -228,7 +229,7 @@ describe("session draft reply", () => {
     const { store, id } = await completedStore();
     const s = store.getState(id);
     expect(s.state).toBe("completed");
-    expect(s.draft).toEqual({ text: "", origin: "user", approved: false });
+    expect(s.draft).toEqual({ text: "", origin: "user", approved: false, approvedHash: null });
   });
 
   it("zero-findings transcript still reaches an approvable draft", async () => {
@@ -236,20 +237,30 @@ describe("session draft reply", () => {
     const s = store.getState(id);
     expect(s.state).toBe("completed");
     expect(s.result?.entries).toEqual([]);
-    expect(s.draft).toEqual({ text: "", origin: "user", approved: false });
+    expect(s.draft).toEqual({ text: "", origin: "user", approved: false, approvedHash: null });
     store.editDraft(id, "Thanks, noted.");
     const approved = store.approveDraft(id, "Thanks, noted.");
-    expect(approved.draft).toEqual({ text: "Thanks, noted.", origin: "user", approved: true });
+    expect(approved.draft).toEqual({
+      text: "Thanks, noted.",
+      origin: "user",
+      approved: true,
+      approvedHash: hashDraft("Thanks, noted."),
+    });
   });
 
   it("edit -> approve marks the exact text approved; further edit clears approval", async () => {
     const { store, id } = await completedStore();
     let s = store.editDraft(id, "hello draft");
-    expect(s.draft).toEqual({ text: "hello draft", origin: "user", approved: false });
+    expect(s.draft).toEqual({ text: "hello draft", origin: "user", approved: false, approvedHash: null });
     s = store.approveDraft(id, "hello draft");
-    expect(s.draft).toEqual({ text: "hello draft", origin: "user", approved: true });
+    expect(s.draft).toEqual({
+      text: "hello draft",
+      origin: "user",
+      approved: true,
+      approvedHash: hashDraft("hello draft"),
+    });
     s = store.editDraft(id, "hello draft v2");
-    expect(s.draft).toEqual({ text: "hello draft v2", origin: "user", approved: false });
+    expect(s.draft).toEqual({ text: "hello draft v2", origin: "user", approved: false, approvedHash: null });
   });
 
   it("approve rejects mismatched text and empty drafts", async () => {
@@ -265,7 +276,7 @@ describe("session draft reply", () => {
     store.editDraft(id, "keep me");
     store.approveDraft(id, "keep me");
     const s = store.rejectDraft(id);
-    expect(s.draft).toEqual({ text: "keep me", origin: "user", approved: false });
+    expect(s.draft).toEqual({ text: "keep me", origin: "user", approved: false, approvedHash: null });
   });
 
   it("setTranscript and correct clear the draft", async () => {
