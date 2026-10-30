@@ -360,4 +360,29 @@ describe("F140-2 Approve and Send are bound to the displayed package", () => {
       await ctx.close();
     }
   }, 120_000);
+// --- end of F140-2 test part 8 ---
+
+  it("F140-2d an unrelated response after an unsaved edit keeps the edit and the outgoing lock until Save", async () => {
+    const ctx = await browser.newContext();
+    try {
+      const tabA = await ctx.newPage();
+      const roomA = await prepareRoom(ctx, tabA);
+      await saveViaUi(tabA, VERSION_A);
+      expect((await clickAndWait(tabA, "#approve")).status).toBe(200);
+      expect(await tabA.locator("#evidence-copy").count(), "approved package offers copy text").toBe(1);
+      const sentBefore = svc.sentBodies().length;
+      const outgoing: string[] = [];
+      tabA.on("request", (r) => {
+        if (!isApi(r.url())) return;
+        const m = /"action":"([a-z-]+)"/.exec(r.postData() ?? "");
+        const a = m?.[1] ?? "";
+        if (a === "approve" || a === "send" || a === "evidence-export") outgoing.push(a);
+      });
+      const unsaved = "Synthetic unsaved owner correction";
+      await tabA.locator("#package-editor").fill(unsaved);
+      await tabA.locator("#compare-input").fill("Synthetic imported comparison text");
+      const cmp = await clickAndWait(tabA, "#compare-run");
+      expect(cmp.status, "Compare succeeds").toBe(200);
+      await settle(tabA);
+      // --- end of F140-2 test part 9 ---
 });
