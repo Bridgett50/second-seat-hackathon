@@ -609,7 +609,18 @@ export function createMeetingRoomService(opts?: {
           }
           return {
             status: 200,
-            body: { snapshot: snap(roomId, entry, after), announcements },
+            body: {
+              snapshot: snap(roomId, entry, after),
+              announcements,
+              // Guided steps 7 and 8 return their outputs in the same fields
+              // the Compare and Export actions use, so the page can show them.
+              ...(step?.id === "demo-compare"
+                ? { comparison: (entry.demo.result("demo-compare") as { comparison?: unknown } | undefined)?.comparison ?? null }
+                : {}),
+              ...(step?.id === "demo-evidence" && typeof entry.demo.result("demo-evidence") === "string"
+                ? { evidenceJson: entry.demo.result("demo-evidence") as string }
+                : {}),
+            },
           };
         }
         case "demo-restart": {
