@@ -17,6 +17,7 @@ import {
   MEETING_ROOM_PATH,
   MEETING_ROOM_POST_FIELDS,
   MeetingRoomBusyError,
+  type MeetingRoomService,
   meetingRoomSetCookie,
   meetingRoomStoreKey,
 } from "./meetingRoom.js";
@@ -137,6 +138,8 @@ export interface WebServerDeps {
   sender?: (text: string) => Promise<unknown> | unknown;
   /** Last text handed to the sender by /api/send (redacted only, never raw). */
   lastSent?: { text: string };
+  /** Meeting room service; defaults to a new one (tests inject a fake-transport service). */
+  meetingRoom?: MeetingRoomService;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -285,7 +288,7 @@ export function createWebServer(deps?: WebServerDeps) {
       : null;
   const liveAvailable = liveStore !== null;
   const sessions = routeSessions(offlineStore, liveStore);
-  const meetingRoom = createMeetingRoomService();
+  const meetingRoom = deps?.meetingRoom ?? createMeetingRoomService();
   const gate = deps?.gate ?? createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
   const sent: { text: string } = deps?.lastSent ?? { text: "" };
   const sender =
@@ -433,8 +436,11 @@ export function createWebServer(deps?: WebServerDeps) {
           }
           const body = asRecord(parsed);
           if (url.pathname === MEETING_ROOM_API) {
+            // Bind every action to its browser: only the store key in this
+            // request's own mr_store cookie may read or act on a room.
+            const callerKey = meetingRoomStoreKey(req.headers.cookie);
             void meetingRoom
-              .act(body ?? {}, req.headers)
+              .actAs(callerKey, body ?? {}, req.headers)
               .then((r) =>
                 json(res, r.status, {
                   ...r.body,

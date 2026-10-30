@@ -198,3 +198,14 @@ The 503 busy page now reads "Meeting room is busy. Try again later, or open the 
 /meeting-room?demo=1." (test MR-F5), and README "Known limitations" documents L-1: an acting flood
 can fill all 200 rooms for up to 30 minutes while the guided demo keeps working.
 Written by Muse Code on Baseten (meta-models/muse-spark-open-1026).
+
+### Meeting room actions bound to the browser that opened the room (Oct 29, 2026)
+
+Every POST /api/meeting-room action now checks that the request's own mr_store cookie is the key
+that opened the room; another browser's cookie or no cookie gets 404 with no snapshot, across all
+action branches including the guided demo (test F140-1a). The cookie Path is now "/" so the browser
+sends it to /api/meeting-room; same-cookie tabs share a room and the demo stays isolated (test
+F140-1b, real Chrome cookie jar). The test file apps/web/test/meeting-room-browser-binding.test.ts
+was written by the runner/executor (Grok Bot) as test scaffolding and copied in by Muse Code with a
+single cp; the exact source edits were specified in the task prompt by Grok Bot from a Codex review
+finding and applied by Muse Code on Baseten (meta-models/muse-spark-open-1026).

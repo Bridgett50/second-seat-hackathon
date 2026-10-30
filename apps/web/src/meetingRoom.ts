@@ -124,7 +124,7 @@ function cookieHostIsLoopback(value: string | undefined): boolean {
  * get `Secure`.
  */
 export function meetingRoomSetCookie(key: string, headers: IncomingHttpHeaders): string {
-  const base = `${MEETING_ROOM_COOKIE}=${key}; Path=/meeting-room; HttpOnly; SameSite=Strict; Max-Age=86400`;
+  const base = `${MEETING_ROOM_COOKIE}=${key}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`;
   const host = headers.host;
   const fwdHost = headers["x-forwarded-host"];
   const fwdProto = headers["x-forwarded-proto"];
@@ -163,6 +163,16 @@ export type MeetingRoomActionResult = {
 export type MeetingRoomService = {
   open(search: string, headers: IncomingHttpHeaders, storeKey?: string): MeetingRoomSnapshot;
   act(
+    body: Readonly<Record<string, unknown>>,
+    headers: IncomingHttpHeaders,
+  ): Promise<{ status: number; body: MeetingRoomActionResult }>;
+  /**
+   * act() bound to a browser: answers 404 with no snapshot, before reading
+   * or changing anything, unless `callerKey` (the store key from this
+   * request's own mr_store cookie) is the key that opened the room.
+   */
+  actAs(
+    callerKey: string | null,
     body: Readonly<Record<string, unknown>>,
     headers: IncomingHttpHeaders,
   ): Promise<{ status: number; body: MeetingRoomActionResult }>;
@@ -319,7 +329,7 @@ export function createMeetingRoomService(opts?: {
     };
   }
 
-  return {
+  const service: MeetingRoomService = {
     open(search: string, headers: IncomingHttpHeaders, storeKey = "default"): MeetingRoomSnapshot {
       const testMode = meetingRoomFakeSendAllowed(env, headers);
       // A new store key past the cap evicts an open-only key first, else a
@@ -591,6 +601,19 @@ export function createMeetingRoomService(opts?: {
       return { status: 200, body: result };
     },
 
+    async actAs(
+      callerKey: string | null,
+      body: Readonly<Record<string, unknown>>,
+      headers: IncomingHttpHeaders,
+    ): Promise<{ status: number; body: MeetingRoomActionResult }> {
+      const roomId = body["roomId"];
+      const entry = typeof roomId === "string" ? rooms.get(roomId) : undefined;
+      if (callerKey === null || entry === undefined || entry.storeKey !== callerKey) {
+        return notFound();
+      }
+      return service.act(body, headers);
+    },
+
     sentBodies(): readonly string[] {
       return [...sent];
     },
@@ -604,4 +627,5 @@ export function createMeetingRoomService(opts?: {
       };
     },
   };
+  return service;
 }
