@@ -360,4 +360,59 @@ describe("F140-2 Approve and Send are bound to the displayed package", () => {
       await ctx.close();
     }
   }, 120_000);
+// --- end of F140-2 test part 8 ---
+
+  it("F140-2d an unrelated response after an unsaved edit keeps the edit and the outgoing lock until Save", async () => {
+    const ctx = await browser.newContext();
+    try {
+      const tabA = await ctx.newPage();
+      const roomA = await prepareRoom(ctx, tabA);
+      await saveViaUi(tabA, VERSION_A);
+      expect((await clickAndWait(tabA, "#approve")).status).toBe(200);
+      expect(await tabA.locator("#evidence-copy").count(), "approved package offers copy text").toBe(1);
+      const sentBefore = svc.sentBodies().length;
+      const outgoing: string[] = [];
+      tabA.on("request", (r) => {
+        if (!isApi(r.url())) return;
+        const m = /"action":"([a-z-]+)"/.exec(r.postData() ?? "");
+        const a = m?.[1] ?? "";
+        if (a === "approve" || a === "send" || a === "evidence-export") outgoing.push(a);
+      });
+      const unsaved = "Synthetic unsaved owner correction";
+      await tabA.locator("#package-editor").fill(unsaved);
+      await tabA.locator("#compare-input").fill("Synthetic imported comparison text");
+      const cmp = await clickAndWait(tabA, "#compare-run");
+      expect(cmp.status, "Compare succeeds").toBe(200);
+      await settle(tabA);
+      // --- end of F140-2 test part 9 ---
+      expect(await tabA.locator("#package-editor").inputValue(), "the unsaved edit survives Compare").toBe(unsaved);
+      expect(await tabA.locator("#approve").isDisabled(), "Approve disabled after Compare").toBe(true);
+      expect(await tabA.locator("#send").isDisabled(), "Send disabled after Compare").toBe(true);
+      expect(await tabA.locator("#evidence-export").isDisabled(), "export disabled after Compare").toBe(true);
+      expect(await tabA.locator("#evidence-mailto").count(), "mailto cleared after Compare").toBe(0);
+      expect(await tabA.locator("#evidence-copy").count(), "copy text cleared after Compare").toBe(0);
+      for (const id of ["approve", "send", "evidence-export"]) {
+        await tabA.evaluate(`document.getElementById(${JSON.stringify(id)})?.click()`);
+      }
+      await settle(tabA);
+      expect(outgoing, "no outgoing action dispatched while dirty").toEqual([]);
+      expect(svc.sentBodies().length, "zero transport calls while dirty").toBe(sentBefore);
+      // --- end of F140-2 test part 10 ---
+      const saved = await clickAndWait(tabA, "#package-save");
+      expect(saved.status, "Save B succeeds").toBe(200);
+      expect(await tabA.locator("#mr-approval-state").textContent()).toContain("Approved: no");
+      expect(await displayedPackage(tabA)).toContain(unsaved);
+      expect((await clickAndWait(tabA, "#approve")).status, "explicit approve of B").toBe(200);
+      const composed = (await sharedView(ctx, roomA)).draft.body;
+      expect(composed).toContain(unsaved);
+      expect((await clickAndWait(tabA, "#send")).status).toBe(200);
+      expect(svc.sentBodies().length, "exactly one fake Send").toBe(sentBefore + 1);
+      expect(svc.sentBodies()[sentBefore], "the Send carries exactly the saved B package").toBe(composed);
+      expect(svc.sentBodies()[sentBefore], "the old approved A text is not sent").not.toContain(VERSION_A);
+      expect(outgoing).toEqual(["approve", "send"]);
+    } finally {
+      await ctx.close();
+    }
+  }, 120_000);
+// --- end of F140-2 test part 11 ---
 });
