@@ -264,4 +264,21 @@ describe("F140-4f overlapping Next calls around Send cannot bypass or duplicate 
     expect(state.snap.view.draft.sendState, "package stays unsent").toBe("unsent");
     expect(b.notes.join("\n"), "second call announces not sent").toContain("not sent");
   });
+
+  it("F140-4f test mode: three overlapping Next calls from the approve step send exactly once", async () => {
+    const svc = createMeetingRoomService({ env: TEST_ENV });
+    const page = svc.open("?demo=1", LOOPBACK, randomUUID());
+    for (let i = 0; i < 4; i += 1) await step(svc, page.roomId, "demo-next", LOOPBACK);
+    const results = await Promise.all([
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+    ]);
+    expect(results.map((r) => r.status), "all three Next calls succeed").toEqual([200, 200, 200]);
+    expect(svc.sentBodies().length, "exactly one fake send").toBe(1);
+    const state = await step(svc, page.roomId, "state", LOOPBACK);
+    expect(state.snap.demo?.completed, "approve, Send and compare each counted once").toBe(7);
+    expect(state.snap.view.draft.sendState, "package sent once").toBe("sent");
+    expect(svc.sentBodies()[0], "the approved package was sent").toBe(state.snap.view.draft.body);
+  });
 });
