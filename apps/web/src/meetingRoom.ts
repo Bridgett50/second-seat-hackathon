@@ -596,6 +596,15 @@ export function createMeetingRoomService(opts?: {
           // overlapping Next cannot act on a stale "current step".
           const sendAllowed = meetingRoomFakeSendAllowed(env, headers) && entry.testMode;
           const outcome = await entry.demo.nextUnless((s) => s.id === "demo-send" && !sendAllowed);
+          const current = rooms.get(roomId);
+          if (current !== undefined && current !== entry) {
+            // Restart replaced this demo while the call waited: report the
+            // fresh room and do nothing on the old one.
+            return {
+              status: 200,
+              body: { snapshot: snap(roomId, current, current.room.view()), announcements: [] },
+            };
+          }
           if (outcome !== null && outcome.skipped) {
             // Sending is unavailable here: record the Send step as not
             // attempted and continue the guide. Nothing is sent, the package
