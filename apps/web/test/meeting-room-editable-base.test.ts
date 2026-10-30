@@ -22,3 +22,25 @@ type View = {
   draft: { body: string; approved: boolean; sendState: string };
   transcript: string[];
 // --- end of F140-3 test part 2 ---
+};
+
+let svc: MeetingRoomService;
+let server: Server;
+let base = "";
+let browser: Browser;
+
+beforeAll(async () => {
+  svc = createMeetingRoomService({ env: TEST_ENV });
+  server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
+// --- end of F140-3 test part 3 ---
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  browser = await chromium.launch({ executablePath: CHROME, headless: true });
+}, 60_000);
+
+afterAll(async () => {
+  await browser?.close();
+  await new Promise<void>((resolve) => server?.close(() => resolve()));
+});
+
+// --- end of F140-3 test part 4 ---
