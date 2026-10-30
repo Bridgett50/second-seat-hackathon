@@ -131,6 +131,27 @@ function validateName(name) {
   }
 }
 
+function gunzipWithLimit(input, limit) {
+  return new Promise((resolve, reject) => {
+    const gunzip = zlib.createGunzip();
+    const chunks = [];
+    let total = 0;
+    gunzip.on("data", (c) => {
+      total += c.length;
+      if (total > limit) {
+        const err = new Error("decompressed too large");
+        gunzip.destroy(err);
+        reject(err);
+        return;
+      }
+      chunks.push(c);
+    });
+    gunzip.on("end", () => resolve(Buffer.concat(chunks)));
+    gunzip.on("error", reject);
+    gunzip.end(input);
+  });
+}
+
 async function main() {
   let data;
   try {
@@ -144,14 +165,13 @@ async function main() {
     fail("bootstrap: hash mismatch");
   }
 
-  // Decompress
+  // Decompress with bounded output
   let decompressed;
   try {
-    decompressed = zlib.gunzipSync(data);
+    decompressed = await gunzipWithLimit(data, MAX_TOTAL_EXTRACTED);
   } catch (e) {
     fail(`bootstrap: decompress failed: ${e.message}`);
   }
-  if (decompressed.length > MAX_TOTAL_EXTRACTED) fail("bootstrap: decompressed too large");
 
   let archive;
   try {
