@@ -2,9 +2,19 @@ Pre-existing: the Second Seat idea and an earlier prototype. Built this week (Oc
 
 # Second Seat
 
+## Founder story
+
+I'm a solo founder running Mo'ja Liquor and Loving Grace Technologies. There are days when I need to be in three different meetings at the exact same time. I can't clone myself, but I can build an AI twin to sit in the second seat.
+
+Second Seat is my answer to the solo founder's paradox: how to scale your time without sacrificing your privacy or your voice. Today, it is a scripted meeting room where my AI twin attends, and I can guide it live or take over instantly. It keeps an evidence record of the session, masks sensitive details, and drafts the follow-up. It checks the draft against an imported email draft. I review and approve the exact package, and it sends through a test path.
+
+It doesn't join live calls yet, and it doesn't send real emails yet. That is the vision. But what is built right now is the safety layer: an AI twin that protects your data and keeps you in the final seat. Every change was independently reviewed and tested.
+
+## What it does
+
 Vendor calls are where people agree to things they never meant to agree to. Second Seat sits next to you after the call. You paste the meeting text. Glimmer, running on our own GPU, masks the personal details first. You check and approve that redacted text. Only then does Spark write a short brief where every line cites the part of the meeting it came from: what was offered, what was asked, what needs a decision, and where someone leaned on you. You edit a reply, approve that exact text, and copy it out yourself.
 
-Second Seat never sends a reply or message to the vendor, never joins calls, and takes no action. You decide.
+Second Seat never sends a real reply or message to the vendor, never sends real email, and never joins real calls. In the meeting room demo, it sends only through a test (fake) transport, and only after you approve the exact package. You decide.
 
 Before the approved text is sent, a redaction check has to pass. After the brief is written, a second check has to pass. If a recorded support verdict is available, that is checked too. A hard failure stops the step and the page says "Needs owner review" without quoting the provider. Noisy warnings are sent to you for review and do not block the brief. Offline and Demo Mode run the same checks on the local brief. You still approve the redacted text and the draft yourself.
 

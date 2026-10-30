@@ -1,4 +1,10 @@
+import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
+
+// System Chrome when PLAYWRIGHT_CHROME_PATH is set or /usr/bin/google-chrome exists; otherwise Playwright's bundled Chromium.
+const CHROME_PATH = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+const CHROME_LAUNCH: { executablePath?: string } =
+  process.env.PLAYWRIGHT_CHROME_PATH || existsSync(CHROME_PATH) ? { executablePath: CHROME_PATH } : {};
 
 export default defineConfig({
   testDir: "./e2e-meeting-room",
@@ -26,10 +32,7 @@ export default defineConfig({
       name: "chrome",
       use: {
         ...devices["Desktop Chrome"],
-        launchOptions: {
-          executablePath:
-            process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome",
-        },
+        launchOptions: { ...CHROME_LAUNCH },
         headless: true,
       },
     },

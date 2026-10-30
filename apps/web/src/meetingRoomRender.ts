@@ -253,7 +253,7 @@ function keptComparisonHtml(snap: MeetingRoomSnapshot): string {
 function compareSection(snap: MeetingRoomSnapshot): string {
   return (
     `${sectionOpen("compare")}${esc(headingFor("compare", snap))}</h2>` +
-    `<p>Synthetic draft import only — paste text or read a local file. Nothing leaves the browser.</p>` +
+    `<p>Synthetic draft import only — paste text or read a local file. Compare sends this text to this app's server; this demo does not call an external model or send email.</p>` +
     `<label>Imported draft:<textarea id="compare-input" rows="6" cols="60" aria-label="${esc(A11Y_LABELS["compare-input"])}"></textarea></label>` +
     `<div><input id="compare-file" type="file" accept=".txt,.eml,text/plain" aria-label="${esc(A11Y_LABELS["compare-file"])}"> ` +
     `<button type="button" id="compare-run" aria-label="${esc(A11Y_LABELS["compare-run"])}" data-mr-action="compare">Compare</button></div>` +
