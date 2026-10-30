@@ -385,4 +385,17 @@ describe("F140-2 Approve and Send are bound to the displayed package", () => {
       expect(cmp.status, "Compare succeeds").toBe(200);
       await settle(tabA);
       // --- end of F140-2 test part 9 ---
+      expect(await tabA.locator("#package-editor").inputValue(), "the unsaved edit survives Compare").toBe(unsaved);
+      expect(await tabA.locator("#approve").isDisabled(), "Approve disabled after Compare").toBe(true);
+      expect(await tabA.locator("#send").isDisabled(), "Send disabled after Compare").toBe(true);
+      expect(await tabA.locator("#evidence-export").isDisabled(), "export disabled after Compare").toBe(true);
+      expect(await tabA.locator("#evidence-mailto").count(), "mailto cleared after Compare").toBe(0);
+      expect(await tabA.locator("#evidence-copy").count(), "copy text cleared after Compare").toBe(0);
+      for (const id of ["approve", "send", "evidence-export"]) {
+        await tabA.evaluate(`document.getElementById(${JSON.stringify(id)})?.click()`);
+      }
+      await settle(tabA);
+      expect(outgoing, "no outgoing action dispatched while dirty").toEqual([]);
+      expect(svc.sentBodies().length, "zero transport calls while dirty").toBe(sentBefore);
+      // --- end of F140-2 test part 10 ---
 });
