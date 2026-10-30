@@ -168,6 +168,10 @@ export type MeetingRoomSnapshot = {
     readonly caption: string | null;
     /** Set when the guided Send step was not attempted; null otherwise. */
     readonly sendNote: string | null;
+    /** Guided step 7's comparison, kept until Restart; null before step 7. */
+    readonly comparison?: unknown;
+    /** Guided step 8's evidence JSON, kept until Restart; null before step 8. */
+    readonly evidenceJson?: string | null;
   };
   readonly fakeSend: boolean;
   readonly restored: boolean;
@@ -342,6 +346,12 @@ export function createMeetingRoomService(opts?: {
               sendNote:
                 (entry.demo.result("demo-send") as { skipped?: boolean } | undefined)?.skipped === true
                   ? DEMO_SEND_NOT_SENT
+                  : null,
+              comparison:
+                (entry.demo.result("demo-compare") as { comparison?: unknown } | undefined)?.comparison ?? null,
+              evidenceJson:
+                typeof entry.demo.result("demo-evidence") === "string"
+                  ? (entry.demo.result("demo-evidence") as string)
                   : null,
             },
       fakeSend: entry.testMode,
