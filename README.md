@@ -6,7 +6,7 @@ Pre-existing: the Second Seat idea and an earlier prototype. Built this week (Oc
 
 I'm a solo founder running Mo'ja Liquor and Loving Grace Technologies. There are days when I need to be in three different meetings at the exact same time. I can't clone myself, but I can build an AI twin to sit in the second seat.
 
-Second Seat is my answer to the solo founder's paradox: how to scale your time without sacrificing your privacy or your voice. Today, it is a scripted meeting room where my AI twin attends, and I can guide it live or take over instantly. It keeps an evidence record of the session, masks sensitive details, and drafts the follow-up. It checks the draft against my real email thread. I review and approve the exact package, and it sends through a test path.
+Second Seat is my answer to the solo founder's paradox: how to scale your time without sacrificing your privacy or your voice. Today, it is a scripted meeting room where my AI twin attends, and I can guide it live or take over instantly. It keeps an evidence record of the session, masks sensitive details, and drafts the follow-up. It checks the draft against an imported email draft. I review and approve the exact package, and it sends through a test path.
 
 It doesn't join live calls yet, and it doesn't send real emails yet. That is the vision. But what is built right now is the safety layer: an AI twin that protects your data and keeps you in the final seat. Every change was independently reviewed and tested.
 
