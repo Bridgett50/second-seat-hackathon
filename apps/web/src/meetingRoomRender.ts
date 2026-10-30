@@ -89,6 +89,7 @@ function demoSection(snap: MeetingRoomSnapshot): string {
     `<p>Synthetic walkthrough of the twin room. Nothing here is real data and nothing is really sent.</p>` +
     `<p id="demo-status" role="status" aria-label="${esc(label)}">${esc(caption)}</p>` +
     `<p id="demo-progress">${demo.completed} / ${demo.total}</p>` +
+    (demo.sendNote === null ? "" : `<p id="demo-send-note" role="note">${esc(demo.sendNote)}</p>`) +
     `<div><button type="button" id="demo-next" aria-label="${esc(A11Y_LABELS["demo-next"])}" data-mr-action="demo-next"${dis}>Next step</button> ` +
     `<button type="button" id="demo-restart" aria-label="${esc(A11Y_LABELS["demo-restart"])}" data-mr-action="demo-restart">Restart demo</button></div>` +
     `<p>Shortcuts: Right arrow or N advances one step, R restarts. Keys typed in inputs are ignored.</p>` +

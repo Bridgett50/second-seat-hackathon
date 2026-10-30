@@ -219,7 +219,10 @@ describe("meeting room page", () => {
       { roomId: snap.roomId, action: "demo-next" },
       HEADERS,
     );
-    expect(refused.status).toBe(403);
+    // F140-4: the guide records Send as not attempted and moves on.
+    expect(refused.status).toBe(200);
+    expect(refused.body.snapshot?.demo?.completed).toBe(6);
+    expect(refused.body.snapshot?.demo?.sendNote).toContain("not sent");
     expect(refused.body.announcements).toContain(SEND_DISABLED_REASON);
     expect(svc.sentBodies()).toHaveLength(0);
     expect(refused.body.snapshot?.view.draft.sendState).not.toBe("sent");
