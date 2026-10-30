@@ -285,7 +285,7 @@ now launch system Chrome when PLAYWRIGHT_CHROME_PATH is set or /usr/bin/google-c
 otherwise Playwright's bundled Chromium, matching the four browser test files changed on
 muse/f140-4-public-guide. The edits and this entry were written by Muse Code on Baseten
 (meta-models/muse-spark-open-1026), in small edits from exact contents that Grok Bot specified in
-the task prompt, in three short Muse sessions on muse/f140-5-import-privacy (the first two stopped
+the task prompt, in four short Muse sessions on muse/f140-5-import-privacy (the first two stopped
 on provider errors; each next session continued from the remaining steps).
 
 ### Demo reset and Restart tests, browser fallback, announcement period (Oct 30, 2026)
