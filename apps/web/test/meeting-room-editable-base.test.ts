@@ -66,3 +66,25 @@ function viewOf(r: ActResult): View {
 /** Let the page run queued tasks (response handlers) after a response. */
 async function settle(page: Page): Promise<void> {
 // --- end of F140-3 test part 6 ---
+  await page.evaluate("new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))");
+}
+
+/** Click a control, require HTTP 200, let the page apply the result. */
+async function act(page: Page, selector: string): Promise<View> {
+  const r = await clickAndWait(page, selector);
+  expect(r.status, `${selector} succeeds`).toBe(200);
+  await settle(page);
+  return viewOf(r);
+}
+// --- end of F140-3 test part 7 ---
+
+async function displayedPackage(page: Page): Promise<string> {
+  return (await page.locator('section[aria-labelledby="mr-package-heading"] pre').first().textContent()) ?? "";
+}
+
+function count(haystack: string, needle: string): number {
+  if (needle.length === 0) throw new Error("empty needle");
+  return haystack.split(needle).length - 1;
+}
+
+// --- end of F140-3 test part 8 ---
