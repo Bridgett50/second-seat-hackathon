@@ -222,6 +222,20 @@ Both the source edits and the test file apps/web/test/meeting-room-approve-displ
 written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
 contents that Grok Bot specified in the task prompt from a Codex review finding.
 
+### Unsaved package edits survive unrelated responses (Oct 30, 2026)
+
+A Codex recheck of #142 found that any response carrying page HTML (for example Compare) replaced
+the page and cleared the unsaved-edit state, so an unsaved correction was discarded and Approve,
+Send and export were enabled again for the previously approved text. Now only a successful Save of
+the package clears the unsaved state; any other response keeps the editor text and keeps Approve,
+Send and export disabled with the copy/mailto affordances cleared. Test F140-2d: approve A, type
+unsaved B, Compare, then the editor still shows B, outgoing controls stay disabled and no outgoing
+request or fake transport call happens; after Save B and an explicit Approve, exactly one fake
+Send carries exactly B. F140-2d failed on aa8f7d9 and passes on this head; F140-2c is unchanged.
+The renderer change and the test were written by Muse Code on Baseten
+(meta-models/muse-spark-open-1026) from exact contents that Grok Bot specified in the task
+prompts, one small part per short Muse session, each committed separately.
+
 ### Follow-up: Muse Code rewrote the F140-1 test file (Oct 29, 2026)
 
 The entry "Meeting room actions bound to the browser that opened the room" above records that
