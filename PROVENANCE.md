@@ -263,3 +263,95 @@ written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edi
 contents that Grok Bot specified in the task prompts from a Codex review finding. Because the
 provider stream kept failing with protocol errors on one long session, the work was split into
 several short sequential Muse sessions, each committed separately on muse/f140-3-editable-base.
+
+### Guided compare and evidence steps show and keep their results (Oct 30, 2026)
+
+Guided steps 7 (compare) and 8 (evidence) used to drop their outputs: the demo-next response
+carried only the snapshot and announcements, and every response re-rendered the page empty. The
+demo-next response now returns the step-7 comparison and step-8 evidence JSON in the same fields
+the Compare and Export actions use, the snapshot keeps both until Restart, and the server render
+fills #compare-result and #evidence-json from it, so they stay visible after takeover. On a public
+demo the evidence shows the approved package hash and the unsent state, with no send receipt
+(tests F140-4c service and browser). The test cases and the source edits in apps/web/src/meetingRoom.ts
+and apps/web/src/meetingRoomRender.ts were written by Muse Code on Baseten
+(meta-models/muse-spark-open-1026), in small edits from exact contents that Grok Bot specified in the
+task prompts from a Codex recheck finding, split into ten short sequential Muse sessions, each
+committed separately on muse/f140-4-public-guide.
+
+### Demo reset and Restart tests, browser fallback, announcement period (Oct 30, 2026)
+
+Follow-ups on muse/f140-4-public-guide. services/bot/test/t2-demo-mode.test.ts T13-10 holds a slow
+step 1, queues a second next(), calls reset(), and checks the queued call is dropped and step 1
+then runs once (guard; it fails if the queued call ignores the demo generation).
+apps/web/test/meeting-room-demo-guide.test.ts adds a test-mode case where a Next held inside the
+old demo across Restart answers with the fresh room at 0 of 9 (regression). The four meeting-room
+browser test files launch system Chrome when PLAYWRIGHT_CHROME_PATH is set or
+/usr/bin/google-chrome exists, and otherwise Playwright's bundled Chromium; README.md notes this.
+demoStepAnnouncement in packages/core/src/t2/a11y.ts adds a final period only when the caption
+lacks one (every caption already ended with one, so announcements read "..");
+services/bot/test/t2-a11y.test.ts T17-7 covers it (regression). The source edits, tests, README
+line and this entry were written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in
+small edits from exact contents that Grok Bot specified in the task prompts, split into six short
+sequential Muse sessions, each committed separately on muse/f140-4-public-guide.
+
+### Overlapping guided-demo Next calls cannot bypass or duplicate Send (Oct 30, 2026)
+
+The meeting room's demo-next handler in apps/web/src/meetingRoom.ts checked "is the current step
+Send, and is sending allowed?" before queueing its call, so an overlapping Next could see a stale
+step. With two service-level calls issued together (Promise.all on the service, not a confirmed
+browser double-click; paired HTTP requests already advanced correctly), a public demo attempted
+Send instead of recording it as not sent. The demo controller in packages/core/src/t2/demo-mode.ts
+now has nextUnless(), which evaluates the skip check inside the queued call against the step that
+is current when the call runs, and demo-next uses it. Restart now resets the old controller before
+replacing the room, so a Next still queued on the old demo is dropped instead of running Send on
+the replaced room, and a call that waited across a Restart reports the fresh room. Tests in
+apps/web/test/meeting-room-demo-guide.test.ts: the public overlapping case (regression), test mode
+sends exactly once (guard), the same overlap over the real HTTP route (guard), and Restart with
+queued Next calls sends nothing and leaves a fresh room (regression). The source edits and tests
+were written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
+contents that Grok Bot specified in the task prompts from a Codex finding, split into nine short
+sequential Muse sessions, each committed separately on muse/f140-4-public-guide.
+
+### Guided demo skip and reset act in order with pending Next calls (Oct 30, 2026)
+
+After next() was serialized, skip() and reset() in packages/core/src/t2/demo-mode.ts still acted
+immediately, so a skip() issued while a next() was in flight skipped the wrong step, and a reset()
+during a pending next() let the stale step count after the restart. skip() now waits behind any
+in-flight calls and returns a Promise (the meeting room's Send-step handler in
+apps/web/src/meetingRoom.ts awaits it), and reset() takes effect at once and cancels calls issued
+before it, so their results are discarded (tests T13-8: next() and skip() together run step 1 and
+skip step 2; T13-9: after reset() nothing stale counts and the next call runs step 1 once). The
+source edits and tests T13-8 and T13-9 in services/bot/test/t2-demo-mode.test.ts were written by
+Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact contents that
+Grok Bot specified in the task prompts from a Codex recheck finding, split into four short
+sequential Muse sessions, each committed separately on muse/f140-4-public-guide.
+
+### Overlapping guided-demo Next calls advance one step each (Oct 30, 2026)
+
+The guided demo controller's next() in packages/core/src/t2/demo-mode.ts read the step at the
+current position, awaited it, and only then advanced, so two overlapping calls (a double click or
+two Next requests) both ran step 1 and the guide step never ran. Each next() call now waits for
+the previous one, so calls run one at a time in call order and each advances exactly one step
+(test T13-7: two concurrent calls return steps 1 and 2, two steps completed, the guide ran once).
+The source edit and test T13-7 in services/bot/test/t2-demo-mode.test.ts were written by Muse Code
+on Baseten (meta-models/muse-spark-open-1026), in small edits from exact contents that Grok Bot
+specified in the task prompts from a Codex recheck finding, split into three short sequential Muse
+sessions, each committed separately on muse/f140-4-public-guide.
+
+### Public guided demo no longer stalls at Send; Restart gives a fresh demo room (Oct 29, 2026)
+
+On a public demo (test mode absent or 0) the guided demo used to return 403 at the Send step
+forever (completed 5 of 9), and Restart only reset the captions while the room kept its approved,
+sent and paused state. Next now records the Send step as not attempted, shows a visible "not sent"
+note (no package is marked sent and no send receipt exists), and continues through comparison,
+evidence and takeover against the actual approved, unsent package; a direct Send stays 403.
+Restart now replaces the demo page's room, in-memory store and guide controller with fresh ones
+under the same page id, browser key and demo-cap slot, so a test-mode rerun sends exactly once
+more through the fake transport; ordinary rooms are never touched (tests F140-4a, F140-4b). The
+demo controller gained skip() for a not-permitted step. The existing MR-R4 render test was updated
+to the required behavior (200 and progression to step 6 instead of 403) and keeps its safety
+checks: the send-disabled reason is announced, zero fake sends, and the package is not sent.
+The source edits, the MR-R4 update and the new test apps/web/test/meeting-room-demo-guide.test.ts
+were written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
+contents that Grok Bot specified in the task prompts from a Codex review finding, split into
+several short sequential Muse sessions, each committed separately on muse/f140-4-public-guide.

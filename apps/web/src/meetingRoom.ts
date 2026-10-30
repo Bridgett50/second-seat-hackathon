@@ -49,6 +49,10 @@ export const PACKAGE_ID_MISSING_REASON =
 export const PACKAGE_ID_STALE_REASON =
   "The package changed since you reviewed it. Review the current package, then approve again.";
 
+/** Demo note when the guided Send step is not attempted (sending unavailable). */
+export const DEMO_SEND_NOT_SENT =
+  "Step 6 not sent: sending is unavailable on this public demo, so nothing was sent and there is no send receipt. The guide continues with the approved, unsent package.";
+
 /** Largest accepted `text` for the "guide" action, in characters. */
 export const MEETING_ROOM_MAX_GUIDANCE_CHARS = 2_000;
 
@@ -162,6 +166,12 @@ export type MeetingRoomSnapshot = {
     readonly total: number;
     readonly done: boolean;
     readonly caption: string | null;
+    /** Set when the guided Send step was not attempted; null otherwise. */
+    readonly sendNote: string | null;
+    /** Guided step 7's comparison, kept until Restart; null before step 7. */
+    readonly comparison?: unknown;
+    /** Guided step 8's evidence JSON, kept until Restart; null before step 8. */
+    readonly evidenceJson?: string | null;
   };
   readonly fakeSend: boolean;
   readonly restored: boolean;
@@ -333,6 +343,16 @@ export function createMeetingRoomService(opts?: {
               total: DEMO_STEPS.length,
               done: current === null,
               caption: current?.caption ?? null,
+              sendNote:
+                (entry.demo.result("demo-send") as { skipped?: boolean } | undefined)?.skipped === true
+                  ? DEMO_SEND_NOT_SENT
+                  : null,
+              comparison:
+                (entry.demo.result("demo-compare") as { comparison?: unknown } | undefined)?.comparison ?? null,
+              evidenceJson:
+                typeof entry.demo.result("demo-evidence") === "string"
+                  ? (entry.demo.result("demo-evidence") as string)
+                  : null,
             },
       fakeSend: entry.testMode,
       restored: entry.reused || entry.room.restoredFromStore(),
@@ -572,19 +592,34 @@ export function createMeetingRoomService(opts?: {
           break;
         case "demo-next": {
           if (entry.demo === null) return bad("Demo is not enabled for this room.");
-          if (
-            entry.demo.current()?.id === "demo-send" &&
-            (!meetingRoomFakeSendAllowed(env, headers) || !entry.testMode)
-          ) {
+          // Decide whether Send is allowed inside the queued demo call, so an
+          // overlapping Next cannot act on a stale "current step".
+          const sendAllowed = meetingRoomFakeSendAllowed(env, headers) && entry.testMode;
+          const outcome = await entry.demo.nextUnless((s) => s.id === "demo-send" && !sendAllowed);
+          const current = rooms.get(roomId);
+          if (current !== undefined && current !== entry) {
+            // Restart replaced this demo while the call waited: report the
+            // fresh room and do nothing on the old one.
             return {
-              status: 403,
-              body: {
-                snapshot: snap(roomId, entry, entry.room.view()),
-                announcements: [SEND_DISABLED_REASON],
-              },
+              status: 200,
+              body: { snapshot: snap(roomId, current, current.room.view()), announcements: [] },
             };
           }
-          const step = await entry.demo.next();
+          if (outcome !== null && outcome.skipped) {
+            // Sending is unavailable here: record the Send step as not
+            // attempted and continue the guide. Nothing is sent, the package
+            // stays unsent, and no send receipt is created.
+            const notes = [
+              SEND_DISABLED_REASON,
+              DEMO_SEND_NOT_SENT,
+              demoStepAnnouncement({ label: outcome.step.label, caption: outcome.step.caption }),
+            ];
+            return {
+              status: 200,
+              body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: notes },
+            };
+          }
+          const step = outcome?.step ?? null;
           const after = entry.room.view();
           const announcements = diffAnnouncements(before, after);
           if (step !== null) {
@@ -594,13 +629,47 @@ export function createMeetingRoomService(opts?: {
           }
           return {
             status: 200,
-            body: { snapshot: snap(roomId, entry, after), announcements },
+            body: {
+              snapshot: snap(roomId, entry, after),
+              announcements,
+              // Guided steps 7 and 8 return their outputs in the same fields
+              // the Compare and Export actions use, so the page can show them.
+              ...(step?.id === "demo-compare"
+                ? { comparison: (entry.demo.result("demo-compare") as { comparison?: unknown } | undefined)?.comparison ?? null }
+                : {}),
+              ...(step?.id === "demo-evidence" && typeof entry.demo.result("demo-evidence") === "string"
+                ? { evidenceJson: entry.demo.result("demo-evidence") as string }
+                : {}),
+            },
           };
         }
         case "demo-restart": {
           if (entry.demo === null) return bad("Demo is not enabled for this room.");
+          // Restart the real demo: a fresh isolated room, store and controller
+          // for this same page (same room id, browser key and demo-cap slot).
+          // Ordinary rooms and their stores are never touched.
+          // Reset the old controller first, so a Next still queued on it is
+          // dropped and cannot act (for example Send) on the replaced room.
           entry.demo.reset();
-          break;
+          const freshRoom = createTwinRoom({
+            testMode: entry.testMode,
+            store: createInMemoryRoomStore(),
+            transport,
+          });
+          const fresh: RoomEntry = {
+            ...entry,
+            room: freshRoom,
+            demo: createDemoController(freshRoom),
+            reused: false,
+          };
+          rooms.set(roomId, fresh);
+          return {
+            status: 200,
+            body: {
+              snapshot: snap(roomId, fresh, freshRoom.view()),
+              announcements: ["Demo restarted with a fresh room."],
+            },
+          };
         }
         default:
           return bad("Unknown meeting room action.");

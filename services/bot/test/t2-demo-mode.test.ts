@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { packageHash } from "../src/meeting/connector.js";
 import {
   createDemoController,
@@ -285,5 +285,81 @@ describe("t2 demo mode", () => {
     expect(body).toContain("Action items for Q3 launch sync");
     for (const value of raw) expect(body).not.toContain(value);
     expect(room.view().draft.sha256).toBe(packageHash(body));
+  });
+
+  it("T13-7 two concurrent next() calls run one step each, in order, with no duplicate step 1", async () => {
+    const { room } = makeRoom();
+    const demo = createDemoController(room);
+    const [first, second] = await Promise.all([demo.next(), demo.next()]);
+    expect(first?.id, "first concurrent next() runs step 1").toBe(DEMO_STEPS[0]!.id);
+    expect(second?.id, "second concurrent next() runs step 2, not step 1 again").toBe(DEMO_STEPS[1]!.id);
+    expect(demo.completed(), "exactly two steps completed").toBe(2);
+    expect(demo.current()?.id, "step 3 is next").toBe(DEMO_STEPS[2]!.id);
+    expect(room.view().guidance.length, "the guide step ran exactly once").toBe(1);
+  });
+
+  it("T13-8 next() and skip() called together act in call order: step 1 runs, step 2 is skipped", async () => {
+    const { room } = makeRoom();
+    const demo = createDemoController(room);
+    const [ran, skipped] = await Promise.all([demo.next(), demo.skip()]);
+    expect(ran?.id, "next() runs step 1").toBe(DEMO_STEPS[0]!.id);
+    expect(skipped?.id, "skip() skips step 2, not step 1").toBe(DEMO_STEPS[1]!.id);
+    expect(demo.completed(), "exactly two steps completed").toBe(2);
+    expect(demo.result(DEMO_STEPS[0]!.id), "step 1 ran, not marked skipped").toBe(room.view().selectedMeetingTitle);
+    expect(demo.result(DEMO_STEPS[1]!.id), "step 2 is marked skipped").toEqual({ skipped: true });
+    expect(room.view().guidance.length, "the skipped guide step did not run").toBe(0);
+  });
+
+  it("T13-9 reset() after pending next() calls restarts cleanly: nothing stale counts, then step 1 runs once", async () => {
+    const { room } = makeRoom();
+    const demo = createDemoController(room);
+    const first = demo.next();
+    const second = demo.next();
+    demo.reset();
+    await Promise.all([first, second]);
+    expect(demo.completed(), "next() calls issued before reset() do not count").toBe(0);
+    expect(demo.current()?.id, "the script is back at step 1").toBe(DEMO_STEPS[0]!.id);
+    expect(demo.result(DEMO_STEPS[0]!.id), "no stale step-1 result").toBeUndefined();
+    const again = await demo.next();
+    expect(again?.id, "step 1 runs after the reset").toBe(DEMO_STEPS[0]!.id);
+    expect(demo.completed(), "exactly one step completed after the reset").toBe(1);
+  });
+
+  it("T13-10 reset() while a slow step 1 runs drops the queued next(): step 1 ran once, then runs once after the reset", async () => {
+    const { room } = makeRoom();
+    const demo = createDemoController(room);
+    const step1 = DEMO_STEPS[0]!;
+    const original = step1.run.bind(step1);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const spy = vi.spyOn(step1, "run").mockImplementationOnce(async (r) => {
+      markStarted();
+      await gate;
+      return original(r);
+    });
+    try {
+      const p1 = demo.next();
+      await started;
+      const p2 = demo.next();
+      demo.reset();
+      release();
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1, "the slow step-1 call that spanned reset() does not count").toBeNull();
+      expect(r2, "the next() queued before reset() resolves null").toBeNull();
+      expect(spy, "step 1 ran only once: the queued call did not run it again").toHaveBeenCalledTimes(1);
+      expect(demo.completed(), "nothing counts after the reset").toBe(0);
+      const again = await demo.next();
+      expect(again?.id, "step 1 runs after the reset").toBe(step1.id);
+      expect(spy, "step 1 ran exactly once more after the reset").toHaveBeenCalledTimes(2);
+      expect(demo.completed(), "exactly one step completed after the reset").toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

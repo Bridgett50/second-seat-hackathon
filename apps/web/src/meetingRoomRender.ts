@@ -89,6 +89,7 @@ function demoSection(snap: MeetingRoomSnapshot): string {
     `<p>Synthetic walkthrough of the twin room. Nothing here is real data and nothing is really sent.</p>` +
     `<p id="demo-status" role="status" aria-label="${esc(label)}">${esc(caption)}</p>` +
     `<p id="demo-progress">${demo.completed} / ${demo.total}</p>` +
+    (demo.sendNote === null ? "" : `<p id="demo-send-note" role="note">${esc(demo.sendNote)}</p>`) +
     `<div><button type="button" id="demo-next" aria-label="${esc(A11Y_LABELS["demo-next"])}" data-mr-action="demo-next"${dis}>Next step</button> ` +
     `<button type="button" id="demo-restart" aria-label="${esc(A11Y_LABELS["demo-restart"])}" data-mr-action="demo-restart">Restart demo</button></div>` +
     `<p>Shortcuts: Right arrow or N advances one step, R restarts. Keys typed in inputs are ignored.</p>` +
@@ -243,6 +244,12 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
   );
 }
 
+/** The guided step-7 comparison kept in the snapshot, in the same <pre> form the client shows. */
+function keptComparisonHtml(snap: MeetingRoomSnapshot): string {
+  const kept = snap.demo?.comparison;
+  return kept === undefined || kept === null ? "" : `<pre>${esc(JSON.stringify(kept, null, 2))}</pre>`;
+}
+
 function compareSection(snap: MeetingRoomSnapshot): string {
   return (
     `${sectionOpen("compare")}${esc(headingFor("compare", snap))}</h2>` +
@@ -250,7 +257,7 @@ function compareSection(snap: MeetingRoomSnapshot): string {
     `<label>Imported draft:<textarea id="compare-input" rows="6" cols="60" aria-label="${esc(A11Y_LABELS["compare-input"])}"></textarea></label>` +
     `<div><input id="compare-file" type="file" accept=".txt,.eml,text/plain" aria-label="${esc(A11Y_LABELS["compare-file"])}"> ` +
     `<button type="button" id="compare-run" aria-label="${esc(A11Y_LABELS["compare-run"])}" data-mr-action="compare">Compare</button></div>` +
-    `<div id="compare-result"></div>` +
+    `<div id="compare-result">${keptComparisonHtml(snap)}</div>` +
     `</section>`
   );
 }
@@ -266,7 +273,7 @@ function evidenceSection(snap: MeetingRoomSnapshot): string {
     `${sectionOpen("evidence")}${esc(headingFor("evidence", snap))}</h2>` +
     `<p>Local saved record for the selected meeting\u2019s approved package. Synthetic data only.</p>` +
     `<div><button type="button" id="evidence-export" aria-label="${esc(A11Y_LABELS["evidence-export"])}" data-mr-action="evidence-export">Export evidence JSON</button></div>` +
-    `<pre id="evidence-json"></pre>` +
+    `<pre id="evidence-json">${esc(snap.demo?.evidenceJson ?? "")}</pre>` +
     copy +
     mailto +
     `</section>`

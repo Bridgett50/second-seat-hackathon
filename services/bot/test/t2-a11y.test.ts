@@ -309,5 +309,17 @@ describe("t2 accessibility", () => {
     expect(demoNotes.some((a) => a.includes(step.label))).toBe(true);
   });
 
+  it("T17-7 demoStepAnnouncement adds a final period only when the caption lacks one", () => {
+    expect(demoStepAnnouncement({ label: "Join", caption: "Join the sync." })).toBe(
+      "Guided demo — Join: Join the sync.",
+    );
+    expect(demoStepAnnouncement({ label: "Join", caption: "Join the sync" })).toBe(
+      "Guided demo — Join: Join the sync.",
+    );
+    for (const step of DEMO_STEPS) {
+      expect(demoStepAnnouncement(step).endsWith("..")).toBe(false);
+    }
+  });
+
   // T17-6 moved to session B (web meeting-room UI not ported yet)
 });

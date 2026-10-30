@@ -198,7 +198,26 @@ export interface DemoController {
    * a no-op returning null after the last step (the room is untouched).
    */
   next(): Promise<DemoStep | null>;
-  /** Restart the script position and clear stored results (room untouched). */
+  /**
+   * Advance past the next step WITHOUT running it and store
+   * `{ skipped: true }` as its result (used when a step is not permitted,
+   * e.g. sending on a public demo). Returns the skipped step, or null after
+   * the last step. Waits behind any in-flight next() or skip() call.
+   */
+  skip(): Promise<DemoStep | null>;
+  /**
+   * Run the next step, or skip it exactly as skip() does when
+   * `skipWhen(step)` is true. The check runs inside the same queue as next()
+   * and skip(), so it sees the step this call really acts on. Returns the
+   * step and whether it was skipped, or null after the last step or when a
+   * reset() was issued after this call.
+   */
+  nextUnless(skipWhen: (step: DemoStep) => boolean): Promise<{ step: DemoStep; skipped: boolean } | null>;
+  /**
+   * Restart the script position and clear stored results (room untouched).
+   * Takes effect immediately; next() and skip() calls issued before it,
+   * including one whose step is still running, do not advance the script.
+   */
   reset(): void;
   /** Stored return value of a completed step, or undefined. */
   result(id: string): unknown;
@@ -220,16 +239,63 @@ export function createDemoController(room: TwinRoom): DemoController {
   let index = 0;
   const results = new Map<string, unknown>();
 
-  async function next(): Promise<DemoStep | null> {
+  // Overlapping next() calls (a double click or two Next requests) run one at
+  // a time, in call order, so each one advances exactly one step.
+  // skip() waits in the same queue, and reset() bumps the generation so
+  // calls issued before it do nothing.
+  let pending: Promise<unknown> = Promise.resolve();
+  let generation = 0;
+
+  function queued(work: (gen: number) => DemoStep | null | Promise<DemoStep | null>): Promise<DemoStep | null> {
+    const gen = generation;
+    const run = pending.then(() => (gen === generation ? work(gen) : null));
+    pending = run.catch(() => undefined);
+    return run;
+  }
+
+  async function runNext(gen: number): Promise<DemoStep | null> {
     const step = DEMO_STEPS[index];
     if (step === undefined) return null;
     const out = await step.run(room);
+    if (gen !== generation) return null; // reset() while this step ran
     results.set(step.id, out);
     index += 1;
     return step;
   }
 
+  function next(): Promise<DemoStep | null> {
+    return queued(runNext);
+  }
+
+  function skip(): Promise<DemoStep | null> {
+    return queued(() => {
+      const step = DEMO_STEPS[index];
+      if (step === undefined) return null;
+      results.set(step.id, { skipped: true });
+      index += 1;
+      return step;
+    });
+  }
+
+  function nextUnless(
+    skipWhen: (step: DemoStep) => boolean,
+  ): Promise<{ step: DemoStep; skipped: boolean } | null> {
+    let skipped = false;
+    return queued(async (gen) => {
+      const step = DEMO_STEPS[index];
+      if (step === undefined) return null;
+      if (skipWhen(step)) {
+        results.set(step.id, { skipped: true });
+        index += 1;
+        skipped = true;
+        return step;
+      }
+      return runNext(gen);
+    }).then((step) => (step === null ? null : { step, skipped }));
+  }
+
   function reset(): void {
+    generation += 1;
     index = 0;
     results.clear();
   }
@@ -253,6 +319,8 @@ export function createDemoController(room: TwinRoom): DemoController {
       return DEMO_STEPS[index] ?? null;
     },
     next,
+    skip,
+    nextUnless,
     reset,
     result(id: string): unknown {
       return results.get(id);
