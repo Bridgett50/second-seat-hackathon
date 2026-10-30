@@ -227,13 +227,23 @@ export function createDemoController(room: TwinRoom): DemoController {
   let index = 0;
   const results = new Map<string, unknown>();
 
-  async function next(): Promise<DemoStep | null> {
+  // Overlapping next() calls (a double click or two Next requests) run one at
+  // a time, in call order, so each one advances exactly one step.
+  let pending: Promise<unknown> = Promise.resolve();
+
+  async function runNext(): Promise<DemoStep | null> {
     const step = DEMO_STEPS[index];
     if (step === undefined) return null;
     const out = await step.run(room);
     results.set(step.id, out);
     index += 1;
     return step;
+  }
+
+  function next(): Promise<DemoStep | null> {
+    const run = pending.then(runNext);
+    pending = run.catch(() => undefined);
+    return run;
   }
 
   function skip(): DemoStep | null {
