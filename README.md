@@ -54,6 +54,34 @@ Then choose **Live** in the header, or open http://localhost:4173/session?mode=l
 
 The image / SAM path is experimental. It is hidden from the UI and makes no calls unless `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`.
 
+## Meeting room demo walkthrough
+
+The twin meeting room has a guided demo that walks all nine steps of the
+owner flow against synthetic data only. Run the headless check first:
+
+```sh
+node scripts/meeting-room-demo.mjs
+```
+
+Then start the server locally on loopback and open the live page:
+
+```sh
+SECOND_SEAT_TEST_MODE=1 pnpm --filter @second-seat/web serve
+```
+
+Open `http://localhost:4173/meeting-room?demo=1` and press Next (or → / n;
+r restarts) through the nine steps. Send uses a fake transport that only
+works with `SECOND_SEAT_TEST_MODE=1` on a loopback Host and is refused
+everywhere else; never set it on Render. The Playwright suite covers the
+same flow in a real browser:
+
+```sh
+pnpm --filter @second-seat/web exec playwright test -c playwright.meeting-room.config.ts
+```
+
+It drives system Chrome via `PLAYWRIGHT_CHROME_PATH` (default
+`/usr/bin/google-chrome`).
+
 ## Security
 
 The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-run sessions and stopped right after (`modal app stop second-seat-glimmer -y`, 0 containers). The public link is demo-only.
@@ -89,6 +117,10 @@ The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-ru
 - **Ordinary calendar dates are no longer instructed to be masked as `date_of_birth`.** Bridgett Sanders approved this prompt change on Oct 28, 2026. The Glimmer system prompt now says to mask a date as `date_of_birth` only when the text states it is a date of birth or birthday, and to leave ordinary meeting dates unmasked. A generic `DATE` label is not relabeled to `date_of_birth`. Real DOB aliases (`DOB`, `DATE_OF_BIRTH`, `BIRTHDATE`, `BIRTH_DATE`, `BIRTHDAY`) are still masked. The label schema and model pins are unchanged.
   - *Live runs before this change:* the Oct 28 runs masked "November 15" because the previous prompt said to mask every calendar date. Those recorded outputs are unchanged. The current client in `services/bot/src/private/redact.ts` already sends the new prompt on each redaction request. `infra/modal/glimmer_app.py` does not reference that prompt. Redeploying Modal does not activate it.
   - *Offline mode:* "November 15" as a meeting date stays in the text. A phrase such as "born on March 4, 1990" is still masked, as are names, phones, and emails.
+
+## Known limitations
+
+- **L-1: an acting flood can fill the meeting room.** A flood that acts (opens the page and then takes one action per visitor) can still fill all 200 rooms, so new visitors get a 503 "Meeting room is busy" page for up to 30 minutes, until those rooms go idle. The guided demo (`/meeting-room?demo=1`) keeps working during that time, and the 503 page links to it.
 
 ## More
 

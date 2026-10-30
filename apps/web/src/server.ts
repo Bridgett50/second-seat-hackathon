@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { createPrivacyGate, type PrivacyGate } from "@second-seat/bot/dist/src/private/gate.js";
 import { MockRedactor } from "@second-seat/bot/dist/src/private/redact.js";
@@ -9,6 +10,20 @@ import { readFileSync } from "node:fs";
 import { loadDemo, WEB_ROOT } from "./loadFixtures.js";
 import { findAiSelf } from "./theme.js";
 import { renderBriefPage, renderSessionPage } from "./render.js";
+import {
+  createMeetingRoomService,
+  MEETING_ROOM_API,
+  MEETING_ROOM_COOKIE,
+  MEETING_ROOM_PATH,
+  MEETING_ROOM_POST_FIELDS,
+  MeetingRoomBusyError,
+  meetingRoomSetCookie,
+  meetingRoomStoreKey,
+} from "./meetingRoom.js";
+import {
+  renderMeetingRoomBody,
+  renderMeetingRoomPage,
+} from "./meetingRoomRender.js";
 
 const PORT = Number(process.env.PORT ?? 4173);
 /** Loopback only. The demo process does not listen on other interfaces. */
@@ -54,6 +69,7 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/session/draft/reject": new Set(["sessionId", "expectedRevision"]),
   "/api/session/invalidate": new Set(["sessionId", "scope", "expectedRevision"]),
   "/api/session/pressure-review": new Set(["sessionId", "itemId", "expectedRevision", "assessmentId", "reviewed"]),
+  [MEETING_ROOM_API]: new Set(MEETING_ROOM_POST_FIELDS),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -269,6 +285,7 @@ export function createWebServer(deps?: WebServerDeps) {
       : null;
   const liveAvailable = liveStore !== null;
   const sessions = routeSessions(offlineStore, liveStore);
+  const meetingRoom = createMeetingRoomService();
   const gate = deps?.gate ?? createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
   const sent: { text: string } = deps?.lastSent ?? { text: "" };
   const sender =
@@ -321,6 +338,38 @@ export function createWebServer(deps?: WebServerDeps) {
         aiSelfSrc: aiSelf?.url ?? null,
       });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(html);
+      return;
+    }
+    if (
+      req.method === "GET" &&
+      (url.pathname === MEETING_ROOM_PATH || url.pathname === `${MEETING_ROOM_PATH}/`)
+    ) {
+      const storeKey = meetingRoomStoreKey(req.headers.cookie);
+      const key = storeKey ?? randomUUID();
+      let snapshot;
+      try {
+        snapshot = meetingRoom.open(url.search, req.headers, key);
+      } catch (err) {
+        if (err instanceof MeetingRoomBusyError) {
+          res.writeHead(503, {
+            "content-type": "text/plain",
+            "cache-control": "no-store",
+          });
+          res.end("Meeting room is busy. Try again later, or open the guided demo at /meeting-room?demo=1.");
+          return;
+        }
+        throw err;
+      }
+      const html = renderMeetingRoomPage(snapshot);
+      const headers: Record<string, string> = {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      };
+      if (storeKey === null) {
+        headers["set-cookie"] = meetingRoomSetCookie(key, req.headers);
+      }
+      res.writeHead(200, headers);
       res.end(html);
       return;
     }
@@ -383,6 +432,18 @@ export function createWebServer(deps?: WebServerDeps) {
             return;
           }
           const body = asRecord(parsed);
+          if (url.pathname === MEETING_ROOM_API) {
+            void meetingRoom
+              .act(body ?? {}, req.headers)
+              .then((r) =>
+                json(res, r.status, {
+                  ...r.body,
+                  html: r.body.snapshot ? renderMeetingRoomBody(r.body.snapshot) : null,
+                }),
+              )
+              .catch(() => json(res, 500, { error: "meeting room action failed" }));
+            return;
+          }
           if (url.pathname === "/api/prepare") {
             const text = body?.["text"];
             if (typeof text !== "string" || text === "") {

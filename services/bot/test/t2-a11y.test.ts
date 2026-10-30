@@ -89,7 +89,7 @@ describe("t2 accessibility", () => {
     const { room } = makeRoom();
     const fresh = availableControls(room.view(), {});
     // Exact documented order: meeting picker, stream, guidance, takeover,
-    // package editor, plugin toggles, approve (send/compare hidden until approval).
+    // package editor, run plugins, plugin toggles, approve (send/compare hidden until approval).
     expect(fresh.map((c) => c.id)).toEqual([
       "meeting-picker",
       "stream-next",
@@ -98,6 +98,7 @@ describe("t2 accessibility", () => {
       "takeover",
       "package-editor",
       "package-save",
+      "run-plugins",
       "plugin-include-action-items",
       "plugin-exclude-action-items",
       "plugin-include-calendar-followup",

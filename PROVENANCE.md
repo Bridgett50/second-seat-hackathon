@@ -2,7 +2,7 @@
 
 Ported Oct 29, 2026 by Muse Code (muse-spark-1.3 via scripts/muse_pr.sh) from
 Bridgett50/loving-grace-holo-demo PR #6 (https://github.com/Bridgett50/loving-grace-holo-demo/pull/6),
-merged as holo main `8499e74`. PR #6 was built during the hackathon (Oct 26–Nov 4, 2026).
+merged as holo main `8499e74`. PR #6 was built on Oct 29, 2026.
 SHAs below are the holo commits that touched each source file.
 
 ## Ported core (packages/core/src/t2/ ← holo second-seat/packages/core/src/t2/)
@@ -87,3 +87,114 @@ None found (Opus copy check, Oct 29, 2026).
 - Bridgett50 (GitHub): 96 commits, 81 of them merge commits.
 - Cursor Agent: 60 commits.
 - Grok Bot: 10 commits.
+
+## Session B: meeting room page (written fresh in the event repo, Oct 29, 2026)
+
+These files were written fresh in this repo on Oct 29, 2026 by Muse Code
+(sessions B1–B3 via scripts/muse_pr.sh); behavior follows holo PR #6 (holo
+main 8499e74: meeting-room.tsx, page.tsx, demo-flow.spec.ts, demo-e2e
+script, README) as a spec only; no holo code copied; the page drives the
+twin room only through services/bot/src/t2-room.ts.
+
+- apps/web/src/meetingRoom.ts
+- apps/web/src/meetingRoomRender.ts
+- apps/web/src/server.ts (routes added)
+- apps/web/test/meeting-room-gate.test.ts
+- apps/web/test/meeting-room-imports.test.ts
+- apps/web/test/meeting-room-render.test.ts (T17-6)
+- apps/web/test/meeting-room-demo-docs.test.ts (T18-6)
+- apps/web/test/meeting-room-deploy-guard.test.ts
+- apps/web/playwright.meeting-room.config.ts
+- apps/web/e2e-meeting-room/meeting-room.spec.ts
+- scripts/meeting-room-demo.mjs
+- README.md (walkthrough section)
+- services/bot/test/t2-port-wiring.test.ts (T2P-6)
+
+### Review fix B-1 (Oct 29, 2026)
+
+`act()` in apps/web/src/meetingRoom.ts now enforces input caps before calling
+any room method: at most 2,000 characters of guide text, 20,000 characters of
+edit-draft or compare text (over a length cap returns 413 with the room
+unchanged), and at most 50 guidance entries per meeting (the 51st returns
+400). Only `text.length` is checked; over-limit text is never scanned or
+redacted. `packages/core/src/t2/redaction.ts` `EMAIL_PATTERN` was bounded
+(local part 1-64, domain 1-253, TLD 2-24) to stop quadratic backtracking on
+long non-email input; core behavior on normal emails is unchanged.
+
+### Review fix B-4 (Oct 29, 2026)
+
+A refused Send now renders its reason in `#send-notice` (role="alert") next to the Send
+button (snapshot field `sendNotice`). Written by Muse Code on meta-models/muse-spark-open-1026
+via Baseten (owner-approved after the Meta credits ran out).
+
+### Review fix B-5 (Oct 29, 2026)
+
+The meeting room import guard (apps/web/test/meeting-room-imports.test.ts) now also catches star
+re-exports, require/createRequire, path specifiers into packages/core or node_modules/@second-seat/core,
+and destructured, bracket or non-literal dynamic imports, and scans .mts/.cts/.cjs/.jsx too.
+Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fix B-6 (Oct 29, 2026)
+
+The meeting room page now always shows a "Run plugins" button (`#run-plugins`, disabled once plugins
+cannot run: after takeover or once the package leaves "unsent"), so plugins run outside the guided
+demo. Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fix B-7 (Oct 29, 2026)
+
+The `mr_store` cookie now carries `Secure` except for plain-http loopback requests
+(`meetingRoomSetCookie` in apps/web/src/meetingRoom.ts). Written by Muse Code on
+meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fix R2-1 and owner decision MR-G7 (Oct 29, 2026)
+
+Bridgett confirmed MR-G7 as an owner decision (Oct 29, 4:55 PM CT): approval stays on a
+same-browser reopen while the server keeps the room. The restored-room line now says so
+("draft, send state and approval stay while this server keeps the room") instead of claiming
+approval never survives. Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fix R2-3 (Oct 29, 2026)
+
+A `?demo=1` page now always starts on its own fresh, unshared room and store, so the guided demo
+never opens on (or writes into) the cookie's real room. Written by Muse Code on
+meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fixes B-3 and R2-2 (Oct 29, 2026)
+
+B-3 (a room flood no longer evicts other browsers' rooms: store keys capped at 200 with idle
+eviction, `MeetingRoomBusyError`/503, a per-key page cap) was written by Muse Code on muse-spark-1.3
+via Meta (session 4bc40127-5104-475d-bb0f-467c792ebdcb); its test typing fix was written by Muse Code
+on meta-models/muse-spark-open-1026 via Baseten (session f298034a-3dd6-4959-95af-7e1f0e87b23f).
+R2-2 (an evicted key's stale tabs; test MR-F6) was written by Muse Code on
+meta-models/muse-spark-open-1026 via Baseten (session dd908779-fcbd-4c36-9847-94d7d8bdbf49).
+
+### Review fix N-1 (Oct 29, 2026)
+
+Store keys that never acted (open only) are now evicted first, least recently opened, so a flood
+of plain GETs no longer locks new visitors out; keys that acted are evicted only after 30 idle
+minutes, and 503 is returned only when every key acted recently. Written by Muse Code on
+meta-models/muse-spark-open-1026 via Baseten.
+
+### Review follow-up to N-1 (Oct 29, 2026)
+
+Only successful state-changing actions (stream-next, guide, select-meeting, edit-draft, approve,
+takeover, run-plugins, plugin-*, send, demo-next, demo-restart) mark a store key as acted; GET
+opens, `state`, `evidence-export` and refused actions do not (tests MR-A1, MR-A2). An action on an
+evicted room now answers 404 with "This room expired. Reload to start again." (test MR-A3).
+Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
+
+Note: N-1 commit cbe1f21 was run and pushed by hand by Opus on the bot computer at Bridgett's request because the Auto-review safety check was erroring; the code was written by Muse Code.
+
+### Review fixes N-2 and N-3 (Oct 29, 2026)
+
+Demo (?demo=1) pages are capped at 200 globally by evicting the oldest demo page, record no
+activity for their key, never mark a key as acted, and no longer count against a key's 20-page
+cap (tests MR-DC1, MR-DC2 in apps/web/test/meeting-room-demo-cap.test.ts).
+Written by Muse Code on Baseten (meta-models/muse-spark-open-1026).
+
+### Busy page points to the guided demo; limitation L-1 (Oct 29, 2026)
+
+The 503 busy page now reads "Meeting room is busy. Try again later, or open the guided demo at
+/meeting-room?demo=1." (test MR-F5), and README "Known limitations" documents L-1: an acting flood
+can fill all 200 rooms for up to 30 minutes while the guided demo keeps working.
+Written by Muse Code on Baseten (meta-models/muse-spark-open-1026).
