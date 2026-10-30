@@ -599,7 +599,7 @@ export function createMeetingRoomService(opts?: {
             // Sending is unavailable here: record the Send step as not
             // attempted and continue the guide. Nothing is sent, the package
             // stays unsent, and no send receipt is created.
-            const skipped = entry.demo.skip();
+            const skipped = await entry.demo.skip();
             const notes = [SEND_DISABLED_REASON, DEMO_SEND_NOT_SENT];
             if (skipped !== null) {
               notes.push(demoStepAnnouncement({ label: skipped.label, caption: skipped.caption }));
