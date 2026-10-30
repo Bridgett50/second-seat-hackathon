@@ -108,3 +108,7 @@ describe("F140-5 import privacy boundary", () => {
     const outbound = await page.evaluate(async () => (await fetch("/api/test/outbound")).status);
     expect(outbound, "test-mode guard endpoint is live").toBe(200);
 // --- end of F140-5 test part 10 ---
+    await page.context().close();
+  }, 60_000);
+});
+// --- end of F140-5 test part 11 ---
