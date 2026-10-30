@@ -398,4 +398,21 @@ describe("F140-2 Approve and Send are bound to the displayed package", () => {
       expect(outgoing, "no outgoing action dispatched while dirty").toEqual([]);
       expect(svc.sentBodies().length, "zero transport calls while dirty").toBe(sentBefore);
       // --- end of F140-2 test part 10 ---
+      const saved = await clickAndWait(tabA, "#package-save");
+      expect(saved.status, "Save B succeeds").toBe(200);
+      expect(await tabA.locator("#mr-approval-state").textContent()).toContain("Approved: no");
+      expect(await displayedPackage(tabA)).toContain(unsaved);
+      expect((await clickAndWait(tabA, "#approve")).status, "explicit approve of B").toBe(200);
+      const composed = (await sharedView(ctx, roomA)).draft.body;
+      expect(composed).toContain(unsaved);
+      expect((await clickAndWait(tabA, "#send")).status).toBe(200);
+      expect(svc.sentBodies().length, "exactly one fake Send").toBe(sentBefore + 1);
+      expect(svc.sentBodies()[sentBefore], "the Send carries exactly the saved B package").toBe(composed);
+      expect(svc.sentBodies()[sentBefore], "the old approved A text is not sent").not.toContain(VERSION_A);
+      expect(outgoing).toEqual(["approve", "send"]);
+    } finally {
+      await ctx.close();
+    }
+  }, 120_000);
+// --- end of F140-2 test part 11 ---
 });
