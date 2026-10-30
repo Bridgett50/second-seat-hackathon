@@ -192,5 +192,12 @@ describe("F140-4c guided compare and evidence steps return and keep their result
     expect(ev.sentAt, "no send receipt").toBeNull();
     expect(svc.sentBodies(), "zero fake transport calls").toEqual([]);
     // --- end of F140-4 test part 17 ---
+    const s9 = await svc.act({ roomId: page.roomId, action: "demo-next" }, PUBLIC);
+    expect(s9.status, "takeover step succeeds").toBe(200);
+    const demo = (s9.body.snapshot as unknown as { demo: { done: boolean; comparison?: unknown; evidenceJson?: string | null } }).demo;
+    expect(demo.done, "guide finished").toBe(true);
+    expect(demo.comparison, "comparison kept after takeover").toEqual(s7.body.comparison);
+    expect(demo.evidenceJson, "evidence kept after takeover").toBe(s8.body.evidenceJson);
+    // --- end of F140-4 test part 18 ---
   });
 });
