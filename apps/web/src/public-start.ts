@@ -71,9 +71,20 @@ export function startPublicServer(env: EnvRecord = process.env as EnvRecord): Pr
   const origListeners = server.listeners("request") as ((...a: unknown[]) => void)[];
   server.removeAllListeners("request");
   server.on("request", (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
-    const url = req.url ?? "/";
-    const path = url.split("?")[0];
-    if (path === "/briefs/demo" || path === "/briefs/demo/") {
+    let pathname: string;
+    try {
+      pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    } catch {
+      const method = (req.method ?? "GET").toUpperCase();
+      res.writeHead(400, { "cache-control": "no-store" });
+      if (method === "HEAD") {
+        res.end();
+      } else {
+        res.end("Bad Request");
+      }
+      return;
+    }
+    if (pathname === "/briefs/demo" || pathname === "/briefs/demo/") {
       const method = (req.method ?? "GET").toUpperCase();
       if (method === "GET" || method === "HEAD") {
         res.writeHead(302, {
@@ -91,7 +102,7 @@ export function startPublicServer(env: EnvRecord = process.env as EnvRecord): Pr
       res.end();
       return;
     }
-    if (path === "/healthz") {
+    if (pathname === "/healthz") {
       const method = (req.method ?? "GET").toUpperCase();
       if (method !== "GET" && method !== "HEAD") {
         res.writeHead(405, { "cache-control": "no-store" });

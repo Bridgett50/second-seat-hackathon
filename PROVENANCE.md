@@ -409,3 +409,6 @@ Muse Code on Baseten, model `meta-models/muse-spark-open-1026`, wrote the builde
 
 ### Public start legacy redirect (Oct 30, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`) wrote the public-start redirect for the legacy demo URL and its regression test in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders, after Grok Bot's packed-artifact check found the crash; Grok Bot applied the output verbatim. Claim no review, deploy or production result.
+
+### Public start normalized-path redirect (Oct 30, 2026)
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`) made the public-start wrapper match the same URL-normalized pathname as server.ts and return a safe 400 for malformed request URLs, with raw-request regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders, after Bridgett Sanders found the dot-segment bypass; Grok Bot applied the output verbatim. Claim no review, deploy or production result.
