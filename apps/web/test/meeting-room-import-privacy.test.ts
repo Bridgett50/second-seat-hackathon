@@ -86,3 +86,14 @@ describe("F140-5 import privacy boundary", () => {
     const statsBefore = outboundStats();
     const sentBefore = svc.sentBodies().length;
 // --- end of F140-5 test part 8 ---
+    await page.locator("#compare-input").fill(`Synthetic imported draft ${MARKER} for comparison.`);
+    const pending = page.waitForRequest((r) => new URL(r.url()).pathname === API && r.method() === "POST");
+    const answered = page.waitForResponse((r) => new URL(r.url()).pathname === API && r.request().method() === "POST");
+    await page.locator("#compare-run").click();
+    const request = await pending;
+    const response = await answered;
+    const body = JSON.parse(request.postData() ?? "{}") as { action?: string; text?: string };
+    expect(new URL(request.url()).origin, "Compare goes to the loopback app server").toBe(base);
+    expect(body.action, "the Compare action").toBe("compare");
+    expect(body.text, "the text field carries the exact marker").toContain(MARKER);
+// --- end of F140-5 test part 9 ---
