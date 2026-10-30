@@ -112,7 +112,7 @@ The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-ru
 
 **What we rejected and why**
 
-- *Sending raw text to Spark.* Rejected. Personal details are masked on our own GPU first, and a human approves the redacted text before anything reaches Spark.
+- *Sending raw text to Spark.* Rejected. In Live mode, the separately configured Glimmer step (self-hosted on Modal) masks personal details first, and a human approves the redacted text before anything reaches Spark. The offline demo calls no model.
 - *One shared cache key for every call.* Rejected. Different prompts under one key fragment the cache, so we use one key per call family.
 - *Default sampling for redaction.* Rejected. Temperature 0 is set to reduce sampling variation and make masks easier to audit. It is not a proof that the same input always yields identical masks.
 - *A model-based pressure classifier in the live session.* Rejected for now. The session uses deterministic patterns, and you must review every flagged item before Copy unlocks. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. It isn't credited in the demo.
@@ -153,6 +153,8 @@ These are human tasks. They are not done by tests or by this repair:
 - Record the founder clip and the demo on a machine whose citation and clipboard checks have actually passed.
 - Keep user tryouts and the video URL pending until she supplies them.
 - Review any X post herself before it is posted. Nothing here sends it.
+
+The recorded reviews (Opus and Codex, with Grok; see PROVENANCE.md and docs/engineering-log.md) covered the reviewed pull request heads and the test suites listed at those heads; they do not show that every intermediate commit was reviewed or that the full suite passed on every commit.
 
 Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This history's token usage was not reported here. Bridgett Sanders directed the work and made hand edits. Cursor implemented the FR1–FR10 repairs; Grok and Codex reviewed the work. Those commit counts name the git author. They are not a line-by-line proof of which model wrote each line.
 
