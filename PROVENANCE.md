@@ -278,6 +278,20 @@ and apps/web/src/meetingRoomRender.ts were written by Muse Code on Baseten
 task prompts from a Codex recheck finding, split into ten short sequential Muse sessions, each
 committed separately on muse/f140-4-public-guide.
 
+### Guided demo skip and reset act in order with pending Next calls (Oct 30, 2026)
+
+After next() was serialized, skip() and reset() in packages/core/src/t2/demo-mode.ts still acted
+immediately, so a skip() issued while a next() was in flight skipped the wrong step, and a reset()
+during a pending next() let the stale step count after the restart. skip() now waits behind any
+in-flight calls and returns a Promise (the meeting room's Send-step handler in
+apps/web/src/meetingRoom.ts awaits it), and reset() takes effect at once and cancels calls issued
+before it, so their results are discarded (tests T13-8: next() and skip() together run step 1 and
+skip step 2; T13-9: after reset() nothing stale counts and the next call runs step 1 once). The
+source edits and tests T13-8 and T13-9 in services/bot/test/t2-demo-mode.test.ts were written by
+Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact contents that
+Grok Bot specified in the task prompts from a Codex recheck finding, split into four short
+sequential Muse sessions, each committed separately on muse/f140-4-public-guide.
+
 ### Overlapping guided-demo Next calls advance one step each (Oct 30, 2026)
 
 The guided demo controller's next() in packages/core/src/t2/demo-mode.ts read the step at the
