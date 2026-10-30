@@ -312,4 +312,22 @@ describe("F140-4f overlapping Next calls around Send cannot bypass or duplicate 
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   }, 60_000);
+
+  it("F140-4f test mode: Restart while Next calls are queued leaves no older room operation acting afterwards", async () => {
+    const svc = createMeetingRoomService({ env: TEST_ENV });
+    const page = svc.open("?demo=1", LOOPBACK, randomUUID());
+    for (let i = 0; i < 4; i += 1) await step(svc, page.roomId, "demo-next", LOOPBACK);
+    const [a, b, r] = await Promise.all([
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+      step(svc, page.roomId, "demo-restart", LOOPBACK),
+    ]);
+    expect([a.status, b.status, r.status], "all calls answer").toEqual([200, 200, 200]);
+    expect(svc.sentBodies(), "no send from a Next queued before Restart").toEqual([]);
+    const state = await step(svc, page.roomId, "state", LOOPBACK);
+    expect(state.snap.demo?.completed, "fresh demo has zero progress").toBe(0);
+    expect(state.snap.demo?.sendNote ?? null, "no carried-over send note").toBeNull();
+    expect(state.snap.view.draft.approved, "fresh package unapproved").toBe(false);
+    expect(state.snap.view.draft.sendState, "fresh package unsent").toBe("unsent");
+  });
 });
