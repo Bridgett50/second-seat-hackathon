@@ -43,6 +43,18 @@ function parsePort(env: EnvRecord): number {
 
 export function startPublicServer(env: EnvRecord = process.env as EnvRecord): Promise<Server> {
   const problems = validatePublicStartEnv(env);
+  // Also validate the real process environment for safety flags that server.ts
+  // reads directly. A safe `env` object must not bypass unsafe process.env.
+  const realEnv = process.env as EnvRecord;
+  if (env !== realEnv) {
+    const realProblems = validatePublicStartEnv(realEnv);
+    for (const p of realProblems) {
+      // Only safety-related refusals that server.ts reads from process.env;
+      // PORT and SECOND_SEAT_MODE are sourced from `env`, not process.env
+      if (p.includes("PORT") || p.includes("SECOND_SEAT_MODE")) continue;
+      if (!problems.includes(p)) problems.push(p);
+    }
+  }
   if (problems.length > 0) {
     const msg = problems.join("; ");
     throw new Error(msg);
@@ -62,20 +74,15 @@ const isMain =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
-  try {
-    const problems = validatePublicStartEnv(process.env as EnvRecord);
-    if (problems.length > 0) {
-      for (const p of problems) console.error(p);
-      process.exit(1);
-    }
-    const port = parsePort(process.env as EnvRecord);
-    const server = createWebServer();
-    server.listen(port, PUBLIC_BIND_HOST, () => {
+  startPublicServer(process.env as EnvRecord)
+    .then((server) => {
+      const addr = server.address() as { port: number } | null;
+      const port = addr?.port ?? Number(process.env["PORT"]);
       console.log(`public demo on http://${PUBLIC_BIND_HOST}:${port}/briefs/demo`);
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      for (const line of msg.split("; ")) console.error(line.trim());
+      process.exit(1);
     });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(msg);
-    process.exit(1);
-  }
 }
