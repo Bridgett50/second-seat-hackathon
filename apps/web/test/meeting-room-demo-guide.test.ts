@@ -44,3 +44,23 @@ async function runGuide(svc: MeetingRoomService, roomId: string, headers: Incomi
   return { statuses, notes, last };
 }
 // --- end of F140-4 test part 4 ---
+
+describe("F140-4a public guided demo continues past Send without sending", () => {
+  for (const [label, env] of [
+    ["test mode absent", {}],
+    ["test mode 0", { SECOND_SEAT_TEST_MODE: "0" }],
+  ] as const) {
+    it(`F140-4a ${label}: Next reaches the honest final state`, async () => {
+      const svc = createMeetingRoomService({ env });
+      const page = svc.open("?demo=1", PUBLIC, randomUUID());
+      expect(page.fakeSend, "public demo cannot send").toBe(false);
+      const run = await runGuide(svc, page.roomId, PUBLIC);
+// --- end of F140-4 test part 5 ---
+      expect(run.statuses, "every Next succeeds past step 5").toEqual([200, 200, 200, 200, 200, 200, 200, 200, 200]);
+      const last = run.last as Snap;
+      expect(last.demo?.completed, "all nine steps completed").toBe(9);
+      expect(last.demo?.done, "guide finished").toBe(true);
+      expect(last.demo?.sendNote ?? "", "visible not-sent explanation").toContain("not sent");
+      expect(run.notes.join("\n"), "announced as not sent").toContain("not sent");
+      expect(svc.sentBodies(), "zero fake transport calls").toEqual([]);
+// --- end of F140-4 test part 6 ---
