@@ -64,3 +64,14 @@ describe("F140-5 import privacy boundary", () => {
   it("F140-5a the rendered import panel explains app-server processing before Compare", async () => {
     const { page } = await openRoom();
 // --- end of F140-5 test part 6 ---
+    const panel = page.locator("section", { has: page.locator("#compare-run") });
+    const text = (await panel.textContent()) ?? "";
+    expect(text, "no false browser-only claim").not.toContain("Nothing leaves the browser");
+    expect(text, "explains app-server processing").toContain(ACCURATE);
+    expect(text, "no external model or email").toContain("this demo does not call an external model or send email");
+    const notice = panel.locator("p", { hasText: ACCURATE });
+    expect(await notice.count(), "one visible notice").toBe(1);
+    expect(await notice.isVisible(), "notice visible").toBe(true);
+    const html = await panel.innerHTML();
+    const at = html.indexOf(ACCURATE);
+// --- end of F140-5 test part 7 ---
