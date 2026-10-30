@@ -4,8 +4,10 @@ import crypto from "node:crypto";
 import zlib from "node:zlib";
 
 const REQUIRED_FIXTURES = [];
-
 const HEX40_RE = /^[0-9a-f]{40}$/;
+
+// Strict semver-like version pattern: X.Y.Z optionally with prerelease/build
+const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 function isExcludedName(name) {
   if (name === ".git") return true;
@@ -25,9 +27,13 @@ function isExcludedName(name) {
   return false;
 }
 
-function fail(msg) {
-  console.error(msg);
-  process.exit(1);
+function isForbiddenComponent(name) {
+  if (name === ".git") return true;
+  if (name.startsWith(".env")) return true;
+  if (name === "eval") return true;
+  if (name === "fixtures") return true;
+  if (name.includes("heldout") || name.includes("holdout") || name.includes("sealed") || name.includes("secret")) return true;
+  return false;
 }
 
 function validateSourceSha(sha) {
@@ -47,6 +53,172 @@ function assertNotSymlink(absPath) {
     throw new Error(`symlink not allowed: ${absPath}`);
   }
   return st;
+}
+
+// Check every ancestor component of fixed allowlisted paths.
+// repoRoot itself may be anything and is not checked.
+function checkAllowlistedAncestors(repoRoot) {
+  // Fixed allowlisted input paths (files and dirs). The parser link itself is
+  // allowed to be a symlink, so we only check its parent ancestors.
+  const ancestorDirs = [
+    "apps/web",
+    "apps/web/dist",
+    "apps/web/dist/src",
+    "packages/core",
+    "packages/core/dist",
+    "packages/core/dist/src",
+    "services/bot",
+    "services/bot/dist",
+    "services/bot/dist/src",
+    "services/bot/node_modules",
+    "services/bot/node_modules/@meta-sam",
+  ];
+  for (const rel of ancestorDirs) {
+    const parts = rel.split("/").filter(Boolean);
+    let cur = repoRoot;
+    for (let i = 0; i < parts.length; i++) {
+      cur = path.join(cur, parts[i]);
+      let st;
+      try {
+        st = fs.lstatSync(cur);
+      } catch (e) {
+        // Missing ancestors will be reported later as missing required file/dir,
+        // but if it exists as symlink we must fail.
+        break;
+      }
+      if (st.isSymbolicLink()) {
+        throw new Error(`symlinked ancestor not allowed: ${cur}`);
+      }
+    }
+  }
+}
+
+// Validate and resolve the single approved parser symlink.
+// Returns { lexResolved, parserReal } where both are absolute paths.
+function resolveParserLink(repoRoot) {
+  const parserLinkPath = path.join(repoRoot, "services/bot/node_modules/@meta-sam/parser");
+
+  // Must be a symlink
+  let lst;
+  try {
+    lst = fs.lstatSync(parserLinkPath);
+  } catch {
+    throw new Error(`missing required parser package: ${parserLinkPath}`);
+  }
+  if (!lst.isSymbolicLink()) {
+    throw new Error(`parser link not a symlink: ${parserLinkPath}`);
+  }
+
+  // Read link value (not realpath)
+  let rawTarget;
+  try {
+    rawTarget = fs.readlinkSync(parserLinkPath);
+  } catch (e) {
+    throw new Error(`parser link readlink failed: ${parserLinkPath}: ${e.message}`);
+  }
+
+  // Reject absolute targets
+  if (path.isAbsolute(rawTarget)) {
+    throw new Error(`parser link destination not allowed (absolute target): ${parserLinkPath} -> ${rawTarget}`);
+  }
+
+  // Reject forbidden components in the raw link value
+  // Split on both / and \ to be safe
+  const rawParts = rawTarget.split(/[/\\]+/).filter((p) => p.length > 0 && p !== "." && p !== "..");
+  for (const comp of rawParts) {
+    if (isForbiddenComponent(comp)) {
+      throw new Error(`parser link destination not allowed (forbidden component in link value): ${parserLinkPath} -> ${rawTarget}`);
+    }
+  }
+
+  // Lexically resolve against parent directory
+  const linkParent = path.dirname(parserLinkPath);
+  const lexResolved = path.resolve(linkParent, rawTarget);
+  const repoResolved = path.resolve(repoRoot);
+
+  // Must stay inside repo
+  const relToRepo = path.relative(repoResolved, lexResolved);
+  if (relToRepo.startsWith("..") || path.isAbsolute(relToRepo)) {
+    throw new Error(`parser link destination not allowed (escapes repo): ${parserLinkPath} -> ${rawTarget}`);
+  }
+
+  // Reject forbidden components in destination
+  const destParts = relToRepo.split(path.sep).filter(Boolean);
+  for (const comp of destParts) {
+    if (isForbiddenComponent(comp)) {
+      throw new Error(`parser link destination not allowed (forbidden component in destination): ${lexResolved}`);
+    }
+  }
+
+  // Must match exact pattern: node_modules/.pnpm/@meta-sam+parser@<version>/node_modules/@meta-sam/parser
+  // Validate structurally
+  const expectedParts = destParts;
+  // Expected: [node_modules, .pnpm, @meta-sam+parser@<version>, node_modules, @meta-sam, parser]
+  if (expectedParts.length !== 6) {
+    throw new Error(`parser link destination not allowed (unexpected layout): ${lexResolved}`);
+  }
+  if (
+    expectedParts[0] !== "node_modules" ||
+    expectedParts[1] !== ".pnpm" ||
+    expectedParts[3] !== "node_modules" ||
+    expectedParts[4] !== "@meta-sam" ||
+    expectedParts[5] !== "parser"
+  ) {
+    throw new Error(`parser link destination not allowed (pattern mismatch): ${lexResolved}`);
+  }
+  const storeDir = expectedParts[2];
+  const prefix = "@meta-sam+parser@";
+  if (!storeDir.startsWith(prefix)) {
+    throw new Error(`parser link destination not allowed (store pattern mismatch): ${lexResolved}`);
+  }
+  const version = storeDir.slice(prefix.length);
+  if (!VERSION_RE.test(version)) {
+    throw new Error(`parser link destination not allowed (bad version): ${lexResolved}`);
+  }
+  if (isForbiddenComponent(version)) {
+    throw new Error(`parser link destination not allowed (forbidden version): ${lexResolved}`);
+  }
+
+  // lstat each component of destination below repo: none may be symlink, dest must be real directory
+  let curAbs = repoResolved;
+  for (let i = 0; i < destParts.length; i++) {
+    curAbs = path.join(curAbs, destParts[i]);
+    let st;
+    try {
+      st = fs.lstatSync(curAbs);
+    } catch (e) {
+      throw new Error(`parser link destination not allowed (missing component): ${curAbs}`);
+    }
+    if (st.isSymbolicLink()) {
+      throw new Error(`parser link destination not allowed (symlinked component): ${curAbs}`);
+    }
+    if (i === destParts.length - 1) {
+      if (!st.isDirectory()) {
+        throw new Error(`parser link destination not allowed (not a directory): ${curAbs}`);
+      }
+    } else {
+      // intermediate must be directory
+      if (!st.isDirectory()) {
+        throw new Error(`parser link destination not allowed (not a directory): ${curAbs}`);
+      }
+    }
+  }
+
+  // Only now may realpath be used, and must equal lexically resolved destination
+  let real;
+  try {
+    real = fs.realpathSync(parserLinkPath);
+  } catch (e) {
+    throw new Error(`parser link realpath failed: ${parserLinkPath}: ${e.message}`);
+  }
+  // Compare resolved absolute normalized paths
+  const normReal = path.resolve(real);
+  const normLex = path.resolve(lexResolved);
+  if (normReal !== normLex) {
+    throw new Error(`parser link destination not allowed (realpath mismatch): ${normReal} != ${normLex}`);
+  }
+
+  return { lexResolved: normLex, parserReal: normLex };
 }
 
 function walkAllowlistedDir(absDir, archivePrefix) {
@@ -74,8 +246,6 @@ function walkAllowlistedDir(absDir, archivePrefix) {
         if (!ent.name.endsWith(".js")) continue;
         const relInside = absPath.slice(prefixLen + 1).replace(/\\/g, "/");
         const archivePath = archivePrefix ? `${archivePrefix}/${relInside}` : relInside;
-        // extra per-file excluded already handled via name check
-        // also check lstat to catch symlink files that readdir type might miss on some fs
         const lst = fs.lstatSync(absPath);
         if (lst.isSymbolicLink()) throw new Error(`symlink not allowed: ${absPath}`);
         results.push({ sourceAbs: absPath, archivePath });
@@ -89,6 +259,12 @@ export function planRuntime(opts) {
   const repoRoot = path.resolve(opts.repoRoot);
   const sourceSha = opts.sourceSha;
   validateSourceSha(sourceSha);
+
+  // 1) Ancestor symlink checks before any content read
+  checkAllowlistedAncestors(repoRoot);
+
+  // 2) Parser link validation before any content read
+  const { parserReal } = resolveParserLink(repoRoot);
 
   const plan = [];
 
@@ -110,20 +286,16 @@ export function planRuntime(opts) {
     return abs;
   }
 
-  // apps/web/package.json
   requireFile("apps/web/package.json", "apps/web/package.json");
 
-  // apps/web/dist/src
   const webDistSrc = requireDir("apps/web/dist/src");
   const webFiles = walkAllowlistedDir(webDistSrc, "apps/web/dist/src");
-  // require public-start.js exists
   const hasPublicStart = webFiles.some((e) => e.archivePath === "apps/web/dist/src/public-start.js");
   if (!hasPublicStart) {
     throw new Error("missing required file: apps/web/dist/src/public-start.js");
   }
   for (const e of webFiles) plan.push(e);
 
-  // twin asset optional
   for (const twin of ["apps/web/public/ai-self.png", "apps/web/public/ai-self.jpg"]) {
     const abs = path.join(repoRoot, twin);
     let st;
@@ -135,26 +307,17 @@ export function planRuntime(opts) {
     }
   }
 
-  // packages/core/package.json -> node_modules/@second-seat/core/package.json
   requireFile("packages/core/package.json", "node_modules/@second-seat/core/package.json");
   const coreDistSrc = requireDir("packages/core/dist/src");
   const coreFiles = walkAllowlistedDir(coreDistSrc, "node_modules/@second-seat/core/dist/src");
   for (const e of coreFiles) plan.push(e);
 
-  // services/bot/package.json
   requireFile("services/bot/package.json", "node_modules/@second-seat/bot/package.json");
   const botDistSrc = requireDir("services/bot/dist/src");
   const botFiles = walkAllowlistedDir(botDistSrc, "node_modules/@second-seat/bot/dist/src");
   for (const e of botFiles) plan.push(e);
 
-  // parser: resolve single symlink
-  const parserLinkPath = path.join(repoRoot, "services/bot/node_modules/@meta-sam/parser");
-  let parserReal;
-  try {
-    parserReal = fs.realpathSync(parserLinkPath);
-  } catch {
-    throw new Error("missing required parser package: services/bot/node_modules/@meta-sam/parser");
-  }
+  // parser: already validated, now read content metadata
   let parserStat;
   try { parserStat = fs.statSync(parserReal); } catch { throw new Error("missing required parser package"); }
   if (!parserStat.isDirectory()) throw new Error("missing required parser package");
@@ -172,15 +335,12 @@ export function planRuntime(opts) {
   const parserFiles = walkAllowlistedDir(parserDist, "node_modules/@meta-sam/parser/dist");
   for (const e of parserFiles) plan.push(e);
 
-  // fixtures (currently empty)
   for (const f of REQUIRED_FIXTURES) {
     requireFile(f, f);
   }
 
-  // sort by archivePath
   plan.sort((a, b) => a.archivePath.localeCompare(b.archivePath));
 
-  // ensure no duplicates
   const seen = new Set();
   for (const e of plan) {
     if (seen.has(e.archivePath)) throw new Error(`duplicate archive path: ${e.archivePath}`);
@@ -198,7 +358,6 @@ export function packRuntime(opts) {
 
   const plan = planRuntime({ repoRoot, sourceSha });
 
-  // read file contents
   const entries = [];
   for (const item of plan) {
     const st = fs.lstatSync(item.sourceAbs);
