@@ -244,3 +244,24 @@ describe("F140-4c guided compare and evidence steps return and keep their result
     }
   }, 60_000);
 });
+
+// F140-4f: overlapping Next calls around Send. The Send check must see the
+// step the call really acts on, so it cannot send on a public demo.
+describe("F140-4f overlapping Next calls around Send cannot bypass or duplicate the send", () => {
+  it("F140-4f public demo: two overlapping Next calls at the approve step approve once and skip Send without sending", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const page = svc.open("?demo=1", PUBLIC, randomUUID());
+    for (let i = 0; i < 4; i += 1) await step(svc, page.roomId, "demo-next", PUBLIC);
+    const [a, b] = await Promise.all([
+      step(svc, page.roomId, "demo-next", PUBLIC),
+      step(svc, page.roomId, "demo-next", PUBLIC),
+    ]);
+    expect([a.status, b.status], "both Next calls succeed").toEqual([200, 200]);
+    expect(svc.sentBodies(), "zero fake transport calls on a public demo").toEqual([]);
+    const state = await step(svc, page.roomId, "state", PUBLIC);
+    expect(state.snap.demo?.completed, "approve and Send each counted once").toBe(6);
+    expect(state.snap.demo?.sendNote ?? "", "Send recorded as not sent").toContain("not sent");
+    expect(state.snap.view.draft.sendState, "package stays unsent").toBe("unsent");
+    expect(b.notes.join("\n"), "second call announces not sent").toContain("not sent");
+  });
+});
