@@ -31,3 +31,14 @@ beforeAll(async () => {
   browser = await chromium.launch({ executablePath: CHROME, headless: true });
 });
 // --- end of F140-5 test part 3 ---
+
+afterAll(async () => {
+  await browser?.close();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (priorMode === undefined) delete process.env.SECOND_SEAT_TEST_MODE;
+  else process.env.SECOND_SEAT_TEST_MODE = priorMode;
+});
+
+async function openRoom(): Promise<{ page: Page; requests: string[]; blocked: string[] }> {
+  const context = await browser.newContext();
+// --- end of F140-5 test part 4 ---
