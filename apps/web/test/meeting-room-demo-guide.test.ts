@@ -107,3 +107,23 @@ describe("F140-4a public guided demo continues past Send without sending", () =>
   }, 60_000);
 });
 // --- end of F140-4 test part 10 ---
+
+describe("F140-4b demo restart gives a fresh demo room", () => {
+  it("F140-4b test mode 1: restart resets the real room and a second run sends once more", async () => {
+    const svc = createMeetingRoomService({ env: TEST_ENV });
+    const page = svc.open("?demo=1", LOOPBACK, randomUUID());
+    const first = await runGuide(svc, page.roomId, LOOPBACK);
+    expect(first.statuses, "first run completes").toEqual([200, 200, 200, 200, 200, 200, 200, 200, 200]);
+    expect(svc.sentBodies().length, "exactly one fake send").toBe(1);
+    expect(first.last?.view.draft.sendState, "first run sent").toBe("sent");
+// --- end of F140-4 test part 11 ---
+    const restarted = await step(svc, page.roomId, "demo-restart", LOOPBACK);
+    expect(restarted.status, "restart allowed").toBe(200);
+    expect(restarted.snap.roomId, "same demo page").toBe(page.roomId);
+    expect(restarted.snap.view.twinStatus, "twin active again").toBe("active");
+    expect(restarted.snap.view.draft.approved, "package unapproved").toBe(false);
+    expect(restarted.snap.view.draft.sendState, "package unsent, no prior receipt").toBe("unsent");
+    expect(restarted.snap.view.transcript, "empty transcript").toEqual([]);
+    expect(restarted.snap.demo?.completed, "zero progress").toBe(0);
+    expect(restarted.snap.demo?.sendNote ?? null, "no carried-over send note").toBeNull();
+// --- end of F140-4 test part 12 ---
