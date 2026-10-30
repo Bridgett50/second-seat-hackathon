@@ -200,4 +200,32 @@ describe("F140-4c guided compare and evidence steps return and keep their result
     expect(demo.evidenceJson, "evidence kept after takeover").toBe(s8.body.evidenceJson);
     // --- end of F140-4 test part 18 ---
   });
+
+  it("F140-4c browser: steps 7 and 8 show the comparison and the unsent evidence, kept after takeover", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.goto(`${base}/meeting-room?demo=1`);
+      const next = async (n: number) => {
+        const pending = page.waitForResponse((r) => new URL(r.url()).pathname === API && r.request().method() === "POST");
+        await page.locator("#demo-next").click();
+        expect((await pending).status(), `Next ${n} succeeds`).toBe(200);
+        await page.waitForFunction((want) => document.getElementById("demo-progress")?.textContent === want, `${n} / 9`);
+      };
+      for (let n = 1; n <= 7; n += 1) await next(n);
+      const cmpText = (await page.locator("#compare-result").textContent()) ?? "";
+      expect(cmpText, "step 7 shows a comparison in the page").not.toBe("");
+      const cmp = JSON.parse(cmpText) as { identical?: boolean; flags?: unknown[] };
+      expect(cmp.identical, "shown comparison matches the approved package").toBe(true);
+      expect(cmp.flags, "no mismatch flags shown").toEqual([]);
+      // --- end of F140-4 test part 19 ---
+    } finally {
+      await browser.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 60_000);
 });
