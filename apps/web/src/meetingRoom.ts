@@ -639,6 +639,9 @@ export function createMeetingRoomService(opts?: {
           // Restart the real demo: a fresh isolated room, store and controller
           // for this same page (same room id, browser key and demo-cap slot).
           // Ordinary rooms and their stores are never touched.
+          // Reset the old controller first, so a Next still queued on it is
+          // dropped and cannot act (for example Send) on the replaced room.
+          entry.demo.reset();
           const freshRoom = createTwinRoom({
             testMode: entry.testMode,
             store: createInMemoryRoomStore(),
