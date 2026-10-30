@@ -314,7 +314,8 @@ export interface A11yDemoStep {
 
 /** Polite announcement for a guided demo step change. */
 export function demoStepAnnouncement(step: A11yDemoStep): string {
-  return `Guided demo — ${step.label}: ${step.caption}.`;
+  const caption = step.caption.endsWith(".") ? step.caption : `${step.caption}.`;
+  return `Guided demo — ${step.label}: ${caption}`;
 }
 
 export interface DiffAnnouncementsOptions {
