@@ -378,10 +378,21 @@ function applyResult(action,res){
   if(res===null){return;}
   var b=(res&&res.body)||{};
   if(typeof b.html==="string"){
+    var keep=null;
+    if(dirty&&!(action==="edit-draft"&&res.ok)){
+      var ed0=document.getElementById("package-editor");
+      keep=ed0?ed0.value:"";
+    }
     root.innerHTML=b.html;
-    dirty=false;
     var nr=root.getAttribute("data-room-id");
     if(nr){roomId=nr;}
+    if(keep!==null){
+      var ed1=document.getElementById("package-editor");
+      if(ed1){ed1.value=keep;}
+      lockOutgoing();
+    }else{
+      dirty=false;
+    }
   }
   if(Array.isArray(b.announcements)){say(b.announcements);}
   if(action==="guide"&&res&&res.ok){
