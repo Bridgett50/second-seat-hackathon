@@ -141,3 +141,25 @@ describe("F140-4b demo restart gives a fresh demo room", () => {
     expect(second.last?.view.twinStatus, "second takeover paused the fresh twin").toBe("paused (you took over)");
   });
 // --- end of F140-4 test part 14 ---
+
+  it("F140-4b public restart leaves the same browser's ordinary room unchanged", async () => {
+    const svc = createMeetingRoomService({ env: TEST_ENV });
+    const key = randomUUID();
+    const ordinary = svc.open("", LOOPBACK, key);
+    for (let i = 0; i < 3; i += 1) await svc.act({ roomId: ordinary.roomId, action: "stream-next" }, LOOPBACK);
+    await svc.act({ roomId: ordinary.roomId, action: "approve" }, LOOPBACK);
+    const sendRes = await svc.act({ roomId: ordinary.roomId, action: "send" }, LOOPBACK);
+    expect(sendRes.status, "ordinary send works in test mode").toBe(200);
+// --- end of F140-4 test part 15 ---
+    const demo = svc.open("?demo=1", PUBLIC, key);
+    const run = await runGuide(svc, demo.roomId, PUBLIC);
+    expect(run.last?.demo?.done, "public guide completes").toBe(true);
+    const restarted = await step(svc, demo.roomId, "demo-restart", PUBLIC);
+    expect(restarted.status, "public restart allowed").toBe(200);
+    expect(restarted.snap.view.twinStatus, "public demo twin active again").toBe("active");
+    const after = await step(svc, ordinary.roomId, "state", LOOPBACK);
+    expect(after.snap.view.draft.approved, "ordinary room still approved").toBe(true);
+    expect(after.snap.view.draft.sendState, "ordinary room still sent").toBe("sent");
+    expect(svc.sentBodies().length, "no extra transport call").toBe(1);
+  });
+});

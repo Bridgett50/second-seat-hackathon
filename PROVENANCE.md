@@ -248,3 +248,21 @@ written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edi
 contents that Grok Bot specified in the task prompts from a Codex review finding. Because the
 provider stream kept failing with protocol errors on one long session, the work was split into
 several short sequential Muse sessions, each committed separately on muse/f140-3-editable-base.
+
+### Public guided demo no longer stalls at Send; Restart gives a fresh demo room (Oct 29, 2026)
+
+On a public demo (test mode absent or 0) the guided demo used to return 403 at the Send step
+forever (completed 5 of 9), and Restart only reset the captions while the room kept its approved,
+sent and paused state. Next now records the Send step as not attempted, shows a visible "not sent"
+note (no package is marked sent and no send receipt exists), and continues through comparison,
+evidence and takeover against the actual approved, unsent package; a direct Send stays 403.
+Restart now replaces the demo page's room, in-memory store and guide controller with fresh ones
+under the same page id, browser key and demo-cap slot, so a test-mode rerun sends exactly once
+more through the fake transport; ordinary rooms are never touched (tests F140-4a, F140-4b). The
+demo controller gained skip() for a not-permitted step. The existing MR-R4 render test was updated
+to the required behavior (200 and progression to step 6 instead of 403) and keeps its safety
+checks: the send-disabled reason is announced, zero fake sends, and the package is not sent.
+The source edits, the MR-R4 update and the new test apps/web/test/meeting-room-demo-guide.test.ts
+were written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
+contents that Grok Bot specified in the task prompts from a Codex review finding, split into
+several short sequential Muse sessions, each committed separately on muse/f140-4-public-guide.
