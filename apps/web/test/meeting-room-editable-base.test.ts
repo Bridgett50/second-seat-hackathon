@@ -44,3 +44,25 @@ afterAll(async () => {
 });
 
 // --- end of F140-3 test part 4 ---
+function isApi(url: string): boolean {
+  return new URL(url).pathname === API;
+}
+
+/** Click a rendered control and wait for its /api/meeting-room response. */
+async function clickAndWait(page: Page, selector: string): Promise<ActResult> {
+  const pending = page.waitForResponse((r) => isApi(r.url()) && r.request().method() === "POST");
+  await page.locator(selector).first().click();
+  const res = await pending;
+  return { status: res.status(), json: (await res.json()) as Record<string, unknown> };
+// --- end of F140-3 test part 5 ---
+}
+
+function viewOf(r: ActResult): View {
+  const snap = (r.json?.["snapshot"] ?? null) as { view: View } | null;
+  if (snap === null) throw new Error(`no snapshot (status ${r.status})`);
+  return snap.view;
+}
+
+/** Let the page run queued tasks (response handlers) after a response. */
+async function settle(page: Page): Promise<void> {
+// --- end of F140-3 test part 6 ---
