@@ -218,5 +218,6 @@ the runner/executor (Grok Bot) as test scaffolding and copied in by Muse Code. I
 commit Muse Code on Baseten (meta-models/muse-spark-open-1026) deleted that file and wrote it again
 itself, in small edits from exact contents Grok Bot specified in the task prompt. The test names
 and assertions are unchanged; the only additions are "end of F140-1 test part N" marker comments
-that anchored the edits. No executor-written code remains in the file. F140-1a and F140-1b were
+that anchored the edits. Original test contents by Grok Bot; Muse Code re-applied them unchanged
+with marker comments through Baseten. F140-1a and F140-1b were
 re-verified red on d217380 and green on the F140-1 head.
