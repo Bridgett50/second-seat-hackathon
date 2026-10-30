@@ -403,3 +403,16 @@ entry. Bridgett Sanders requested these corrections, Grok Bot wrote the task pro
 text, and Muse Code on Baseten (meta-models/muse-spark-open-1026) made the edits in short sequential
 sessions on muse/f140-5-docs-accuracy; some sessions stopped on provider errors and the next session
 continued from the remaining steps.
+
+### Offline-only public entry for a hosted demo (Oct 30, 2026)
+
+apps/web/src/public-entry.ts is a separate start point for a hosted demo: it reuses createWebServer()
+from server.ts, listens on 0.0.0.0 and PORT, and refuses to start unless SECOND_SEAT_MODE=offline and
+SECOND_SEAT_TEST_MODE, LIVE_DEV and SECOND_SEAT_EXPERIMENTAL_IMAGES are each unset or 0. The
+loopback CLI in server.ts is unchanged. apps/web/test/public-entry.test.ts checks the refusals, the
+0.0.0.0/PORT binding, that test routes return 404 and a public Send is refused, and that the synthetic
+guided demo, including the comparison, the unsent evidence and Restart, works through this entry.
+Bridgett Sanders asked for this entry, Grok Bot wrote the task prompts with the exact code, and Muse
+Code on Baseten (meta-models/muse-spark-open-1026) made the edits in short sequential sessions on
+muse/render-offline-entry; one session stopped on a provider error and the next session made the
+remaining edits. Nothing was deployed.
