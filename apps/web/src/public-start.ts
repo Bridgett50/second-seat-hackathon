@@ -73,6 +73,24 @@ export function startPublicServer(env: EnvRecord = process.env as EnvRecord): Pr
   server.on("request", (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
     const url = req.url ?? "/";
     const path = url.split("?")[0];
+    if (path === "/briefs/demo" || path === "/briefs/demo/") {
+      const method = (req.method ?? "GET").toUpperCase();
+      if (method === "GET" || method === "HEAD") {
+        res.writeHead(302, {
+          Location: "/meeting-room?demo=1",
+          "cache-control": "no-store",
+        });
+        if (method === "HEAD") {
+          res.end();
+        } else {
+          res.end("");
+        }
+        return;
+      }
+      res.writeHead(405, { "cache-control": "no-store" });
+      res.end();
+      return;
+    }
     if (path === "/healthz") {
       const method = (req.method ?? "GET").toUpperCase();
       if (method !== "GET" && method !== "HEAD") {
@@ -114,7 +132,7 @@ if (isMain) {
     .then((server) => {
       const addr = server.address() as { port: number } | null;
       const port = addr?.port ?? Number(process.env["PORT"]);
-      console.log(`public demo on http://${PUBLIC_BIND_HOST}:${port}/briefs/demo`);
+      console.log(`public demo on http://${PUBLIC_BIND_HOST}:${port}/meeting-room?demo=1`);
     })
     .catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
