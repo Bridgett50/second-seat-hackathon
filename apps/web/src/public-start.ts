@@ -67,6 +67,36 @@ export function startPublicServer(env: EnvRecord = process.env as EnvRecord): Pr
   }
   const port = parsePort(env);
   const server = createWebServer();
+  // Intercept /healthz before the offline app sees it.
+  const origListeners = server.listeners("request") as ((...a: unknown[]) => void)[];
+  server.removeAllListeners("request");
+  server.on("request", (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
+    const url = req.url ?? "/";
+    const path = url.split("?")[0];
+    if (path === "/healthz") {
+      const method = (req.method ?? "GET").toUpperCase();
+      if (method !== "GET" && method !== "HEAD") {
+        res.writeHead(405, { "cache-control": "no-store" });
+        res.end();
+        return;
+      }
+      const body = "ok";
+      res.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+        "content-length": String(Buffer.byteLength(body)),
+      });
+      if (method === "HEAD") {
+        res.end();
+      } else {
+        res.end(body);
+      }
+      return;
+    }
+    for (const fn of origListeners) {
+      (fn as unknown as (a: typeof req, b: typeof res) => void)(req, res);
+    }
+  });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, PUBLIC_BIND_HOST, () => {
