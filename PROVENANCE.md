@@ -278,6 +278,16 @@ and apps/web/src/meetingRoomRender.ts were written by Muse Code on Baseten
 task prompts from a Codex recheck finding, split into ten short sequential Muse sessions, each
 committed separately on muse/f140-4-public-guide.
 
+### Bundled-Chromium fallback for the import-privacy test and the Playwright config (Oct 30, 2026)
+
+apps/web/test/meeting-room-import-privacy.test.ts and apps/web/playwright.meeting-room.config.ts
+now launch system Chrome when PLAYWRIGHT_CHROME_PATH is set or /usr/bin/google-chrome exists, and
+otherwise Playwright's bundled Chromium, matching the four browser test files changed on
+muse/f140-4-public-guide. The edits and this entry were written by Muse Code on Baseten
+(meta-models/muse-spark-open-1026), in small edits from exact contents that Grok Bot specified in
+the task prompt, in three short Muse sessions on muse/f140-5-import-privacy (the first two stopped
+on provider errors; each next session continued from the remaining steps).
+
 ### Demo reset and Restart tests, browser fallback, announcement period (Oct 30, 2026)
 
 Follow-ups on muse/f140-4-public-guide. services/bot/test/t2-demo-mode.test.ts T13-10 holds a slow
