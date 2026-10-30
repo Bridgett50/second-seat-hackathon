@@ -177,5 +177,20 @@ describe("F140-4c guided compare and evidence steps return and keep their result
     }
     expect(approvedSha, "step 5 approved a package").not.toBe("");
     // --- end of F140-4 test part 16 ---
+    const s7 = await svc.act({ roomId: page.roomId, action: "demo-next" }, PUBLIC);
+    expect(s7.status, "step 7 succeeds").toBe(200);
+    const cmp = s7.body.comparison as { identical?: boolean; flags?: unknown[] } | null | undefined;
+    expect(cmp, "step 7 returns a comparison").toBeTruthy();
+    expect(cmp?.identical, "approved package matches its own export").toBe(true);
+    expect(cmp?.flags, "no mismatch flags").toEqual([]);
+    const s8 = await svc.act({ roomId: page.roomId, action: "demo-next" }, PUBLIC);
+    expect(s8.status, "step 8 succeeds").toBe(200);
+    expect(typeof s8.body.evidenceJson, "step 8 returns evidence JSON").toBe("string");
+    const ev = JSON.parse(s8.body.evidenceJson as string) as { packageHash: string; sendState: string; sentAt: number | null };
+    expect(ev.packageHash, "evidence names the approved package").toBe(approvedSha);
+    expect(ev.sendState, "evidence records the package as unsent").toBe("unsent");
+    expect(ev.sentAt, "no send receipt").toBeNull();
+    expect(svc.sentBodies(), "zero fake transport calls").toEqual([]);
+    // --- end of F140-4 test part 17 ---
   });
 });
