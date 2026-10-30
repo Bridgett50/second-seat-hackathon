@@ -75,3 +75,14 @@ describe("F140-5 import privacy boundary", () => {
     const html = await panel.innerHTML();
     const at = html.indexOf(ACCURATE);
 // --- end of F140-5 test part 7 ---
+    expect(at, "notice is in the panel markup").toBeGreaterThan(-1);
+    expect(at, "notice comes before the import box").toBeLessThan(html.indexOf('id="compare-input"'));
+    expect(at, "notice comes before Compare").toBeLessThan(html.indexOf('id="compare-run"'));
+    await page.context().close();
+  }, 60_000);
+
+  it("F140-5b Compare posts the marker only to the loopback app server; no external transport runs", async () => {
+    const { page, requests, blocked } = await openRoom();
+    const statsBefore = outboundStats();
+    const sentBefore = svc.sentBodies().length;
+// --- end of F140-5 test part 8 ---
