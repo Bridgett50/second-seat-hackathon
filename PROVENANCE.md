@@ -266,3 +266,19 @@ The source edits, the MR-R4 update and the new test apps/web/test/meeting-room-d
 were written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
 contents that Grok Bot specified in the task prompts from a Codex review finding, split into
 several short sequential Muse sessions, each committed separately on muse/f140-4-public-guide.
+### Import panel states where imported text goes (Oct 29, 2026)
+
+The meeting room's import panel said "Nothing leaves the browser", but Compare posts the imported
+text to this app's own server (POST /api/meeting-room). The panel now says, before the import box
+and Compare: "Compare sends this text to this app's server; this demo does not call an external
+model or send email." Only the wording changed; network behavior is unchanged. Test F140-5a checks
+the rendered panel (it failed on the parent e06a76a because of the old claim). Test F140-5b is a
+control that already passed before the wording fix: in a real browser on a private loopback server
+with the test-mode network guard on, Compare posts the exact synthetic marker in its text field to
+the local /api/meeting-room, every browser request stays on the loopback origin, the server guard
+records no outside call or analyzer call, and the fake email transport is not called.
+The wording change and the new test apps/web/test/meeting-room-import-privacy.test.ts were written
+by Muse Code on Baseten (meta-models/muse-spark-open-1026) from exact contents that Grok Bot
+specified in the task prompts from a Codex review finding, one small part per short sequential
+Muse session, each committed separately on muse/f140-5-import-privacy (test parts first, then the
+source edit).
