@@ -278,6 +278,24 @@ and apps/web/src/meetingRoomRender.ts were written by Muse Code on Baseten
 task prompts from a Codex recheck finding, split into ten short sequential Muse sessions, each
 committed separately on muse/f140-4-public-guide.
 
+### Overlapping guided-demo Next calls cannot bypass or duplicate Send (Oct 30, 2026)
+
+The meeting room's demo-next handler in apps/web/src/meetingRoom.ts checked "is the current step
+Send, and is sending allowed?" before queueing its call, so an overlapping Next could see a stale
+step. With two service-level calls issued together (Promise.all on the service, not a confirmed
+browser double-click; paired HTTP requests already advanced correctly), a public demo attempted
+Send instead of recording it as not sent. The demo controller in packages/core/src/t2/demo-mode.ts
+now has nextUnless(), which evaluates the skip check inside the queued call against the step that
+is current when the call runs, and demo-next uses it. Restart now resets the old controller before
+replacing the room, so a Next still queued on the old demo is dropped instead of running Send on
+the replaced room, and a call that waited across a Restart reports the fresh room. Tests in
+apps/web/test/meeting-room-demo-guide.test.ts: the public overlapping case (regression), test mode
+sends exactly once (guard), the same overlap over the real HTTP route (guard), and Restart with
+queued Next calls sends nothing and leaves a fresh room (regression). The source edits and tests
+were written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
+contents that Grok Bot specified in the task prompts from a Codex finding, split into nine short
+sequential Muse sessions, each committed separately on muse/f140-4-public-guide.
+
 ### Guided demo skip and reset act in order with pending Next calls (Oct 30, 2026)
 
 After next() was serialized, skip() and reset() in packages/core/src/t2/demo-mode.ts still acted
