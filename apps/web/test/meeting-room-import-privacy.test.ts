@@ -42,3 +42,14 @@ afterAll(async () => {
 async function openRoom(): Promise<{ page: Page; requests: string[]; blocked: string[] }> {
   const context = await browser.newContext();
 // --- end of F140-5 test part 4 ---
+  const requests: string[] = [];
+  const blocked: string[] = [];
+  await context.route("**/*", async (route) => {
+    const url = route.request().url();
+    requests.push(url);
+    if (new URL(url).origin !== base) {
+      blocked.push(url);
+      await route.abort();
+      return;
+    }
+// --- end of F140-5 test part 5 ---
