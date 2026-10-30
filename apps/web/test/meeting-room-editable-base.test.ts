@@ -88,3 +88,25 @@ function count(haystack: string, needle: string): number {
 }
 
 // --- end of F140-3 test part 8 ---
+/** Open the room in the browser, stream every synthetic line, run plugins. */
+async function prepareRoom(ctx: BrowserContext): Promise<Page> {
+  const page = await ctx.newPage();
+  await page.goto(`${base}/meeting-room`);
+  let last = -1;
+  for (let i = 0; i < 40; i += 1) {
+    const n = (await act(page, "#stream-next")).transcript.length;
+    if (n === last) break;
+    last = n;
+  }
+// --- end of F140-3 test part 9 ---
+  expect(last, "synthetic lines streamed").toBeGreaterThan(0);
+  await act(page, "#run-plugins");
+  return page;
+}
+
+/** Click Include on the Action items plugin; return [before, after, managed]. */
+async function includeActionItems(page: Page): Promise<{ before: string; after: View; managed: string }> {
+  const before = await displayedPackage(page);
+  const after = await act(page, `#plugin-include-${PLUGIN}`);
+  expect(after.draft.body.startsWith(before), "included section is appended after the base").toBe(true);
+// --- end of F140-3 test part 10 ---
