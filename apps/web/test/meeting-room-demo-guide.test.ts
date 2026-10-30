@@ -64,3 +64,25 @@ describe("F140-4a public guided demo continues past Send without sending", () =>
       expect(run.notes.join("\n"), "announced as not sent").toContain("not sent");
       expect(svc.sentBodies(), "zero fake transport calls").toEqual([]);
 // --- end of F140-4 test part 6 ---
+      expect(last.view.draft.approved, "approval is real and kept").toBe(true);
+      expect(last.view.draft.sendState, "package stays unsent, no receipt").toBe("unsent");
+      expect(last.view.twinStatus, "takeover really paused the twin").toBe("paused (you took over)");
+      const evidence = await svc.act({ roomId: page.roomId, action: "evidence-export" }, PUBLIC);
+      expect(evidence.status, "evidence export allowed").toBe(200);
+      const send = await svc.act({ roomId: page.roomId, action: "send" }, PUBLIC);
+      expect(send.status, "direct Send stays refused").toBe(403);
+      expect(svc.sentBodies(), "still zero transport calls").toEqual([]);
+    });
+  }
+// --- end of F140-4 test part 7 ---
+
+  it("F140-4a browser: the Next control reaches the honest final state", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.goto(`${base}/meeting-room?demo=1`);
+// --- end of F140-4 test part 8 ---
