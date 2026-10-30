@@ -221,3 +221,14 @@ Send and export and clears the copy/mailto affordances until the edit is saved (
 Both the source edits and the test file apps/web/test/meeting-room-approve-displayed.test.ts were
 written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
 contents that Grok Bot specified in the task prompt from a Codex review finding.
+
+### Follow-up: Muse Code rewrote the F140-1 test file (Oct 29, 2026)
+
+The entry "Meeting room actions bound to the browser that opened the room" above records that
+apps/web/test/meeting-room-browser-binding.test.ts was first written by
+the runner/executor (Grok Bot) as test scaffolding and copied in by Muse Code. In this follow-up
+commit Muse Code on Baseten (meta-models/muse-spark-open-1026) deleted that file and wrote it again
+itself, in small edits from exact contents Grok Bot specified in the task prompt. The test names
+and assertions are unchanged; the only additions are "end of F140-1 test part N" marker comments
+that anchored the edits. No executor-written code remains in the file. F140-1a and F140-1b were
+re-verified red on d217380 and green on the F140-1 head.
