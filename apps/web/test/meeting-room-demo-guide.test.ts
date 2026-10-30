@@ -223,6 +223,21 @@ describe("F140-4c guided compare and evidence steps return and keep their result
       expect(cmp.identical, "shown comparison matches the approved package").toBe(true);
       expect(cmp.flags, "no mismatch flags shown").toEqual([]);
       // --- end of F140-4 test part 19 ---
+      await next(8);
+      const evText = (await page.locator("#evidence-json").textContent()) ?? "";
+      expect(evText, "step 8 shows the evidence record in the page").not.toBe("");
+      const ev = JSON.parse(evText) as { packageHash: string; sendState: string; sentAt: number | null };
+      const shaLine = (await page.locator("p", { hasText: "sha256: " }).first().textContent()) ?? "";
+      expect(ev.packageHash, "shown evidence names the approved package").toBe(shaLine.replace("sha256: ", "").trim());
+      expect(ev.sendState, "shown evidence records the package as unsent").toBe("unsent");
+      expect(ev.sentAt, "no send receipt").toBeNull();
+      expect(await page.locator("#mr-approval-state").textContent(), "page shows approved and unsent").toContain("Send: unsent");
+      expect(svc.sentBodies(), "zero fake transport calls").toEqual([]);
+      await next(9);
+      expect(await page.locator("#demo-status").textContent(), "honest final caption").toBe("Demo complete");
+      expect(await page.locator("#compare-result").textContent(), "comparison kept after takeover").toBe(cmpText);
+      expect(await page.locator("#evidence-json").textContent(), "evidence kept after takeover").toBe(evText);
+      // --- end of F140-4 test part 20 ---
     } finally {
       await browser.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
