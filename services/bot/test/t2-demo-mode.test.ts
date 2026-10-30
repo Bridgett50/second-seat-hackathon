@@ -286,4 +286,15 @@ describe("t2 demo mode", () => {
     for (const value of raw) expect(body).not.toContain(value);
     expect(room.view().draft.sha256).toBe(packageHash(body));
   });
+
+  it("T13-7 two concurrent next() calls run one step each, in order, with no duplicate step 1", async () => {
+    const { room } = makeRoom();
+    const demo = createDemoController(room);
+    const [first, second] = await Promise.all([demo.next(), demo.next()]);
+    expect(first?.id, "first concurrent next() runs step 1").toBe(DEMO_STEPS[0]!.id);
+    expect(second?.id, "second concurrent next() runs step 2, not step 1 again").toBe(DEMO_STEPS[1]!.id);
+    expect(demo.completed(), "exactly two steps completed").toBe(2);
+    expect(demo.current()?.id, "step 3 is next").toBe(DEMO_STEPS[2]!.id);
+    expect(room.view().guidance.length, "the guide step ran exactly once").toBe(1);
+  });
 });

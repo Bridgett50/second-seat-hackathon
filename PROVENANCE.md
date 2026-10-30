@@ -278,6 +278,18 @@ and apps/web/src/meetingRoomRender.ts were written by Muse Code on Baseten
 task prompts from a Codex recheck finding, split into ten short sequential Muse sessions, each
 committed separately on muse/f140-4-public-guide.
 
+### Overlapping guided-demo Next calls advance one step each (Oct 30, 2026)
+
+The guided demo controller's next() in packages/core/src/t2/demo-mode.ts read the step at the
+current position, awaited it, and only then advanced, so two overlapping calls (a double click or
+two Next requests) both ran step 1 and the guide step never ran. Each next() call now waits for
+the previous one, so calls run one at a time in call order and each advances exactly one step
+(test T13-7: two concurrent calls return steps 1 and 2, two steps completed, the guide ran once).
+The source edit and test T13-7 in services/bot/test/t2-demo-mode.test.ts were written by Muse Code
+on Baseten (meta-models/muse-spark-open-1026), in small edits from exact contents that Grok Bot
+specified in the task prompts from a Codex recheck finding, split into three short sequential Muse
+sessions, each committed separately on muse/f140-4-public-guide.
+
 ### Public guided demo no longer stalls at Send; Restart gives a fresh demo room (Oct 29, 2026)
 
 On a public demo (test mode absent or 0) the guided demo used to return 403 at the Send step
