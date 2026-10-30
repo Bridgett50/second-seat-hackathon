@@ -586,12 +586,17 @@ export function createMeetingRoomService(opts?: {
             entry.demo.current()?.id === "demo-send" &&
             (!meetingRoomFakeSendAllowed(env, headers) || !entry.testMode)
           ) {
+            // Sending is unavailable here: record the Send step as not
+            // attempted and continue the guide. Nothing is sent, the package
+            // stays unsent, and no send receipt is created.
+            const skipped = entry.demo.skip();
+            const notes = [SEND_DISABLED_REASON, DEMO_SEND_NOT_SENT];
+            if (skipped !== null) {
+              notes.push(demoStepAnnouncement({ label: skipped.label, caption: skipped.caption }));
+            }
             return {
-              status: 403,
-              body: {
-                snapshot: snap(roomId, entry, entry.room.view()),
-                announcements: [SEND_DISABLED_REASON],
-              },
+              status: 200,
+              body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: notes },
             };
           }
           const step = await entry.demo.next();
@@ -609,8 +614,28 @@ export function createMeetingRoomService(opts?: {
         }
         case "demo-restart": {
           if (entry.demo === null) return bad("Demo is not enabled for this room.");
-          entry.demo.reset();
-          break;
+          // Restart the real demo: a fresh isolated room, store and controller
+          // for this same page (same room id, browser key and demo-cap slot).
+          // Ordinary rooms and their stores are never touched.
+          const freshRoom = createTwinRoom({
+            testMode: entry.testMode,
+            store: createInMemoryRoomStore(),
+            transport,
+          });
+          const fresh: RoomEntry = {
+            ...entry,
+            room: freshRoom,
+            demo: createDemoController(freshRoom),
+            reused: false,
+          };
+          rooms.set(roomId, fresh);
+          return {
+            status: 200,
+            body: {
+              snapshot: snap(roomId, fresh, freshRoom.view()),
+              announcements: ["Demo restarted with a fresh room."],
+            },
+          };
         }
         default:
           return bad("Unknown meeting room action.");
