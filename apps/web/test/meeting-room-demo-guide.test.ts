@@ -281,4 +281,35 @@ describe("F140-4f overlapping Next calls around Send cannot bypass or duplicate 
     expect(state.snap.view.draft.sendState, "package sent once").toBe("sent");
     expect(svc.sentBodies()[0], "the approved package was sent").toBe(state.snap.view.draft.body);
   });
+
+  it("F140-4f route: two overlapping Next requests over HTTP at the approve step skip Send without sending", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.goto(`${base}/meeting-room?demo=1`);
+      const roomId = await page.locator("#mr-root").getAttribute("data-room-id");
+      const post = async (action: string) => {
+        const res = await page.request.post(`${base}${API}`, {
+          data: { roomId, action },
+          headers: { "content-type": "application/json" },
+        });
+        return { status: res.status(), json: (await res.json()) as { snapshot: Snap; announcements: string[] } };
+      };
+      for (let i = 0; i < 4; i += 1) expect((await post("demo-next")).status, `Next ${i + 1} succeeds`).toBe(200);
+      const [a, b] = await Promise.all([post("demo-next"), post("demo-next")]);
+      expect([a.status, b.status], "both Next requests succeed").toEqual([200, 200]);
+      expect(svc.sentBodies(), "zero fake transport calls through the route").toEqual([]);
+      const state = await post("state");
+      expect(state.json.snapshot.demo?.completed, "approve and Send each counted once").toBe(6);
+      expect(state.json.snapshot.demo?.sendNote ?? "", "Send recorded as not sent").toContain("not sent");
+      expect(state.json.snapshot.view.draft.sendState, "package stays unsent").toBe("unsent");
+    } finally {
+      await browser.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 60_000);
 });
