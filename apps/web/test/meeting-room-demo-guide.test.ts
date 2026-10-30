@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
+import { existsSync } from "node:fs";
 import type { IncomingHttpHeaders, Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { chromium, type Browser } from "@playwright/test";
@@ -14,7 +15,10 @@ import { DEMO_STEPS } from "@second-seat/bot/dist/src/t2-room.js";
 const LOOPBACK: IncomingHttpHeaders = { host: "127.0.0.1:4174" };
 const PUBLIC: IncomingHttpHeaders = { host: "second-seat.example.com", "x-forwarded-host": "second-seat.example.com" };
 const TEST_ENV: Readonly<Record<string, string | undefined>> = { SECOND_SEAT_TEST_MODE: "1" };
-const CHROME = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+// System Chrome when PLAYWRIGHT_CHROME_PATH is set or /usr/bin/google-chrome exists; otherwise Playwright's bundled Chromium.
+const CHROME_PATH = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+const CHROME_LAUNCH: { executablePath?: string } =
+  process.env.PLAYWRIGHT_CHROME_PATH || existsSync(CHROME_PATH) ? { executablePath: CHROME_PATH } : {};
 const API = "/api/meeting-room";
 // --- end of F140-4 test part 2 ---
 
@@ -82,7 +86,7 @@ describe("F140-4a public guided demo continues past Send without sending", () =>
     const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    const browser: Browser = await chromium.launch({ ...CHROME_LAUNCH, headless: true });
     try {
       const page = await browser.newPage();
       await page.goto(`${base}/meeting-room?demo=1`);
@@ -207,7 +211,7 @@ describe("F140-4c guided compare and evidence steps return and keep their result
     const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    const browser: Browser = await chromium.launch({ ...CHROME_LAUNCH, headless: true });
     try {
       const page = await browser.newPage();
       await page.goto(`${base}/meeting-room?demo=1`);
@@ -288,7 +292,7 @@ describe("F140-4f overlapping Next calls around Send cannot bypass or duplicate 
     const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    const browser: Browser = await chromium.launch({ ...CHROME_LAUNCH, headless: true });
     try {
       const page = await browser.newPage();
       await page.goto(`${base}/meeting-room?demo=1`);

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
+import { existsSync } from "node:fs";
 import type { Server } from "node:http";
 import {
   chromium,
@@ -20,7 +21,10 @@ import {
 // the injected service env, fake in-memory transport, no external calls.
 const MARKER = "Synthetic owner A private marker";
 const TEST_ENV: Readonly<Record<string, string | undefined>> = { SECOND_SEAT_TEST_MODE: "1" };
-const CHROME = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+// System Chrome when PLAYWRIGHT_CHROME_PATH is set or /usr/bin/google-chrome exists; otherwise Playwright's bundled Chromium.
+const CHROME_PATH = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+const CHROME_LAUNCH: { executablePath?: string } =
+  process.env.PLAYWRIGHT_CHROME_PATH || existsSync(CHROME_PATH) ? { executablePath: CHROME_PATH } : {};
 
 type ActResult = { status: number; text: string; json: Record<string, unknown> | null };
 
@@ -34,7 +38,7 @@ beforeAll(async () => {
   server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  browser = await chromium.launch({ ...CHROME_LAUNCH, headless: true });
 }, 60_000);
 
 afterAll(async () => {
