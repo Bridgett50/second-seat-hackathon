@@ -14,7 +14,7 @@ It doesn't join live calls yet, and it doesn't send real emails yet. That is the
 
 Vendor calls are where people agree to things they never meant to agree to. Second Seat sits next to you after the call. You paste the meeting text. Glimmer, running on our own GPU, masks the personal details first. You check and approve that redacted text. Only then does Spark write a short brief where every line cites the part of the meeting it came from: what was offered, what was asked, what needs a decision, and where someone leaned on you. You edit a reply, approve that exact text, and copy it out yourself.
 
-Second Seat never sends a reply or message to the vendor, never joins calls, and takes no action. You decide.
+Second Seat never sends a real reply or message to the vendor, never sends real email, and never joins real calls. In the meeting room demo, it sends only through a test (fake) transport, and only after you approve the exact package. You decide.
 
 Before the approved text is sent, a redaction check has to pass. After the brief is written, a second check has to pass. If a recorded support verdict is available, that is checked too. A hard failure stops the step and the page says "Needs owner review" without quoting the provider. Noisy warnings are sent to you for review and do not block the brief. Offline and Demo Mode run the same checks on the local brief. You still approve the redacted text and the draft yourself.
 
