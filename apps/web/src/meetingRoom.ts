@@ -592,24 +592,25 @@ export function createMeetingRoomService(opts?: {
           break;
         case "demo-next": {
           if (entry.demo === null) return bad("Demo is not enabled for this room.");
-          if (
-            entry.demo.current()?.id === "demo-send" &&
-            (!meetingRoomFakeSendAllowed(env, headers) || !entry.testMode)
-          ) {
+          // Decide whether Send is allowed inside the queued demo call, so an
+          // overlapping Next cannot act on a stale "current step".
+          const sendAllowed = meetingRoomFakeSendAllowed(env, headers) && entry.testMode;
+          const outcome = await entry.demo.nextUnless((s) => s.id === "demo-send" && !sendAllowed);
+          if (outcome !== null && outcome.skipped) {
             // Sending is unavailable here: record the Send step as not
             // attempted and continue the guide. Nothing is sent, the package
             // stays unsent, and no send receipt is created.
-            const skipped = await entry.demo.skip();
-            const notes = [SEND_DISABLED_REASON, DEMO_SEND_NOT_SENT];
-            if (skipped !== null) {
-              notes.push(demoStepAnnouncement({ label: skipped.label, caption: skipped.caption }));
-            }
+            const notes = [
+              SEND_DISABLED_REASON,
+              DEMO_SEND_NOT_SENT,
+              demoStepAnnouncement({ label: outcome.step.label, caption: outcome.step.caption }),
+            ];
             return {
               status: 200,
               body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: notes },
             };
           }
-          const step = await entry.demo.next();
+          const step = outcome?.step ?? null;
           const after = entry.room.view();
           const announcements = diffAnnouncements(before, after);
           if (step !== null) {
