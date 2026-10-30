@@ -184,3 +184,10 @@ evicted room now answers 404 with "This room expired. Reload to start again." (t
 Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
 
 Note: N-1 commit cbe1f21 was run and pushed by hand by Opus on the bot computer at Bridgett's request because the Auto-review safety check was erroring; the code was written by Muse Code.
+
+### Review fixes N-2 and N-3 (Oct 29, 2026)
+
+Demo (?demo=1) pages are capped at 200 globally by evicting the oldest demo page, record no
+activity for their key, never mark a key as acted, and no longer count against a key's 20-page
+cap (tests MR-DC1, MR-DC2 in apps/web/test/meeting-room-demo-cap.test.ts).
+Written by Muse Code on Baseten (meta-models/muse-spark-open-1026).
