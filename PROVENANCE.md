@@ -403,3 +403,12 @@ entry. Bridgett Sanders requested these corrections, Grok Bot wrote the task pro
 text, and Muse Code on Baseten (meta-models/muse-spark-open-1026) made the edits in short sequential
 sessions on muse/f140-5-docs-accuracy; some sessions stopped on provider errors and the next session
 continued from the remaining steps.
+
+### Render runtime builder and bootstrap bound (Oct 30, 2026)
+Muse Code on Baseten, model `meta-models/muse-spark-open-1026`, wrote the builder, its synthetic tests and the bounded-decompression fix in a source-only, no-tools session (session `70651af8`) from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the returned output verbatim. It continued an earlier bootstrap session that stopped on a provider error. An earlier attempt with the undated model id `meta-models/muse-spark-open` failed with HTTP 403 before producing anything. This correction session (same model and settings) tightened the dependency-link checks and fixed the tests. No deploy or production result is claimed.
+
+### Public start legacy redirect (Oct 30, 2026)
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`) wrote the public-start redirect for the legacy demo URL and its regression test in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders, after Grok Bot's packed-artifact check found the crash; Grok Bot applied the output verbatim. Claim no review, deploy or production result.
+
+### Public start normalized-path redirect (Oct 30, 2026)
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`) made the public-start wrapper match the same URL-normalized pathname as server.ts and return a safe 400 for malformed request URLs, with raw-request regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders, after Bridgett Sanders found the dot-segment bypass; Grok Bot applied the output verbatim. Claim no review, deploy or production result.
