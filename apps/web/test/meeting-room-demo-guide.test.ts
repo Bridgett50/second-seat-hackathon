@@ -163,3 +163,84 @@ describe("F140-4b demo restart gives a fresh demo room", () => {
     expect(svc.sentBodies().length, "no extra transport call").toBe(1);
   });
 });
+// --- end of F140-4 test part 15b ---
+
+describe("F140-4c guided compare and evidence steps return and keep their results", () => {
+  it("F140-4c service: steps 7 and 8 return the comparison and the unsent evidence, kept after takeover", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const page = svc.open("?demo=1", PUBLIC, randomUUID());
+    let approvedSha = "";
+    for (let i = 0; i < 6; i += 1) {
+      const r = await svc.act({ roomId: page.roomId, action: "demo-next" }, PUBLIC);
+      expect(r.status, `step ${i + 1} succeeds`).toBe(200);
+      if (i === 4) approvedSha = (r.body.snapshot as unknown as { view: { draft: { sha256: string } } }).view.draft.sha256;
+    }
+    expect(approvedSha, "step 5 approved a package").not.toBe("");
+    // --- end of F140-4 test part 16 ---
+    const s7 = await svc.act({ roomId: page.roomId, action: "demo-next" }, PUBLIC);
+    expect(s7.status, "step 7 succeeds").toBe(200);
+    const cmp = s7.body.comparison as { identical?: boolean; flags?: unknown[] } | null | undefined;
+    expect(cmp, "step 7 returns a comparison").toBeTruthy();
+    expect(cmp?.identical, "approved package matches its own export").toBe(true);
+    expect(cmp?.flags, "no mismatch flags").toEqual([]);
+    const s8 = await svc.act({ roomId: page.roomId, action: "demo-next" }, PUBLIC);
+    expect(s8.status, "step 8 succeeds").toBe(200);
+    expect(typeof s8.body.evidenceJson, "step 8 returns evidence JSON").toBe("string");
+    const ev = JSON.parse(s8.body.evidenceJson as string) as { packageHash: string; sendState: string; sentAt: number | null };
+    expect(ev.packageHash, "evidence names the approved package").toBe(approvedSha);
+    expect(ev.sendState, "evidence records the package as unsent").toBe("unsent");
+    expect(ev.sentAt, "no send receipt").toBeNull();
+    expect(svc.sentBodies(), "zero fake transport calls").toEqual([]);
+    // --- end of F140-4 test part 17 ---
+    const s9 = await svc.act({ roomId: page.roomId, action: "demo-next" }, PUBLIC);
+    expect(s9.status, "takeover step succeeds").toBe(200);
+    const demo = (s9.body.snapshot as unknown as { demo: { done: boolean; comparison?: unknown; evidenceJson?: string | null } }).demo;
+    expect(demo.done, "guide finished").toBe(true);
+    expect(demo.comparison, "comparison kept after takeover").toEqual(s7.body.comparison);
+    expect(demo.evidenceJson, "evidence kept after takeover").toBe(s8.body.evidenceJson);
+    // --- end of F140-4 test part 18 ---
+  });
+
+  it("F140-4c browser: steps 7 and 8 show the comparison and the unsent evidence, kept after takeover", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.goto(`${base}/meeting-room?demo=1`);
+      const next = async (n: number) => {
+        const pending = page.waitForResponse((r) => new URL(r.url()).pathname === API && r.request().method() === "POST");
+        await page.locator("#demo-next").click();
+        expect((await pending).status(), `Next ${n} succeeds`).toBe(200);
+        await page.locator("#demo-progress", { hasText: `${n} / 9` }).waitFor();
+      };
+      for (let n = 1; n <= 7; n += 1) await next(n);
+      const cmpText = (await page.locator("#compare-result").textContent()) ?? "";
+      expect(cmpText, "step 7 shows a comparison in the page").not.toBe("");
+      const cmp = JSON.parse(cmpText) as { identical?: boolean; flags?: unknown[] };
+      expect(cmp.identical, "shown comparison matches the approved package").toBe(true);
+      expect(cmp.flags, "no mismatch flags shown").toEqual([]);
+      // --- end of F140-4 test part 19 ---
+      await next(8);
+      const evText = (await page.locator("#evidence-json").textContent()) ?? "";
+      expect(evText, "step 8 shows the evidence record in the page").not.toBe("");
+      const ev = JSON.parse(evText) as { packageHash: string; sendState: string; sentAt: number | null };
+      const shaLine = (await page.locator("p", { hasText: "sha256: " }).first().textContent()) ?? "";
+      expect(ev.packageHash, "shown evidence names the approved package").toBe(shaLine.replace("sha256: ", "").trim());
+      expect(ev.sendState, "shown evidence records the package as unsent").toBe("unsent");
+      expect(ev.sentAt, "no send receipt").toBeNull();
+      expect(await page.locator("#mr-approval-state").textContent(), "page shows approved and unsent").toContain("Send: unsent");
+      expect(svc.sentBodies(), "zero fake transport calls").toEqual([]);
+      await next(9);
+      expect(await page.locator("#demo-status").textContent(), "honest final caption").toBe("Demo complete");
+      expect(await page.locator("#compare-result").textContent(), "comparison kept after takeover").toBe(cmpText);
+      expect(await page.locator("#evidence-json").textContent(), "evidence kept after takeover").toBe(evText);
+      // --- end of F140-4 test part 20 ---
+    } finally {
+      await browser.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 60_000);
+});
