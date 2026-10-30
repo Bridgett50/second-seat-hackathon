@@ -53,3 +53,14 @@ async function openRoom(): Promise<{ page: Page; requests: string[]; blocked: st
       return;
     }
 // --- end of F140-5 test part 5 ---
+    await route.continue();
+  });
+  const page = await context.newPage();
+  await page.goto(`${base}/meeting-room`);
+  return { page, requests, blocked };
+}
+
+describe("F140-5 import privacy boundary", () => {
+  it("F140-5a the rendered import panel explains app-server processing before Compare", async () => {
+    const { page } = await openRoom();
+// --- end of F140-5 test part 6 ---
