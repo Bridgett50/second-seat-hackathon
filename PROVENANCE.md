@@ -209,3 +209,15 @@ F140-1b, real Chrome cookie jar). The test file apps/web/test/meeting-room-brows
 was written by the runner/executor (Grok Bot) as test scaffolding and copied in by Muse Code with a
 single cp; the exact source edits were specified in the task prompt by Grok Bot from a Codex review
 finding and applied by Muse Code on Baseten (meta-models/muse-spark-open-1026).
+
+### Approve and Send bound to the displayed package (Oct 29, 2026)
+
+The meeting room snapshot now carries a server-derived packageId (selected meeting id plus the
+sha256 of the complete composed package), rendered on the Approve and Send buttons. POST
+/api/meeting-room accepts the new packageId field; Approve and Send without a valid identity get
+400 and a stale or forged identity gets 409, before the room is touched (tests F140-2a, F140-2b).
+The page discards obsolete responses and an unsaved editor change immediately disables Approve,
+Send and export and clears the copy/mailto affordances until the edit is saved (test F140-2c).
+Both the source edits and the test file apps/web/test/meeting-room-approve-displayed.test.ts were
+written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
+contents that Grok Bot specified in the task prompt from a Codex review finding.
