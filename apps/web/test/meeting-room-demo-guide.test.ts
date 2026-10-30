@@ -214,7 +214,7 @@ describe("F140-4c guided compare and evidence steps return and keep their result
         const pending = page.waitForResponse((r) => new URL(r.url()).pathname === API && r.request().method() === "POST");
         await page.locator("#demo-next").click();
         expect((await pending).status(), `Next ${n} succeeds`).toBe(200);
-        await page.waitForFunction((want) => document.getElementById("demo-progress")?.textContent === want, `${n} / 9`);
+        await page.locator("#demo-progress", { hasText: `${n} / 9` }).waitFor();
       };
       for (let n = 1; n <= 7; n += 1) await next(n);
       const cmpText = (await page.locator("#compare-result").textContent()) ?? "";
