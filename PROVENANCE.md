@@ -232,3 +232,19 @@ itself, in small edits from exact contents Grok Bot specified in the task prompt
 and assertions are unchanged; the only additions are "end of F140-1 test part N" marker comments
 that anchored the edits. No executor-written code remains in the file. F140-1a and F140-1b were
 re-verified red on d217380 and green on the F140-1 head.
+
+### Package editor edits the owner-written base (Oct 29, 2026)
+
+The meeting room package editor used to hold the full composed package (owner text plus every
+included plugin section) while Save stored that text as the editable base, so each unchanged Save
+appended the included sections again (799 to 1180 characters in the synthetic fixture) and Exclude
+could no longer remove them. The twin room view now exposes draft.base (the owner-editable text
+without the managed plugin sections) next to draft.body (the full composed package that is hashed,
+approved and sent). The editor renders draft.base; the preview still shows the full draft.body;
+Include/Exclude alone manage plugin sections, and no owner-written text is ever deleted by
+matching. A real change to an approved package still clears approval (tests F140-3a, F140-3b).
+Both the source edits and the test file apps/web/test/meeting-room-editable-base.test.ts were
+written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in small edits from exact
+contents that Grok Bot specified in the task prompts from a Codex review finding. Because the
+provider stream kept failing with protocol errors on one long session, the work was split into
+several short sequential Muse sessions, each committed separately on muse/f140-3-editable-base.
