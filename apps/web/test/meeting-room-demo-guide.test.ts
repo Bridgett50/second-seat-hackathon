@@ -127,3 +127,17 @@ describe("F140-4b demo restart gives a fresh demo room", () => {
     expect(restarted.snap.demo?.completed, "zero progress").toBe(0);
     expect(restarted.snap.demo?.sendNote ?? null, "no carried-over send note").toBeNull();
 // --- end of F140-4 test part 12 ---
+    for (let i = 0; i < 3; i += 1) await step(svc, page.roomId, "demo-next", LOOPBACK);
+    const streamed = await step(svc, page.roomId, "state", LOOPBACK);
+    expect(streamed.snap.view.transcript.length, "fresh transcript streamed").toBeGreaterThan(0);
+    const second = await runGuide(svc, page.roomId, LOOPBACK);
+    expect(second.statuses.every((s) => s === 200), "second run completes").toBe(true);
+    expect(second.last?.demo?.completed, "second run reaches nine").toBe(9);
+    expect(second.last?.view.draft.sendState, "second run really sent").toBe("sent");
+// --- end of F140-4 test part 13 ---
+    const sent = svc.sentBodies();
+    expect(sent.length, "exactly one additional fake call").toBe(2);
+    expect(sent[1], "second send is the fresh run's package").toBe(second.last?.view.draft.body);
+    expect(second.last?.view.twinStatus, "second takeover paused the fresh twin").toBe("paused (you took over)");
+  });
+// --- end of F140-4 test part 14 ---
