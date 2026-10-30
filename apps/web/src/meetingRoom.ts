@@ -27,7 +27,27 @@ import {
 
 export const MEETING_ROOM_PATH = "/meeting-room";
 export const MEETING_ROOM_API = "/api/meeting-room";
-export const MEETING_ROOM_POST_FIELDS = ["roomId", "action", "text", "id"] as const;
+export const MEETING_ROOM_POST_FIELDS = ["roomId", "action", "text", "id", "packageId"] as const;
+
+/** Largest accepted `packageId` for Approve and Send, in characters. */
+export const MEETING_ROOM_MAX_PACKAGE_ID_CHARS = 400;
+
+/**
+ * Server-derived identity of the outgoing package the page displays: the
+ * selected meeting plus the sha256 of the complete composed package body.
+ * Approve and Send must echo it back; any other value is refused.
+ */
+export function meetingRoomPackageId(view: TwinRoomView): string {
+  return `${view.selectedMeetingId}:${view.draft.sha256}`;
+}
+
+/** Announcement when Approve or Send arrives without a valid package identity. */
+export const PACKAGE_ID_MISSING_REASON =
+  "Approve and Send need the package you reviewed. Reload the room and review it.";
+
+/** Announcement when Approve or Send names a package that is no longer current. */
+export const PACKAGE_ID_STALE_REASON =
+  "The package changed since you reviewed it. Review the current package, then approve again.";
 
 /** Largest accepted `text` for the "guide" action, in characters. */
 export const MEETING_ROOM_MAX_GUIDANCE_CHARS = 2_000;
@@ -149,6 +169,8 @@ export type MeetingRoomSnapshot = {
   readonly approvalNote: string | null;
   readonly copyText: string | null;
   readonly mailtoHref: string | null;
+  /** Identity of the displayed outgoing package (see meetingRoomPackageId). */
+  readonly packageId: string;
   /** Visible notice for a refused Send; null otherwise. */
   readonly sendNotice: string | null;
 };
@@ -318,6 +340,7 @@ export function createMeetingRoomService(opts?: {
       approvalNote: entry.room.approvalNote(),
       copyText: entry.room.copyText(),
       mailtoHref: entry.room.mailtoHref(),
+      packageId: meetingRoomPackageId(view),
       sendNotice,
     };
   }
@@ -610,6 +633,35 @@ export function createMeetingRoomService(opts?: {
       const entry = typeof roomId === "string" ? rooms.get(roomId) : undefined;
       if (callerKey === null || entry === undefined || entry.storeKey !== callerKey) {
         return notFound();
+      }
+      const action = body["action"];
+      if (action === "approve" || action === "send") {
+        // Bind Approve and Send to the package this browser displayed. No
+        // await runs between this check and the room action in act().
+        const packageId = body["packageId"];
+        const view = entry.room.view();
+        if (
+          typeof packageId !== "string" ||
+          packageId.length > MEETING_ROOM_MAX_PACKAGE_ID_CHARS ||
+          !/:[0-9a-f]{64}$/.test(packageId)
+        ) {
+          return {
+            status: 400,
+            body: {
+              snapshot: snap(roomId as string, entry, view),
+              announcements: [PACKAGE_ID_MISSING_REASON],
+            },
+          };
+        }
+        if (packageId !== meetingRoomPackageId(view)) {
+          return {
+            status: 409,
+            body: {
+              snapshot: snap(roomId as string, entry, view),
+              announcements: [PACKAGE_ID_STALE_REASON],
+            },
+          };
+        }
       }
       return service.act(body, headers);
     },

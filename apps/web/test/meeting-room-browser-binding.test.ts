@@ -102,8 +102,10 @@ async function setUpOwnerRoom(ctxA: BrowserContext, roomId: string): Promise<Vie
     last = n;
   }
   expect((await post(a, { roomId, action: "run-plugins" })).status).toBe(200);
-  expect((await post(a, { roomId, action: "edit-draft", text: MARKER })).status).toBe(200);
-  const approved = await post(a, { roomId, action: "approve" });
+  const edited = await post(a, { roomId, action: "edit-draft", text: MARKER });
+  expect(edited.status).toBe(200);
+  const packageId = (edited.json?.["snapshot"] as { packageId?: unknown } | null)?.packageId;
+  const approved = await post(a, { roomId, action: "approve", packageId });
   expect(approved.status).toBe(200);
   const view = viewOf(approved);
   expect(view.draft.body).toContain(MARKER);

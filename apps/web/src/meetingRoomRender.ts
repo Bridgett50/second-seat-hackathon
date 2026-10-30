@@ -161,6 +161,7 @@ function packageSection(snap: MeetingRoomSnapshot): string {
     `<p>sha256: ${esc(view.draft.sha256)}</p>` +
     approvalNote +
     lockNote +
+    `<p id="package-dirty" hidden>Unsaved edit. Save it, then review and approve before sending.</p>` +
     `<pre>${esc(view.draft.body)}</pre>` +
     `<label>Draft edit:<textarea id="package-editor" rows="8" cols="60" aria-label="${esc(A11Y_LABELS["package-editor"])}"${dis}>${esc(view.draft.body)}</textarea></label>` +
     `<div><button type="button" id="package-save" aria-label="${esc(A11Y_LABELS["package-save"])}" data-mr-action="edit-draft"${dis}>Save edit</button></div>` +
@@ -232,8 +233,8 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
     approvalNote +
     refusal +
     sendNote +
-    `<div><button type="button" id="approve" aria-label="${esc(A11Y_LABELS.approve)}" data-mr-action="approve"${dis}>Approve</button> ` +
-    `<button type="button" id="send" aria-label="${esc(A11Y_LABELS.send)}" data-mr-action="send">Send (test fake transport)</button></div>` +
+    `<div><button type="button" id="approve" aria-label="${esc(A11Y_LABELS.approve)}" data-mr-action="approve" data-mr-package="${esc(snap.packageId)}"${dis}>Approve</button> ` +
+    `<button type="button" id="send" aria-label="${esc(A11Y_LABELS.send)}" data-mr-action="send" data-mr-package="${esc(snap.packageId)}">Send (test fake transport)</button></div>` +
     (snap.sendNotice
       ? `<p id="send-notice" role="alert" class="mr-send-notice">${esc(snap.sendNotice)}</p>`
       : "") +
@@ -330,11 +331,35 @@ function fieldValue(id){
   var el=document.getElementById(id);
   return el?el.value:"";
 }
+var seq=0;
+var dirty=false;
+var OUTGOING={"approve":true,"send":true,"evidence-export":true};
+function lockOutgoing(){
+  var ids=["approve","send","evidence-export"];
+  for(var i=0;i<ids.length;i+=1){
+    var b=document.getElementById(ids[i]);
+    if(b){b.disabled=true;}
+  }
+  var gone=["evidence-copy","evidence-mailto","evidence-download"];
+  for(var j=0;j<gone.length;j+=1){
+    var el=document.getElementById(gone[j]);
+    if(el&&el.parentNode){el.parentNode.removeChild(el);}
+  }
+  var pre=document.getElementById("evidence-json");
+  if(pre){pre.textContent="";}
+  var note=document.getElementById("package-dirty");
+  if(note){note.hidden=false;}
+}
 function post(action,extra){
+  seq+=1;
+  var mine=seq;
   var body={roomId:roomId,action:action};
   if(extra){for(var k in extra){if(Object.prototype.hasOwnProperty.call(extra,k)){body[k]=extra[k];}}}
   return fetch("/api/meeting-room",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){
-    return r.json().then(function(b){return{ok:r.ok,status:r.status,body:b};});
+    return r.json().then(function(b){
+      if(mine!==seq){return null;}
+      return{ok:r.ok,status:r.status,body:b};
+    });
   });
 }
 function showComparison(box,c){
@@ -350,11 +375,24 @@ function showComparison(box,c){
   box.appendChild(pre);
 }
 function applyResult(action,res){
+  if(res===null){return;}
   var b=(res&&res.body)||{};
   if(typeof b.html==="string"){
+    var keep=null;
+    if(dirty&&!(action==="edit-draft"&&res.ok)){
+      var ed0=document.getElementById("package-editor");
+      keep=ed0?ed0.value:"";
+    }
     root.innerHTML=b.html;
     var nr=root.getAttribute("data-room-id");
     if(nr){roomId=nr;}
+    if(keep!==null){
+      var ed1=document.getElementById("package-editor");
+      if(ed1){ed1.value=keep;}
+      lockOutgoing();
+    }else{
+      dirty=false;
+    }
   }
   if(Array.isArray(b.announcements)){say(b.announcements);}
   if(action==="guide"&&res&&res.ok){
@@ -390,7 +428,12 @@ document.addEventListener("click",function(e){
   if(!t||t===document){return;}
   var action=t.getAttribute("data-mr-action");
   if(!action){return;}
+  if(dirty&&OUTGOING[action]){return;}
   var extra={};
+  if(action==="approve"||action==="send"){
+    var pk=t.getAttribute("data-mr-package");
+    if(pk){extra.packageId=pk;}
+  }
   if(action==="guide"){extra.text=fieldValue("guidance-input");}
   else if(action==="edit-draft"){extra.text=fieldValue("package-editor");}
   else if(action==="compare"){extra.text=fieldValue("compare-input");}
@@ -399,6 +442,14 @@ document.addEventListener("click",function(e){
     if(pid){extra.id=pid;}
   }
   post(action,extra).then(function(res){applyResult(action,res);});
+});
+document.addEventListener("input",function(e){
+  var t=e.target;
+  if(t&&t.id==="package-editor"){
+    dirty=true;
+    seq+=1;
+    lockOutgoing();
+  }
 });
 document.addEventListener("change",function(e){
   var t=e.target;
