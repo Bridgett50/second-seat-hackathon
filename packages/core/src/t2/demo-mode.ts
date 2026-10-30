@@ -206,6 +206,14 @@ export interface DemoController {
    */
   skip(): Promise<DemoStep | null>;
   /**
+   * Run the next step, or skip it exactly as skip() does when
+   * `skipWhen(step)` is true. The check runs inside the same queue as next()
+   * and skip(), so it sees the step this call really acts on. Returns the
+   * step and whether it was skipped, or null after the last step or when a
+   * reset() was issued after this call.
+   */
+  nextUnless(skipWhen: (step: DemoStep) => boolean): Promise<{ step: DemoStep; skipped: boolean } | null>;
+  /**
    * Restart the script position and clear stored results (room untouched).
    * Takes effect immediately; next() and skip() calls issued before it,
    * including one whose step is still running, do not advance the script.
@@ -269,6 +277,23 @@ export function createDemoController(room: TwinRoom): DemoController {
     });
   }
 
+  function nextUnless(
+    skipWhen: (step: DemoStep) => boolean,
+  ): Promise<{ step: DemoStep; skipped: boolean } | null> {
+    let skipped = false;
+    return queued(async (gen) => {
+      const step = DEMO_STEPS[index];
+      if (step === undefined) return null;
+      if (skipWhen(step)) {
+        results.set(step.id, { skipped: true });
+        index += 1;
+        skipped = true;
+        return step;
+      }
+      return runNext(gen);
+    }).then((step) => (step === null ? null : { step, skipped }));
+  }
+
   function reset(): void {
     generation += 1;
     index = 0;
@@ -295,6 +320,7 @@ export function createDemoController(room: TwinRoom): DemoController {
     },
     next,
     skip,
+    nextUnless,
     reset,
     result(id: string): unknown {
       return results.get(id);

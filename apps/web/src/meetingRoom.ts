@@ -592,24 +592,34 @@ export function createMeetingRoomService(opts?: {
           break;
         case "demo-next": {
           if (entry.demo === null) return bad("Demo is not enabled for this room.");
-          if (
-            entry.demo.current()?.id === "demo-send" &&
-            (!meetingRoomFakeSendAllowed(env, headers) || !entry.testMode)
-          ) {
+          // Decide whether Send is allowed inside the queued demo call, so an
+          // overlapping Next cannot act on a stale "current step".
+          const sendAllowed = meetingRoomFakeSendAllowed(env, headers) && entry.testMode;
+          const outcome = await entry.demo.nextUnless((s) => s.id === "demo-send" && !sendAllowed);
+          const current = rooms.get(roomId);
+          if (current !== undefined && current !== entry) {
+            // Restart replaced this demo while the call waited: report the
+            // fresh room and do nothing on the old one.
+            return {
+              status: 200,
+              body: { snapshot: snap(roomId, current, current.room.view()), announcements: [] },
+            };
+          }
+          if (outcome !== null && outcome.skipped) {
             // Sending is unavailable here: record the Send step as not
             // attempted and continue the guide. Nothing is sent, the package
             // stays unsent, and no send receipt is created.
-            const skipped = await entry.demo.skip();
-            const notes = [SEND_DISABLED_REASON, DEMO_SEND_NOT_SENT];
-            if (skipped !== null) {
-              notes.push(demoStepAnnouncement({ label: skipped.label, caption: skipped.caption }));
-            }
+            const notes = [
+              SEND_DISABLED_REASON,
+              DEMO_SEND_NOT_SENT,
+              demoStepAnnouncement({ label: outcome.step.label, caption: outcome.step.caption }),
+            ];
             return {
               status: 200,
               body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: notes },
             };
           }
-          const step = await entry.demo.next();
+          const step = outcome?.step ?? null;
           const after = entry.room.view();
           const announcements = diffAnnouncements(before, after);
           if (step !== null) {
@@ -638,6 +648,9 @@ export function createMeetingRoomService(opts?: {
           // Restart the real demo: a fresh isolated room, store and controller
           // for this same page (same room id, browser key and demo-cap slot).
           // Ordinary rooms and their stores are never touched.
+          // Reset the old controller first, so a Next still queued on it is
+          // dropped and cannot act (for example Send) on the replaced room.
+          entry.demo.reset();
           const freshRoom = createTwinRoom({
             testMode: entry.testMode,
             store: createInMemoryRoomStore(),

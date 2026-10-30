@@ -244,3 +244,90 @@ describe("F140-4c guided compare and evidence steps return and keep their result
     }
   }, 60_000);
 });
+
+// F140-4f: overlapping Next calls around Send. The Send check must see the
+// step the call really acts on, so it cannot send on a public demo.
+describe("F140-4f overlapping Next calls around Send cannot bypass or duplicate the send", () => {
+  it("F140-4f public demo: two overlapping Next calls at the approve step approve once and skip Send without sending", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const page = svc.open("?demo=1", PUBLIC, randomUUID());
+    for (let i = 0; i < 4; i += 1) await step(svc, page.roomId, "demo-next", PUBLIC);
+    const [a, b] = await Promise.all([
+      step(svc, page.roomId, "demo-next", PUBLIC),
+      step(svc, page.roomId, "demo-next", PUBLIC),
+    ]);
+    expect([a.status, b.status], "both Next calls succeed").toEqual([200, 200]);
+    expect(svc.sentBodies(), "zero fake transport calls on a public demo").toEqual([]);
+    const state = await step(svc, page.roomId, "state", PUBLIC);
+    expect(state.snap.demo?.completed, "approve and Send each counted once").toBe(6);
+    expect(state.snap.demo?.sendNote ?? "", "Send recorded as not sent").toContain("not sent");
+    expect(state.snap.view.draft.sendState, "package stays unsent").toBe("unsent");
+    expect(b.notes.join("\n"), "second call announces not sent").toContain("not sent");
+  });
+
+  it("F140-4f test mode: three overlapping Next calls from the approve step send exactly once", async () => {
+    const svc = createMeetingRoomService({ env: TEST_ENV });
+    const page = svc.open("?demo=1", LOOPBACK, randomUUID());
+    for (let i = 0; i < 4; i += 1) await step(svc, page.roomId, "demo-next", LOOPBACK);
+    const results = await Promise.all([
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+    ]);
+    expect(results.map((r) => r.status), "all three Next calls succeed").toEqual([200, 200, 200]);
+    expect(svc.sentBodies().length, "exactly one fake send").toBe(1);
+    const state = await step(svc, page.roomId, "state", LOOPBACK);
+    expect(state.snap.demo?.completed, "approve, Send and compare each counted once").toBe(7);
+    expect(state.snap.view.draft.sendState, "package sent once").toBe("sent");
+    expect(svc.sentBodies()[0], "the approved package was sent").toBe(state.snap.view.draft.body);
+  });
+
+  it("F140-4f route: two overlapping Next requests over HTTP at the approve step skip Send without sending", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.goto(`${base}/meeting-room?demo=1`);
+      const roomId = await page.locator("#mr-root").getAttribute("data-room-id");
+      const post = async (action: string) => {
+        const res = await page.request.post(`${base}${API}`, {
+          data: { roomId, action },
+          headers: { "content-type": "application/json" },
+        });
+        return { status: res.status(), json: (await res.json()) as { snapshot: Snap; announcements: string[] } };
+      };
+      for (let i = 0; i < 4; i += 1) expect((await post("demo-next")).status, `Next ${i + 1} succeeds`).toBe(200);
+      const [a, b] = await Promise.all([post("demo-next"), post("demo-next")]);
+      expect([a.status, b.status], "both Next requests succeed").toEqual([200, 200]);
+      expect(svc.sentBodies(), "zero fake transport calls through the route").toEqual([]);
+      const state = await post("state");
+      expect(state.json.snapshot.demo?.completed, "approve and Send each counted once").toBe(6);
+      expect(state.json.snapshot.demo?.sendNote ?? "", "Send recorded as not sent").toContain("not sent");
+      expect(state.json.snapshot.view.draft.sendState, "package stays unsent").toBe("unsent");
+    } finally {
+      await browser.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 60_000);
+
+  it("F140-4f test mode: Restart while Next calls are queued leaves no older room operation acting afterwards", async () => {
+    const svc = createMeetingRoomService({ env: TEST_ENV });
+    const page = svc.open("?demo=1", LOOPBACK, randomUUID());
+    for (let i = 0; i < 4; i += 1) await step(svc, page.roomId, "demo-next", LOOPBACK);
+    const [a, b, r] = await Promise.all([
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+      step(svc, page.roomId, "demo-next", LOOPBACK),
+      step(svc, page.roomId, "demo-restart", LOOPBACK),
+    ]);
+    expect([a.status, b.status, r.status], "all calls answer").toEqual([200, 200, 200]);
+    expect(svc.sentBodies(), "no send from a Next queued before Restart").toEqual([]);
+    const state = await step(svc, page.roomId, "state", LOOPBACK);
+    expect(state.snap.demo?.completed, "fresh demo has zero progress").toBe(0);
+    expect(state.snap.demo?.sendNote ?? null, "no carried-over send note").toBeNull();
+    expect(state.snap.view.draft.approved, "fresh package unapproved").toBe(false);
+    expect(state.snap.view.draft.sendState, "fresh package unsent").toBe("unsent");
+  });
+});
