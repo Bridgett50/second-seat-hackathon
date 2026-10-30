@@ -278,6 +278,22 @@ and apps/web/src/meetingRoomRender.ts were written by Muse Code on Baseten
 task prompts from a Codex recheck finding, split into ten short sequential Muse sessions, each
 committed separately on muse/f140-4-public-guide.
 
+### Demo reset and Restart tests, browser fallback, announcement period (Oct 30, 2026)
+
+Follow-ups on muse/f140-4-public-guide. services/bot/test/t2-demo-mode.test.ts T13-10 holds a slow
+step 1, queues a second next(), calls reset(), and checks the queued call is dropped and step 1
+then runs once (guard; it fails if the queued call ignores the demo generation).
+apps/web/test/meeting-room-demo-guide.test.ts adds a test-mode case where a Next held inside the
+old demo across Restart answers with the fresh room at 0 of 9 (regression). The four meeting-room
+browser test files launch system Chrome when PLAYWRIGHT_CHROME_PATH is set or
+/usr/bin/google-chrome exists, and otherwise Playwright's bundled Chromium; README.md notes this.
+demoStepAnnouncement in packages/core/src/t2/a11y.ts adds a final period only when the caption
+lacks one (every caption already ended with one, so announcements read "..");
+services/bot/test/t2-a11y.test.ts T17-7 covers it (regression). The source edits, tests, README
+line and this entry were written by Muse Code on Baseten (meta-models/muse-spark-open-1026), in
+small edits from exact contents that Grok Bot specified in the task prompts, split into six short
+sequential Muse sessions, each committed separately on muse/f140-4-public-guide.
+
 ### Overlapping guided-demo Next calls cannot bypass or duplicate Send (Oct 30, 2026)
 
 The meeting room's demo-next handler in apps/web/src/meetingRoom.ts checked "is the current step
