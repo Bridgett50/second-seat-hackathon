@@ -54,8 +54,6 @@ describe("meeting room flood isolation", () => {
         busy += 1;
       }
     }
-    expect(busy, "at least one flood open must have thrown MeetingRoomBusyError")
-      .toBeGreaterThan(0);
     expect(
       (await svc.act({ roomId: pageA.roomId, action: "state" }, HEADERS)).status,
     ).toBe(200);
@@ -106,7 +104,7 @@ describe("meeting room flood isolation", () => {
     ).toBe(200);
   });
 
-  it("MR-F4 with no idle key a new key is refused and nothing is evicted", async () => {
+  it("MR-F4 with every key acted recently a new key is refused and nothing is evicted", async () => {
     const MeetingRoomBusyError = await loadBusyError();
     let t = 2_000_000;
     const svc = serviceWith({ env: {}, maxStores: 2, now: () => t });
@@ -115,6 +113,8 @@ describe("meeting room flood isolation", () => {
     const keyC = randomUUID();
     const pageA = svc.open("", HEADERS, keyA);
     const pageB = svc.open("", HEADERS, keyB);
+    await svc.act({ roomId: pageA.roomId, action: "state" }, HEADERS);
+    await svc.act({ roomId: pageB.roomId, action: "state" }, HEADERS);
     try {
       svc.open("", HEADERS, keyC);
       expect.unreachable("open() for a new key must throw when no key is idle");
@@ -195,5 +195,31 @@ describe("meeting room flood isolation", () => {
     }
     expect(svc.sentBodies(), "exactly one Send for one store key").toHaveLength(1);
     for (const s of statuses) expect([200, 403, 404]).toContain(s);
+  });
+
+  it("MR-F7 250 open-only keys never lock out a new key and a key that acted survives", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const keyA = randomUUID();
+    const pageA = svc.open("", HEADERS, keyA);
+    expect((await svc.act({ roomId: pageA.roomId, action: "state" }, HEADERS)).status).toBe(200);
+    let refused = 0;
+    for (let i = 0; i < 250; i += 1) {
+      try {
+        svc.open("", HEADERS, randomUUID());
+      } catch {
+        refused += 1;
+      }
+    }
+    expect(refused, "open-only keys must be evicted, never lock out new visitors").toBe(0);
+    let lateRoomId = "";
+    try {
+      lateRoomId = svc.open("", HEADERS, randomUUID()).roomId;
+    } catch {
+      lateRoomId = "";
+    }
+    expect(lateRoomId, "a new visitor after the flood must get a page").not.toBe("");
+    expect((await svc.act({ roomId: lateRoomId, action: "state" }, HEADERS)).status).toBe(200);
+    expect((await svc.act({ roomId: pageA.roomId, action: "state" }, HEADERS)).status).toBe(200);
+    expect(svc.open("", HEADERS, keyA).restored).toBe(true);
   });
 });

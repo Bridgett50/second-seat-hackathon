@@ -158,3 +158,19 @@ approval never survives. Written by Muse Code on meta-models/muse-spark-open-102
 A `?demo=1` page now always starts on its own fresh, unshared room and store, so the guided demo
 never opens on (or writes into) the cookie's real room. Written by Muse Code on
 meta-models/muse-spark-open-1026 via Baseten.
+
+### Review fixes B-3 and R2-2 (Oct 29, 2026)
+
+B-3 (a room flood no longer evicts other browsers' rooms: store keys capped at 200 with idle
+eviction, `MeetingRoomBusyError`/503, a per-key page cap) was written by Muse Code on muse-spark-1.3
+via Meta (session 4bc40127-5104-475d-bb0f-467c792ebdcb); its test typing fix was written by Muse Code
+on meta-models/muse-spark-open-1026 via Baseten (session f298034a-3dd6-4959-95af-7e1f0e87b23f).
+R2-2 (an evicted key's stale tabs; test MR-F6) was written by Muse Code on
+meta-models/muse-spark-open-1026 via Baseten (session dd908779-fcbd-4c36-9847-94d7d8bdbf49).
+
+### Review fix N-1 (Oct 29, 2026)
+
+Store keys that never acted (open only) are now evicted first, least recently opened, so a flood
+of plain GETs no longer locks new visitors out; keys that acted are evicted only after 30 idle
+minutes, and 503 is returned only when every key acted recently. Written by Muse Code on
+meta-models/muse-spark-open-1026 via Baseten.

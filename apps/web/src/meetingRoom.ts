@@ -170,10 +170,11 @@ type RoomEntry = {
  * Create a meeting room service. `env` defaults to `process.env` and is read
  * at each call (never cached), so flipping `SECOND_SEAT_TEST_MODE` later
  * changes later gates. Stores are capped at `maxStores` (default 200): when
- * open() needs a new store key, the least-recently-active key idle for at
- * least `idleMs` (default 30 minutes) is evicted with its shared rooms and
- * pages; when no key is idle a `MeetingRoomBusyError` is thrown and nothing
- * is evicted. Pages are capped at `maxPagesPerKey` (default 20) per store
+ * open() needs a new store key, a key that never acted (open only) is evicted first, least
+ * recently opened, else the least-recently-active key idle for at least `idleMs` (default 30
+ * minutes), with its shared rooms and pages; only when every key acted within `idleMs` is a
+ * `MeetingRoomBusyError` thrown and nothing evicted. Pages are capped at `maxPagesPerKey`
+ * (default 20) per store
  * key by evicting only that key's own oldest page, so one browser flooding
  * the page can never evict another browser's rooms.
  */
@@ -195,6 +196,10 @@ export function createMeetingRoomService(opts?: {
   // Last activity per store key, set on open() and on every act() for a
   // page of that key. Drives idle eviction of whole store keys.
   const lastActive = new Map<string, number>();
+  // Store keys that have acted (any act() on one of their pages). Keys that
+  // only ever opened a page are evicted first, so a flood of plain GETs can
+  // never lock new visitors out.
+  const acted = new Set<string>();
   // One shared twin room per store key and test-mode flag (the flag is
   // fixed at creation). Two tabs with the same cookie share one room so a
   // send in one tab is visible in the other and cannot go out twice.
@@ -224,6 +229,32 @@ export function createMeetingRoomService(opts?: {
       if (entry.storeKey === storeKey) rooms.delete(roomId);
     }
     lastActive.delete(storeKey);
+    acted.delete(storeKey);
+  }
+
+  /**
+   * The store key to evict for a new key, or null when every key has acted
+   * within `idleMs`. Never-acted (open-only) keys go first, least recently
+   * opened; then acted keys idle for at least `idleMs`, least recently active.
+   */
+  function pickVictim(at: number): string | null {
+    let openOnly: string | null = null;
+    let openOnlyAt = Infinity;
+    let idle: string | null = null;
+    let idleAt = Infinity;
+    for (const key of stores.keys()) {
+      const active = lastActive.get(key) ?? Number.NEGATIVE_INFINITY;
+      if (!acted.has(key)) {
+        if (active < openOnlyAt) {
+          openOnly = key;
+          openOnlyAt = active;
+        }
+      } else if (at - active >= idleMs && active < idleAt) {
+        idle = key;
+        idleAt = active;
+      }
+    }
+    return openOnly ?? idle;
   }
 
   function snap(roomId: string, entry: RoomEntry, view: TwinRoomView, sendNotice: string | null = null): MeetingRoomSnapshot {
@@ -260,20 +291,11 @@ export function createMeetingRoomService(opts?: {
   return {
     open(search: string, headers: IncomingHttpHeaders, storeKey = "default"): MeetingRoomSnapshot {
       const testMode = meetingRoomFakeSendAllowed(env, headers);
-      // A new store key past the cap admits only by evicting an idle key;
-      // when every key is still active nothing is evicted and the page is
-      // refused, so one flooding browser can never push out other browsers.
+      // A new store key past the cap evicts an open-only key first, else a
+      // key idle for idleMs; only when every key acted recently is the page
+      // refused, so neither a GET flood nor one browser can push others out.
       if (!stores.has(storeKey) && stores.size >= maxStores) {
-        const at = now();
-        let victim: string | null = null;
-        let victimActive = Infinity;
-        for (const key of stores.keys()) {
-          const active = lastActive.get(key) ?? Number.NEGATIVE_INFINITY;
-          if (at - active >= idleMs && active < victimActive) {
-            victim = key;
-            victimActive = active;
-          }
-        }
+        const victim = pickVictim(now());
         if (victim === null) throw new MeetingRoomBusyError();
         evictStoreKey(victim);
       }
@@ -323,6 +345,7 @@ export function createMeetingRoomService(opts?: {
       const entry = rooms.get(roomId);
       if (entry === undefined) return notFound();
       lastActive.set(entry.storeKey, now());
+      acted.add(entry.storeKey);
       const bad = (
         message: string,
       ): { status: number; body: MeetingRoomActionResult } => ({
