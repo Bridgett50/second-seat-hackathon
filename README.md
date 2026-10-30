@@ -42,6 +42,8 @@ pnpm -r build
 pnpm -r test
 ```
 
+Browser tests use `PLAYWRIGHT_CHROME_PATH` if set, else `/usr/bin/google-chrome` if it exists, else Playwright's bundled Chromium (`pnpm --filter @second-seat/web exec playwright install chromium`).
+
 Offline demo (default; no network, no model calls):
 
 ```sh

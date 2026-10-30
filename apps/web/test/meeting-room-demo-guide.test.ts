@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
+import { existsSync } from "node:fs";
 import type { IncomingHttpHeaders, Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { chromium, type Browser } from "@playwright/test";
 import { createWebServer } from "../src/server.js";
 import { createMeetingRoomService, type MeetingRoomService } from "../src/meetingRoom.js";
+import { DEMO_STEPS } from "@second-seat/bot/dist/src/t2-room.js";
 // --- end of F140-4 test part 1 ---
 
 // F140-4: the guided demo never stalls at Send when sending is unavailable,
@@ -13,7 +15,10 @@ import { createMeetingRoomService, type MeetingRoomService } from "../src/meetin
 const LOOPBACK: IncomingHttpHeaders = { host: "127.0.0.1:4174" };
 const PUBLIC: IncomingHttpHeaders = { host: "second-seat.example.com", "x-forwarded-host": "second-seat.example.com" };
 const TEST_ENV: Readonly<Record<string, string | undefined>> = { SECOND_SEAT_TEST_MODE: "1" };
-const CHROME = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+// System Chrome when PLAYWRIGHT_CHROME_PATH is set or /usr/bin/google-chrome exists; otherwise Playwright's bundled Chromium.
+const CHROME_PATH = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+const CHROME_LAUNCH: { executablePath?: string } =
+  process.env.PLAYWRIGHT_CHROME_PATH || existsSync(CHROME_PATH) ? { executablePath: CHROME_PATH } : {};
 const API = "/api/meeting-room";
 // --- end of F140-4 test part 2 ---
 
@@ -81,7 +86,7 @@ describe("F140-4a public guided demo continues past Send without sending", () =>
     const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    const browser: Browser = await chromium.launch({ ...CHROME_LAUNCH, headless: true });
     try {
       const page = await browser.newPage();
       await page.goto(`${base}/meeting-room?demo=1`);
@@ -206,7 +211,7 @@ describe("F140-4c guided compare and evidence steps return and keep their result
     const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    const browser: Browser = await chromium.launch({ ...CHROME_LAUNCH, headless: true });
     try {
       const page = await browser.newPage();
       await page.goto(`${base}/meeting-room?demo=1`);
@@ -287,7 +292,7 @@ describe("F140-4f overlapping Next calls around Send cannot bypass or duplicate 
     const server: Server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const browser: Browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    const browser: Browser = await chromium.launch({ ...CHROME_LAUNCH, headless: true });
     try {
       const page = await browser.newPage();
       await page.goto(`${base}/meeting-room?demo=1`);
@@ -329,5 +334,51 @@ describe("F140-4f overlapping Next calls around Send cannot bypass or duplicate 
     expect(state.snap.demo?.sendNote ?? null, "no carried-over send note").toBeNull();
     expect(state.snap.view.draft.approved, "fresh package unapproved").toBe(false);
     expect(state.snap.view.draft.sendState, "fresh package unsent").toBe("unsent");
+  });
+
+  it("F140-4f test mode: a Next held inside the old demo across Restart answers with the fresh room at 0 of 9", async () => {
+    const svc = createMeetingRoomService({ env: TEST_ENV });
+    const page = svc.open("?demo=1", LOOPBACK, randomUUID());
+    for (let i = 0; i < 2; i += 1) await step(svc, page.roomId, "demo-next", LOOPBACK);
+    const streamStep = DEMO_STEPS[2]!;
+    expect(streamStep.id, "step 3 is the stream step").toBe("demo-stream");
+    const original = streamStep.run.bind(streamStep);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const spy = vi.spyOn(streamStep, "run").mockImplementationOnce(async (r) => {
+      markStarted();
+      await gate;
+      return original(r);
+    });
+    try {
+      const held = step(svc, page.roomId, "demo-next", LOOPBACK);
+      await started;
+      const restarted = await step(svc, page.roomId, "demo-restart", LOOPBACK);
+      expect(restarted.status, "restart allowed").toBe(200);
+      release();
+      const answer = await held;
+      expect(answer.status, "the held Next answers").toBe(200);
+      expect(answer.snap.roomId, "same demo page").toBe(page.roomId);
+      expect(answer.snap.demo?.completed, "fresh room: 0 steps done").toBe(0);
+      expect(answer.snap.demo?.total, "of 9 steps").toBe(9);
+      expect(answer.snap.demo?.done, "fresh demo not done").toBe(false);
+      expect(answer.snap.view.transcript, "fresh room: nothing streamed").toEqual([]);
+      expect(answer.snap.view.draft.approved, "fresh package unapproved").toBe(false);
+      expect(answer.snap.view.draft.sendState, "fresh package unsent").toBe("unsent");
+      expect(answer.notes, "no announcements from the old demo").toEqual([]);
+      expect(spy, "the held stream step ran once, on the old room only").toHaveBeenCalledTimes(1);
+      const state = await step(svc, page.roomId, "state", LOOPBACK);
+      expect(state.snap.view.transcript, "the fresh room stays unstreamed").toEqual([]);
+      expect(state.snap.demo?.completed, "fresh demo still at 0").toBe(0);
+      expect(svc.sentBodies(), "nothing sent").toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
