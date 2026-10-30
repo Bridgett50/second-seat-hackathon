@@ -97,3 +97,14 @@ describe("F140-5 import privacy boundary", () => {
     expect(body.action, "the Compare action").toBe("compare");
     expect(body.text, "the text field carries the exact marker").toContain(MARKER);
 // --- end of F140-5 test part 9 ---
+    expect(response.status(), "local server answered").toBeLessThan(500);
+    expect(requests.length, "requests were observed").toBeGreaterThan(0);
+    expect(requests.every((u) => new URL(u).origin === base), "every browser request stays on loopback").toBe(true);
+    expect(blocked, "no request was blocked").toEqual([]);
+    const statsAfter = outboundStats();
+    expect(statsAfter.blockedOutside, "server network guard saw no outside call").toBe(statsBefore.blockedOutside);
+    expect(statsAfter.analyzerCalls, "no model analyzer call").toEqual(statsBefore.analyzerCalls);
+    expect(svc.sentBodies().length, "zero fake email transport calls").toBe(sentBefore);
+    const outbound = await page.evaluate(async () => (await fetch("/api/test/outbound")).status);
+    expect(outbound, "test-mode guard endpoint is live").toBe(200);
+// --- end of F140-5 test part 10 ---
