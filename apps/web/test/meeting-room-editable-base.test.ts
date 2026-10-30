@@ -110,3 +110,25 @@ async function includeActionItems(page: Page): Promise<{ before: string; after: 
   const after = await act(page, `#plugin-include-${PLUGIN}`);
   expect(after.draft.body.startsWith(before), "included section is appended after the base").toBe(true);
 // --- end of F140-3 test part 10 ---
+  const managed = after.draft.body.slice(before.length);
+  expect(managed.length, "managed Action items section is non-empty").toBeGreaterThan(0);
+  expect(await displayedPackage(page), "preview shows the full composed package").toBe(after.draft.body);
+  return { before, after, managed };
+}
+
+describe("F140-3 package editor edits the base, not the composed package", () => {
+  it("F140-3a unchanged saves keep the composed package exact and exclude removes the managed section", async () => {
+    const ctx = await browser.newContext();
+    try {
+// --- end of F140-3 test part 11 ---
+      const page = await prepareRoom(ctx);
+      const { managed, after } = await includeActionItems(page);
+      const S = after.draft.body;
+      for (const round of [1, 2]) {
+        const saved = await act(page, "#package-save");
+        expect(saved.draft.body.length, `save ${round}: composed length unchanged`).toBe(S.length);
+        expect(saved.draft.body, `save ${round}: composed body unchanged`).toBe(S);
+        expect(await displayedPackage(page), `save ${round}: preview unchanged`).toBe(S);
+      }
+      const excluded = await act(page, `#plugin-exclude-${PLUGIN}`);
+// --- end of F140-3 test part 12 ---
