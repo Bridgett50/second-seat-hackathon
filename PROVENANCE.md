@@ -264,6 +264,20 @@ contents that Grok Bot specified in the task prompts from a Codex review finding
 provider stream kept failing with protocol errors on one long session, the work was split into
 several short sequential Muse sessions, each committed separately on muse/f140-3-editable-base.
 
+### Guided compare and evidence steps show and keep their results (Oct 30, 2026)
+
+Guided steps 7 (compare) and 8 (evidence) used to drop their outputs: the demo-next response
+carried only the snapshot and announcements, and every response re-rendered the page empty. The
+demo-next response now returns the step-7 comparison and step-8 evidence JSON in the same fields
+the Compare and Export actions use, the snapshot keeps both until Restart, and the server render
+fills #compare-result and #evidence-json from it, so they stay visible after takeover. On a public
+demo the evidence shows the approved package hash and the unsent state, with no send receipt
+(tests F140-4c service and browser). The test cases and the source edits in apps/web/src/meetingRoom.ts
+and apps/web/src/meetingRoomRender.ts were written by Muse Code on Baseten
+(meta-models/muse-spark-open-1026), in small edits from exact contents that Grok Bot specified in the
+task prompts from a Codex recheck finding, split into ten short sequential Muse sessions, each
+committed separately on muse/f140-4-public-guide.
+
 ### Public guided demo no longer stalls at Send; Restart gives a fresh demo room (Oct 29, 2026)
 
 On a public demo (test mode absent or 0) the guided demo used to return 403 at the Send step
