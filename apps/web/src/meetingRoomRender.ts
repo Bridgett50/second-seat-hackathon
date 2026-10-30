@@ -163,7 +163,8 @@ function packageSection(snap: MeetingRoomSnapshot): string {
     lockNote +
     `<p id="package-dirty" hidden>Unsaved edit. Save it, then review and approve before sending.</p>` +
     `<pre>${esc(view.draft.body)}</pre>` +
-    `<label>Draft edit:<textarea id="package-editor" rows="8" cols="60" aria-label="${esc(A11Y_LABELS["package-editor"])}"${dis}>${esc(view.draft.body)}</textarea></label>` +
+    `<p id="package-base-note">The editor holds your text only. Included plugin sections are added after it and managed with Include and Exclude; the full package is shown above.</p>` +
+    `<label>Draft edit:<textarea id="package-editor" rows="8" cols="60" aria-label="${esc(A11Y_LABELS["package-editor"])}"${dis}>${esc(view.draft.base)}</textarea></label>` +
     `<div><button type="button" id="package-save" aria-label="${esc(A11Y_LABELS["package-save"])}" data-mr-action="edit-draft"${dis}>Save edit</button></div>` +
     `</section>`
   );

@@ -117,6 +117,13 @@ export type TwinRoomView = {
   readonly draft: {
     readonly meetingId: string;
     readonly body: string;
+    /**
+     * The owner-editable base: the package body without the owner-included
+     * plugin sections, which stay managed by include/exclude. `body` is the
+     * full composed package (base + included sections) that is hashed,
+     * approved, and sent; editors must edit `base`, never `body`.
+     */
+    readonly base: string;
     readonly sha256: string;
     readonly approved: boolean;
     readonly sendState: SendState;
@@ -808,6 +815,7 @@ export function createTwinRoom(opts: TwinRoomOptions) {
         draft: {
           meetingId: ms.meetingId,
           body: ms.draft.body,
+          base: ms.pluginBase,
           sha256: packageHash(ms.draft.body),
           approved: ms.draft.approved,
           sendState: ms.draft.sendState,
