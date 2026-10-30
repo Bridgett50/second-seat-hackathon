@@ -209,3 +209,14 @@ F140-1b, real Chrome cookie jar). The test file apps/web/test/meeting-room-brows
 was written by the runner/executor (Grok Bot) as test scaffolding and copied in by Muse Code with a
 single cp; the exact source edits were specified in the task prompt by Grok Bot from a Codex review
 finding and applied by Muse Code on Baseten (meta-models/muse-spark-open-1026).
+
+### Follow-up: Muse Code rewrote the F140-1 test file (Oct 29, 2026)
+
+The entry "Meeting room actions bound to the browser that opened the room" above records that
+apps/web/test/meeting-room-browser-binding.test.ts was first written by
+the runner/executor (Grok Bot) as test scaffolding and copied in by Muse Code. In this follow-up
+commit Muse Code on Baseten (meta-models/muse-spark-open-1026) deleted that file and wrote it again
+itself, in small edits from exact contents Grok Bot specified in the task prompt. The test names
+and assertions are unchanged; the only additions are "end of F140-1 test part N" marker comments
+that anchored the edits. No executor-written code remains in the file. F140-1a and F140-1b were
+re-verified red on d217380 and green on the F140-1 head.

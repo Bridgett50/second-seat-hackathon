@@ -41,6 +41,7 @@ afterAll(async () => {
   await browser?.close();
   await new Promise<void>((resolve) => server?.close(() => resolve()));
 });
+// --- end of F140-1 test part 1 ---
 
 async function post(
   req: APIRequestContext,
@@ -82,6 +83,7 @@ function viewOf(r: ActResult): View {
   if (snap === null) throw new Error(`no snapshot (status ${r.status})`);
   return snap.view;
 }
+// --- end of F140-1 test part 2 ---
 
 /** A's own room, set up through A's own browser context (its cookie jar). */
 async function setUpOwnerRoom(ctxA: BrowserContext, roomId: string): Promise<View> {
@@ -129,6 +131,7 @@ function ordinaryActions(view: View): Record<string, unknown>[] {
     { action: "takeover" },
   ];
 }
+// --- end of F140-1 test part 3 ---
 
 const DEMO_ACTIONS: Record<string, unknown>[] = [
   { action: "state" },
@@ -156,6 +159,7 @@ function stateKey(v: View): string {
     plugins: v.plugins.map((p) => `${p.id}:${p.status}`),
   });
 }
+// --- end of F140-1 test part 4 ---
 
 describe("F140-1 meeting room actions are bound to their browser", () => {
   it("F140-1a another browser's cookie or no cookie cannot read or act on A's room, in any action branch", async () => {
@@ -205,6 +209,7 @@ describe("F140-1 meeting room actions are bound to their browser", () => {
       await ctxB.close();
     }
   }, 120_000);
+  // --- end of F140-1 test part 5 ---
 
   it("F140-1b the browser sends its cookie to /api/meeting-room; same-cookie tabs share; demo stays isolated", async () => {
     const ctxA = await browser.newContext();
