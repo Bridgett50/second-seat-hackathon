@@ -320,6 +320,7 @@ export function createDemoController(room: TwinRoom): DemoController {
     },
     next,
     skip,
+    nextUnless,
     reset,
     result(id: string): unknown {
       return results.get(id);
