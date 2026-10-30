@@ -86,3 +86,24 @@ describe("F140-4a public guided demo continues past Send without sending", () =>
       const page = await browser.newPage();
       await page.goto(`${base}/meeting-room?demo=1`);
 // --- end of F140-4 test part 8 ---
+      const statuses: number[] = [];
+      for (let i = 0; i < 12; i += 1) {
+        if (await page.locator("#demo-next").isDisabled()) break;
+        const pending = page.waitForResponse((r) => new URL(r.url()).pathname === API && r.request().method() === "POST");
+        await page.locator("#demo-next").click();
+        statuses.push((await pending).status());
+      }
+      expect(statuses, "every Next click succeeds").toEqual([200, 200, 200, 200, 200, 200, 200, 200, 200]);
+// --- end of F140-4 test part 9 ---
+      expect(await page.locator("#demo-progress").textContent(), "progress shows 9 of 9").toBe("9 / 9");
+      expect(await page.locator("#demo-status").textContent(), "honest final caption").toBe("Demo complete");
+      expect(await page.locator("#demo-send-note").textContent(), "visible not-sent note").toContain("not sent");
+      expect(await page.locator("#demo-next").isDisabled(), "Next disabled at the end").toBe(true);
+      expect(svc.sentBodies(), "zero fake transport calls").toEqual([]);
+    } finally {
+      await browser.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 60_000);
+});
+// --- end of F140-4 test part 10 ---
