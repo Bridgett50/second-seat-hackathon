@@ -285,7 +285,7 @@ now launch system Chrome when PLAYWRIGHT_CHROME_PATH is set or /usr/bin/google-c
 otherwise Playwright's bundled Chromium, matching the four browser test files changed on
 muse/f140-4-public-guide. The edits and this entry were written by Muse Code on Baseten
 (meta-models/muse-spark-open-1026), in small edits from exact contents that Grok Bot specified in
-the task prompt, in four short Muse sessions on muse/f140-5-import-privacy (the first two stopped
+the task prompt, in short sequential Muse sessions on muse/f140-5-import-privacy (the first two stopped
 on provider errors; each next session continued from the remaining steps).
 
 ### Demo reset and Restart tests, browser fallback, announcement period (Oct 30, 2026)
@@ -381,3 +381,25 @@ by Muse Code on Baseten (meta-models/muse-spark-open-1026) from exact contents t
 specified in the task prompts from a Codex review finding, one small part per short sequential
 Muse session, each committed separately on muse/f140-5-import-privacy (test parts first, then the
 source edit).
+
+### README founder story attribution (Oct 30, 2026)
+
+The "## Founder story" section at the top of README.md is Bridgett Sanders's wording: she supplied
+and approved it. Muse Code on Baseten (meta-models/muse-spark-open-1026) made the README edits from
+task prompts that Grok Bot wrote: it added the section in 25fc903 and, at her direction, changed one
+phrase in a818711 ("my real email thread" to "an imported email draft"). In 5a16c7c Muse Code also
+reworded the README intro sentence below the section so it says the app sends no real email and
+joins no real calls.
+
+### README and PROVENANCE accuracy corrections (Oct 30, 2026)
+
+README.md now says that Glimmer redaction applies when Live mode is separately configured, while
+Offline mode uses local code and calls no model; that the meeting room twin is a scripted demo on
+synthetic data whose Send goes only to a fake transport; how the meeting-room Playwright suite picks
+a browser (PLAYWRIGHT_CHROME_PATH, else /usr/bin/google-chrome if it exists, else Playwright's
+bundled Chromium); and how Muse Code's coding role differs from the runtime Meta models. PROVENANCE.md
+adds the founder-story attribution above and count-free session wording in the Chrome fallback
+entry. Bridgett Sanders requested these corrections, Grok Bot wrote the task prompts with the exact
+text, and Muse Code on Baseten (meta-models/muse-spark-open-1026) made the edits in short sequential
+sessions on muse/f140-5-docs-accuracy; some sessions stopped on provider errors and the next session
+continued from the remaining steps.

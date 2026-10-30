@@ -12,9 +12,11 @@ It doesn't join live calls yet, and it doesn't send real emails yet. That is the
 
 ## What it does
 
-Vendor calls are where people agree to things they never meant to agree to. Second Seat sits next to you after the call. You paste the meeting text. Glimmer, running on our own GPU, masks the personal details first. You check and approve that redacted text. Only then does Spark write a short brief where every line cites the part of the meeting it came from: what was offered, what was asked, what needs a decision, and where someone leaned on you. You edit a reply, approve that exact text, and copy it out yourself.
+Vendor calls are where people agree to things they never meant to agree to. Second Seat sits next to you after the call. In the transcript workflow (`/session`), you paste the meeting text. When Live mode is separately configured (see "How to run"), Glimmer, self-hosted on a Modal GPU that is deployed only for owner-run sessions, masks the personal details first. You check and approve that redacted text. Only then does Spark write a short brief where every line cites the part of the meeting it came from: what was offered, what was asked, what needs a decision, and where someone leaned on you. In the default Offline mode, deterministic local code does the masking and the brief, and no model is called. You edit a reply, approve that exact text, and copy it out yourself.
 
 Second Seat never sends a real reply or message to the vendor, never sends real email, and never joins real calls. In the meeting room demo, it sends only through a test (fake) transport, and only after you approve the exact package. You decide.
+
+The meeting room twin is a scripted demonstration on synthetic data: it calls no external model, and its Send goes only to the fake transport (see "Meeting room demo walkthrough"). The live Glimmer and Spark results under "How to run" come from the separately configured transcript workflow, with the owner-attested qualifications stated there.
 
 Before the approved text is sent, a redaction check has to pass. After the brief is written, a second check has to pass. If a recorded support verdict is available, that is checked too. A hard failure stops the step and the page says "Needs owner review" without quoting the provider. Noisy warnings are sent to you for review and do not block the brief. Offline and Demo Mode run the same checks on the local brief. You still approve the redacted text and the draft yourself.
 
@@ -91,8 +93,8 @@ same flow in a real browser:
 pnpm --filter @second-seat/web exec playwright test -c playwright.meeting-room.config.ts
 ```
 
-It drives system Chrome via `PLAYWRIGHT_CHROME_PATH` (default
-`/usr/bin/google-chrome`).
+It uses `PLAYWRIGHT_CHROME_PATH` if set, else `/usr/bin/google-chrome` if it
+exists, else Playwright's bundled Chromium.
 
 ## Security
 
@@ -106,9 +108,11 @@ The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-ru
 
 **Prompt cache keys.** Each call family sends one stable `prompt_cache_key`: `second-seat-brief`, `second-seat-shield` and `second-seat-support`. Every family's request then starts with the same prefix, so the cache can actually hit. The demo page shows the cache-hit ratio from stored `cachedTokens`. The recorded brief shows 0 of 2271 input tokens cached. We haven't measured a live cache hit yet.
 
+**Muse Code versus the runtime models.** Muse Code is the coding agent that authored many of this repository's commits (see the end of this README); it is not part of the running app. At runtime, Meta models are called only in Live mode: Glimmer for redaction and Spark for the brief. Offline mode and the meeting room demo call no model. The owner-approval design follows a similar pattern to Meta's cookbook recipe [Build a Local Agent That Asks Before Calling Muse Spark](https://github.com/meta-models/meta-model-cookbook/blob/main/03_use_cases/15_glimmer_api_agent/README.md), in which a person approves the exact text before it is sent to Spark. Approving the email package does not by itself establish every model-egress privacy boundary: in Live mode, raw meeting text goes to Glimmer on Modal before you approve anything, and only the redacted text you approved goes to Spark.
+
 **What we rejected and why**
 
-- *Sending raw text to Spark.* Rejected. Personal details are masked on our own GPU first, and a human approves the redacted text before anything reaches Spark.
+- *Sending raw text to Spark.* Rejected. In Live mode, the separately configured Glimmer step (self-hosted on Modal) masks personal details first, and a human approves the redacted text before anything reaches Spark. The offline demo calls no model.
 - *One shared cache key for every call.* Rejected. Different prompts under one key fragment the cache, so we use one key per call family.
 - *Default sampling for redaction.* Rejected. Temperature 0 is set to reduce sampling variation and make masks easier to audit. It is not a proof that the same input always yields identical masks.
 - *A model-based pressure classifier in the live session.* Rejected for now. The session uses deterministic patterns, and you must review every flagged item before Copy unlocks. Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches; held-out run Nov 2 will test it. It isn't credited in the demo.
@@ -149,6 +153,8 @@ These are human tasks. They are not done by tests or by this repair:
 - Record the founder clip and the demo on a machine whose citation and clipboard checks have actually passed.
 - Keep user tryouts and the video URL pending until she supplies them.
 - Review any X post herself before it is posted. Nothing here sends it.
+
+The recorded reviews (Opus and Codex, with Grok; see PROVENANCE.md and docs/engineering-log.md) covered the reviewed pull request heads and the test suites listed at those heads; they do not show that every intermediate commit was reviewed or that the full suite passed on every commit.
 
 Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This history's token usage was not reported here. Bridgett Sanders directed the work and made hand edits. Cursor implemented the FR1–FR10 repairs; Grok and Codex reviewed the work. Those commit counts name the git author. They are not a line-by-line proof of which model wrote each line.
 
