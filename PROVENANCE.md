@@ -174,3 +174,13 @@ Store keys that never acted (open only) are now evicted first, least recently op
 of plain GETs no longer locks new visitors out; keys that acted are evicted only after 30 idle
 minutes, and 503 is returned only when every key acted recently. Written by Muse Code on
 meta-models/muse-spark-open-1026 via Baseten.
+
+### Review follow-up to N-1 (Oct 29, 2026)
+
+Only successful state-changing actions (stream-next, guide, select-meeting, edit-draft, approve,
+takeover, run-plugins, plugin-*, send, demo-next, demo-restart) mark a store key as acted; GET
+opens, `state`, `evidence-export` and refused actions do not (tests MR-A1, MR-A2). An action on an
+evicted room now answers 404 with "This room expired. Reload to start again." (test MR-A3).
+Written by Muse Code on meta-models/muse-spark-open-1026 via Baseten.
+
+Note: N-1 commit cbe1f21 was run and pushed by hand by Opus on the bot computer at Bridgett's request because the Auto-review safety check was erroring; the code was written by Muse Code.

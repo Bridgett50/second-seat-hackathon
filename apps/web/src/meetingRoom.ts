@@ -89,6 +89,25 @@ export function meetingRoomFakeSendAllowed(
   });
 }
 
+// Actions that change room state; only a successful one marks a store key
+// as acted. GET open, state, evidence-export, compare and refused actions
+// do not, so cheap reads cannot shield a flood of keys from eviction.
+const ACTING_ACTIONS = new Set([
+  "stream-next",
+  "guide",
+  "select-meeting",
+  "edit-draft",
+  "approve",
+  "takeover",
+  "run-plugins",
+  "plugin-include",
+  "plugin-exclude",
+  "plugin-refresh",
+  "send",
+  "demo-next",
+  "demo-restart",
+]);
+
 const COOKIE_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function cookieHostIsLoopback(value: string | undefined): boolean {
@@ -284,7 +303,7 @@ export function createMeetingRoomService(opts?: {
   function notFound(): { status: number; body: MeetingRoomActionResult } {
     return {
       status: 404,
-      body: { snapshot: null, announcements: ["Unknown meeting room."] },
+      body: { snapshot: null, announcements: ["This room expired. Reload to start again."] },
     };
   }
 
@@ -345,7 +364,6 @@ export function createMeetingRoomService(opts?: {
       const entry = rooms.get(roomId);
       if (entry === undefined) return notFound();
       lastActive.set(entry.storeKey, now());
-      acted.add(entry.storeKey);
       const bad = (
         message: string,
       ): { status: number; body: MeetingRoomActionResult } => ({
@@ -373,6 +391,7 @@ export function createMeetingRoomService(opts?: {
         const outcome = await entry.room.send();
         const after = entry.room.view();
         const notice = outcome.ok ? null : (outcome.reason || "Send was refused.");
+        acted.add(entry.storeKey);
         return {
           status: 200,
           body: {
@@ -506,6 +525,7 @@ export function createMeetingRoomService(opts?: {
             };
           }
           const step = await entry.demo.next();
+          acted.add(entry.storeKey);
           const after = entry.room.view();
           const announcements = diffAnnouncements(before, after);
           if (step !== null) {
@@ -541,6 +561,7 @@ export function createMeetingRoomService(opts?: {
         const json = entry.room.exportEvidenceJson();
         if (json !== null) result.evidenceJson = json;
       }
+      if (ACTING_ACTIONS.has(action)) acted.add(entry.storeKey);
       return { status: 200, body: result };
     },
 

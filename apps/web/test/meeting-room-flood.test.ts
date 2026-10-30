@@ -41,7 +41,7 @@ describe("meeting room flood isolation", () => {
     const keyA = randomUUID();
     const pageA = svc.open("", HEADERS, keyA);
     expect(
-      (await svc.act({ roomId: pageA.roomId, action: "state" }, HEADERS)).status,
+      (await svc.act({ roomId: pageA.roomId, action: "stream-next" }, HEADERS)).status,
     ).toBe(200);
     let busy = 0;
     for (let i = 0; i < 250; i += 1) {
@@ -113,8 +113,8 @@ describe("meeting room flood isolation", () => {
     const keyC = randomUUID();
     const pageA = svc.open("", HEADERS, keyA);
     const pageB = svc.open("", HEADERS, keyB);
-    await svc.act({ roomId: pageA.roomId, action: "state" }, HEADERS);
-    await svc.act({ roomId: pageB.roomId, action: "state" }, HEADERS);
+    await svc.act({ roomId: pageA.roomId, action: "stream-next" }, HEADERS);
+    await svc.act({ roomId: pageB.roomId, action: "stream-next" }, HEADERS);
     try {
       svc.open("", HEADERS, keyC);
       expect.unreachable("open() for a new key must throw when no key is idle");
@@ -201,7 +201,7 @@ describe("meeting room flood isolation", () => {
     const svc = createMeetingRoomService({ env: {} });
     const keyA = randomUUID();
     const pageA = svc.open("", HEADERS, keyA);
-    expect((await svc.act({ roomId: pageA.roomId, action: "state" }, HEADERS)).status).toBe(200);
+    expect((await svc.act({ roomId: pageA.roomId, action: "stream-next" }, HEADERS)).status).toBe(200);
     let refused = 0;
     for (let i = 0; i < 250; i += 1) {
       try {
