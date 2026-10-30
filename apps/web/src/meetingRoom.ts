@@ -49,6 +49,10 @@ export const PACKAGE_ID_MISSING_REASON =
 export const PACKAGE_ID_STALE_REASON =
   "The package changed since you reviewed it. Review the current package, then approve again.";
 
+/** Demo note when the guided Send step is not attempted (sending unavailable). */
+export const DEMO_SEND_NOT_SENT =
+  "Step 6 not sent: sending is unavailable on this public demo, so nothing was sent and there is no send receipt. The guide continues with the approved, unsent package.";
+
 /** Largest accepted `text` for the "guide" action, in characters. */
 export const MEETING_ROOM_MAX_GUIDANCE_CHARS = 2_000;
 
@@ -162,6 +166,8 @@ export type MeetingRoomSnapshot = {
     readonly total: number;
     readonly done: boolean;
     readonly caption: string | null;
+    /** Set when the guided Send step was not attempted; null otherwise. */
+    readonly sendNote: string | null;
   };
   readonly fakeSend: boolean;
   readonly restored: boolean;
@@ -333,6 +339,10 @@ export function createMeetingRoomService(opts?: {
               total: DEMO_STEPS.length,
               done: current === null,
               caption: current?.caption ?? null,
+              sendNote:
+                (entry.demo.result("demo-send") as { skipped?: boolean } | undefined)?.skipped === true
+                  ? DEMO_SEND_NOT_SENT
+                  : null,
             },
       fakeSend: entry.testMode,
       restored: entry.reused || entry.room.restoredFromStore(),
