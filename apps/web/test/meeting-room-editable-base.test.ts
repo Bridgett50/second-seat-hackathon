@@ -132,3 +132,25 @@ describe("F140-3 package editor edits the base, not the composed package", () =>
       }
       const excluded = await act(page, `#plugin-exclude-${PLUGIN}`);
 // --- end of F140-3 test part 12 ---
+      expect(count(excluded.draft.body, managed), "managed section absent after exclude").toBe(0);
+      expect(await displayedPackage(page), "preview matches after exclude").toBe(excluded.draft.body);
+    } finally {
+      await ctx.close();
+    }
+  }, 60_000);
+
+  it("F140-3b owner text resembling the plugin heading survives; managed content once then zero; edit needs reapproval", async () => {
+    const ctx = await browser.newContext();
+    try {
+// --- end of F140-3 test part 13 ---
+      const page = await prepareRoom(ctx);
+      await page.locator("#package-editor").fill(OWNER_BASE);
+      const savedBase = await act(page, "#package-save");
+      expect(savedBase.draft.body, "owner base saved exactly").toBe(OWNER_BASE);
+      const { managed } = await includeActionItems(page);
+      const approved = await act(page, "#approve");
+      expect(approved.draft.approved, "package approved").toBe(true);
+      const editor = page.locator("#package-editor");
+      await editor.fill((await editor.inputValue()) + OWNER_ADDENDUM);
+      const edited = await act(page, "#package-save");
+// --- end of F140-3 test part 14 ---
