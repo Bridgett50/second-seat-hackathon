@@ -191,3 +191,10 @@ Demo (?demo=1) pages are capped at 200 globally by evicting the oldest demo page
 activity for their key, never mark a key as acted, and no longer count against a key's 20-page
 cap (tests MR-DC1, MR-DC2 in apps/web/test/meeting-room-demo-cap.test.ts).
 Written by Muse Code on Baseten (meta-models/muse-spark-open-1026).
+
+### Busy page points to the guided demo; limitation L-1 (Oct 29, 2026)
+
+The 503 busy page now reads "Meeting room is busy. Try again later, or open the guided demo at
+/meeting-room?demo=1." (test MR-F5), and README "Known limitations" documents L-1: an acting flood
+can fill all 200 rooms for up to 30 minutes while the guided demo keeps working.
+Written by Muse Code on Baseten (meta-models/muse-spark-open-1026).

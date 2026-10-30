@@ -147,8 +147,9 @@ describe("meeting room flood isolation", () => {
     );
     expect(handler, "GET /meeting-room must answer 503 when busy").toContain("503");
     expect(handler, "GET /meeting-room must send the busy message").toContain(
-      "Meeting room is busy. Try again later.",
+      "Meeting room is busy. Try again later, or open the guided demo at /meeting-room?demo=1.",
     );
+    expect(handler, "the 503 body must point visitors to the guided demo").toContain("?demo=1");
   });
 
   it("MR-F6 store key K survives 150 then 60 other visitors and two tabs produce exactly one send", async () => {

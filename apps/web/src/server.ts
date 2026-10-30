@@ -356,7 +356,7 @@ export function createWebServer(deps?: WebServerDeps) {
             "content-type": "text/plain",
             "cache-control": "no-store",
           });
-          res.end("Meeting room is busy. Try again later.");
+          res.end("Meeting room is busy. Try again later, or open the guided demo at /meeting-room?demo=1.");
           return;
         }
         throw err;

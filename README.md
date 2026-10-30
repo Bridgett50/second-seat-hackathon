@@ -118,6 +118,10 @@ The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-ru
   - *Live runs before this change:* the Oct 28 runs masked "November 15" because the previous prompt said to mask every calendar date. Those recorded outputs are unchanged. The current client in `services/bot/src/private/redact.ts` already sends the new prompt on each redaction request. `infra/modal/glimmer_app.py` does not reference that prompt. Redeploying Modal does not activate it.
   - *Offline mode:* "November 15" as a meeting date stays in the text. A phrase such as "born on March 4, 1990" is still masked, as are names, phones, and emails.
 
+## Known limitations
+
+- **L-1: an acting flood can fill the meeting room.** A flood that acts (opens the page and then takes one action per visitor) can still fill all 200 rooms, so new visitors get a 503 "Meeting room is busy" page for up to 30 minutes, until those rooms go idle. The guided demo (`/meeting-room?demo=1`) keeps working during that time, and the 503 page links to it.
+
 ## More
 
 - Full PR ledger and engineering log: [docs/engineering-log.md](docs/engineering-log.md)
