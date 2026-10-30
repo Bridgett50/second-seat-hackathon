@@ -47,11 +47,17 @@ export function startPublicServer(env: EnvRecord = process.env as EnvRecord): Pr
   // reads directly. A safe `env` object must not bypass unsafe process.env.
   const realEnv = process.env as EnvRecord;
   if (env !== realEnv) {
+    // process.env selects anything other than offline (unset or offline is OK) — refuse before server creation
+    const mode = realEnv["SECOND_SEAT_MODE"];
+    if (mode !== undefined && mode !== "" && mode !== "offline") {
+      const msg = "Refused: SECOND_SEAT_MODE must be offline";
+      if (!problems.includes(msg)) problems.push(msg);
+    }
     const realProblems = validatePublicStartEnv(realEnv);
     for (const p of realProblems) {
-      // Only safety-related refusals that server.ts reads from process.env;
-      // PORT and SECOND_SEAT_MODE are sourced from `env`, not process.env
-      if (p.includes("PORT") || p.includes("SECOND_SEAT_MODE")) continue;
+      // PORT is sourced from `env`, not process.env; other safety flags come from process.env
+      if (p.includes("PORT")) continue;
+      if (p.includes("SECOND_SEAT_MODE")) continue;
       if (!problems.includes(p)) problems.push(p);
     }
   }
