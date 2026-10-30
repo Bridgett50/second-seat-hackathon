@@ -297,4 +297,31 @@ describe("t2 demo mode", () => {
     expect(demo.current()?.id, "step 3 is next").toBe(DEMO_STEPS[2]!.id);
     expect(room.view().guidance.length, "the guide step ran exactly once").toBe(1);
   });
+
+  it("T13-8 next() and skip() called together act in call order: step 1 runs, step 2 is skipped", async () => {
+    const { room } = makeRoom();
+    const demo = createDemoController(room);
+    const [ran, skipped] = await Promise.all([demo.next(), demo.skip()]);
+    expect(ran?.id, "next() runs step 1").toBe(DEMO_STEPS[0]!.id);
+    expect(skipped?.id, "skip() skips step 2, not step 1").toBe(DEMO_STEPS[1]!.id);
+    expect(demo.completed(), "exactly two steps completed").toBe(2);
+    expect(demo.result(DEMO_STEPS[0]!.id), "step 1 ran, not marked skipped").toBe(room.view().selectedMeetingTitle);
+    expect(demo.result(DEMO_STEPS[1]!.id), "step 2 is marked skipped").toEqual({ skipped: true });
+    expect(room.view().guidance.length, "the skipped guide step did not run").toBe(0);
+  });
+
+  it("T13-9 reset() after pending next() calls restarts cleanly: nothing stale counts, then step 1 runs once", async () => {
+    const { room } = makeRoom();
+    const demo = createDemoController(room);
+    const first = demo.next();
+    const second = demo.next();
+    demo.reset();
+    await Promise.all([first, second]);
+    expect(demo.completed(), "next() calls issued before reset() do not count").toBe(0);
+    expect(demo.current()?.id, "the script is back at step 1").toBe(DEMO_STEPS[0]!.id);
+    expect(demo.result(DEMO_STEPS[0]!.id), "no stale step-1 result").toBeUndefined();
+    const again = await demo.next();
+    expect(again?.id, "step 1 runs after the reset").toBe(DEMO_STEPS[0]!.id);
+    expect(demo.completed(), "exactly one step completed after the reset").toBe(1);
+  });
 });
