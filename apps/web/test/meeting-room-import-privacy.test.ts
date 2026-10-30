@@ -20,3 +20,14 @@ let base = "";
 let browser: Browser;
 let priorMode: string | undefined;
 // --- end of F140-5 test part 2 ---
+
+beforeAll(async () => {
+  priorMode = process.env.SECOND_SEAT_TEST_MODE;
+  process.env.SECOND_SEAT_TEST_MODE = "1";
+  svc = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "1" } });
+  server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  browser = await chromium.launch({ executablePath: CHROME, headless: true });
+});
+// --- end of F140-5 test part 3 ---
