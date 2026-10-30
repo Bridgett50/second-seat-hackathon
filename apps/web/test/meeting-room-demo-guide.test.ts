@@ -163,3 +163,19 @@ describe("F140-4b demo restart gives a fresh demo room", () => {
     expect(svc.sentBodies().length, "no extra transport call").toBe(1);
   });
 });
+// --- end of F140-4 test part 15b ---
+
+describe("F140-4c guided compare and evidence steps return and keep their results", () => {
+  it("F140-4c service: steps 7 and 8 return the comparison and the unsent evidence, kept after takeover", async () => {
+    const svc = createMeetingRoomService({ env: {} });
+    const page = svc.open("?demo=1", PUBLIC, randomUUID());
+    let approvedSha = "";
+    for (let i = 0; i < 6; i += 1) {
+      const r = await svc.act({ roomId: page.roomId, action: "demo-next" }, PUBLIC);
+      expect(r.status, `step ${i + 1} succeeds`).toBe(200);
+      if (i === 4) approvedSha = (r.body.snapshot as unknown as { view: { draft: { sha256: string } } }).view.draft.sha256;
+    }
+    expect(approvedSha, "step 5 approved a package").not.toBe("");
+    // --- end of F140-4 test part 16 ---
+  });
+});
