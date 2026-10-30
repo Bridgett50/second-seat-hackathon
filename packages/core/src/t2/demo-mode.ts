@@ -202,10 +202,14 @@ export interface DemoController {
    * Advance past the next step WITHOUT running it and store
    * `{ skipped: true }` as its result (used when a step is not permitted,
    * e.g. sending on a public demo). Returns the skipped step, or null after
-   * the last step.
+   * the last step. Waits behind any in-flight next() or skip() call.
    */
-  skip(): DemoStep | null;
-  /** Restart the script position and clear stored results (room untouched). */
+  skip(): Promise<DemoStep | null>;
+  /**
+   * Restart the script position and clear stored results (room untouched).
+   * Takes effect immediately; next() and skip() calls issued before it,
+   * including one whose step is still running, do not advance the script.
+   */
   reset(): void;
   /** Stored return value of a completed step, or undefined. */
   result(id: string): unknown;
@@ -229,32 +233,44 @@ export function createDemoController(room: TwinRoom): DemoController {
 
   // Overlapping next() calls (a double click or two Next requests) run one at
   // a time, in call order, so each one advances exactly one step.
+  // skip() waits in the same queue, and reset() bumps the generation so
+  // calls issued before it do nothing.
   let pending: Promise<unknown> = Promise.resolve();
+  let generation = 0;
 
-  async function runNext(): Promise<DemoStep | null> {
+  function queued(work: (gen: number) => DemoStep | null | Promise<DemoStep | null>): Promise<DemoStep | null> {
+    const gen = generation;
+    const run = pending.then(() => (gen === generation ? work(gen) : null));
+    pending = run.catch(() => undefined);
+    return run;
+  }
+
+  async function runNext(gen: number): Promise<DemoStep | null> {
     const step = DEMO_STEPS[index];
     if (step === undefined) return null;
     const out = await step.run(room);
+    if (gen !== generation) return null; // reset() while this step ran
     results.set(step.id, out);
     index += 1;
     return step;
   }
 
   function next(): Promise<DemoStep | null> {
-    const run = pending.then(runNext);
-    pending = run.catch(() => undefined);
-    return run;
+    return queued(runNext);
   }
 
-  function skip(): DemoStep | null {
-    const step = DEMO_STEPS[index];
-    if (step === undefined) return null;
-    results.set(step.id, { skipped: true });
-    index += 1;
-    return step;
+  function skip(): Promise<DemoStep | null> {
+    return queued(() => {
+      const step = DEMO_STEPS[index];
+      if (step === undefined) return null;
+      results.set(step.id, { skipped: true });
+      index += 1;
+      return step;
+    });
   }
 
   function reset(): void {
+    generation += 1;
     index = 0;
     results.clear();
   }
