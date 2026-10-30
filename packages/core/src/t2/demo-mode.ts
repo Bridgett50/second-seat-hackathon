@@ -198,6 +198,13 @@ export interface DemoController {
    * a no-op returning null after the last step (the room is untouched).
    */
   next(): Promise<DemoStep | null>;
+  /**
+   * Advance past the next step WITHOUT running it and store
+   * `{ skipped: true }` as its result (used when a step is not permitted,
+   * e.g. sending on a public demo). Returns the skipped step, or null after
+   * the last step.
+   */
+  skip(): DemoStep | null;
   /** Restart the script position and clear stored results (room untouched). */
   reset(): void;
   /** Stored return value of a completed step, or undefined. */
@@ -229,6 +236,14 @@ export function createDemoController(room: TwinRoom): DemoController {
     return step;
   }
 
+  function skip(): DemoStep | null {
+    const step = DEMO_STEPS[index];
+    if (step === undefined) return null;
+    results.set(step.id, { skipped: true });
+    index += 1;
+    return step;
+  }
+
   function reset(): void {
     index = 0;
     results.clear();
@@ -253,6 +268,7 @@ export function createDemoController(room: TwinRoom): DemoController {
       return DEMO_STEPS[index] ?? null;
     },
     next,
+    skip,
     reset,
     result(id: string): unknown {
       return results.get(id);
