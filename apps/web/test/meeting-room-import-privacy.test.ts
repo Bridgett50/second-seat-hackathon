@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
+import { existsSync } from "node:fs";
 import type { Server } from "node:http";
 import { chromium, type Browser, type Page } from "@playwright/test";
 import { createWebServer } from "../src/server.js";
@@ -10,7 +11,10 @@ import { outboundStats } from "../src/netGuard.js";
 // Synthetic text only, private loopback server, fake transport, test-mode
 // --- end of F140-5 test part 1 ---
 // network guard on, awaited responses as barriers (no sleeps).
-const CHROME = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+// System Chrome when PLAYWRIGHT_CHROME_PATH is set or /usr/bin/google-chrome exists; otherwise Playwright's bundled Chromium.
+const CHROME_PATH = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+const CHROME_LAUNCH: { executablePath?: string } =
+  process.env.PLAYWRIGHT_CHROME_PATH || existsSync(CHROME_PATH) ? { executablePath: CHROME_PATH } : {};
 const API = "/api/meeting-room";
 const MARKER = "SYNTHETIC_COMPARE_MARKER_140";
 const ACCURATE = "Compare sends this text to this app's server";
@@ -28,7 +32,7 @@ beforeAll(async () => {
   server = createWebServer({ meetingRoom: svc } as Parameters<typeof createWebServer>[0]);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  browser = await chromium.launch({ ...CHROME_LAUNCH, headless: true });
 });
 // --- end of F140-5 test part 3 ---
 
