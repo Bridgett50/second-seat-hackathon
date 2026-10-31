@@ -1015,6 +1015,32 @@ export function createTwinRoom(opts: TwinRoomOptions) {
       }
     },
 
+    resume(): void {
+      const st = active();
+      if (!st.takenOver) return;
+      st.takenOver = false;
+      takeoversThisRoom.delete(st.ownerId);
+      if (st.refusal === "Send refused: you took over; the twin is paused.") {
+        st.refusal = null;
+      }
+      for (const m of st.meetings) {
+        const sess = connector.openSession(st.principal, (m as any).meetingId ?? (m as any).id);
+        m.generationId = sess.generationId;
+        if (m.draft.sendState !== "sent" && (m.draft.sendState as string) !== "cancelled" && (m.draft.sendState as string) !== "canceled") {
+          if (m.draft.approved) {
+            m.draft.approved = false;
+            m.draft.approvedBody = null;
+            m.draft.jobId = null;
+            m.draft.callback = null;
+          }
+        }
+      }
+      if (store) {
+        saveTakeover(store, st.ownerId, false);
+        for (const m of st.meetings) persistSlot(st, m);
+      }
+    },
+
     approve(): { approved: boolean } {
       const st = active();
       const ms = selected(st);

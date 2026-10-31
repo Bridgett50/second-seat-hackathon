@@ -415,3 +415,7 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`) made the public-
 
 ### Meeting room AI Twin stage (Oct 31, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) mounted the existing twin stage on the meeting-room page using `twinStageHtml` with image source from `findAiSelf` (rendering the AI-self image when present and the BS placeholder otherwise, mode "Offline demo" and narrowPlacement "before" outside `#mr-root` via the existing `.ss-shell`/`.ss-main` layout) with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders after a judges' review found the page did not show the AI self; Grok Bot applied the output verbatim. No review, deploy or production result is claimed.
+
+### Meeting room reversible takeover (Oct 31, 2026)
+
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) added a Resume twin control that reverses a meeting-room takeover (fresh connector sessions, re-approval required) with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result is claimed.
