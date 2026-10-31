@@ -231,6 +231,7 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
     : `<p id="send-refused-note">Sending is refused on this host. The server only sends in local loopback test mode.</p>`;
   const sendText = snap.fakeSend ? "Send (test fake transport)" : "Send (refused on this host)";
   const sendDescribedBy = snap.fakeSend ? "" : ` aria-describedby="send-refused-note"`;
+  const sendAriaLabel = snap.fakeSend ? A11Y_LABELS.send : "Send (refused on this host)";
   return (
     `${sectionOpen("approval")}${esc(headingFor("approval", snap))}</h2>` +
     `<p id="mr-approval-state">Approved: ${approved} · Send: ${esc(view.draft.sendState)}</p>` +
@@ -239,7 +240,7 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
     refusal +
     sendNote +
     `<div><button type="button" id="approve" aria-label="${esc(A11Y_LABELS.approve)}" data-mr-action="approve" data-mr-package="${esc(snap.packageId)}"${dis}>Approve</button> ` +
-    `<button type="button" id="send" aria-label="${esc(A11Y_LABELS.send)}" data-mr-action="send" data-mr-package="${esc(snap.packageId)}"${sendDescribedBy}>${esc(sendText)}</button></div>` +
+    `<button type="button" id="send" aria-label="${esc(sendAriaLabel)}" data-mr-action="send" data-mr-package="${esc(snap.packageId)}"${sendDescribedBy}>${esc(sendText)}</button></div>` +
     (snap.sendNotice
       ? `<p id="send-notice" role="alert" class="mr-send-notice">${esc(snap.sendNotice)}</p>`
       : "") +
@@ -377,11 +378,11 @@ function post(action,extra){
     });
   });
 }
-function showComparison(box,c){
+function showComparison(box,c,r){
   box.textContent="";
   if(c===null||c===undefined){
     var p=document.createElement("p");
-    p.textContent="No approved package for the selected meeting yet. Approve the draft first, then compare.";
+    p.textContent=r && r.length ? r : "Compare is unavailable right now.";
     box.appendChild(p);
     return;
   }
@@ -431,7 +432,7 @@ function applyResult(action,res){
   }
   if(b&&Object.prototype.hasOwnProperty.call(b,"comparison")){
     var box=document.getElementById("compare-result");
-    if(box){showComparison(box,b.comparison);if(b.comparisonApproved===false){var n=document.createElement("p");n.textContent="Not yet approved: compared against the current draft package. Approve it before sending.";box.appendChild(n);}}
+    if(box){showComparison(box,b.comparison,b.comparisonReason);if(b.comparisonApproved===false){var n=document.createElement("p");n.textContent="Not yet approved: compared against the current draft package. Approve it before sending.";box.appendChild(n);}}
   }
 }
 document.addEventListener("click",function(e){
