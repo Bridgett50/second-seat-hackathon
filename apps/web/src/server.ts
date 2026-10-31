@@ -364,7 +364,7 @@ export function createWebServer(deps?: WebServerDeps) {
         }
         throw err;
       }
-      const html = renderMeetingRoomPage(snapshot);
+      const html = renderMeetingRoomPage(snapshot, aiSelf?.url ?? null);
       const headers: Record<string, string> = {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
