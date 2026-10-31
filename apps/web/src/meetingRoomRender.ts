@@ -13,7 +13,7 @@ import {
   pluginControlId,
   pluginControlLabel,
 } from "@second-seat/bot/dist/src/t2-room.js";
-import { THEME_CSS } from "./theme.js";
+import { THEME_CSS, twinStageHtml } from "./theme.js";
 import type { MeetingRoomSnapshot } from "./meetingRoom.js";
 
 /** Escape dynamic text and attribute values for HTML. */
@@ -496,7 +496,8 @@ document.addEventListener("keydown",function(e){
 })();`;
 
 /** Full `<!DOCTYPE html>` meeting room document with one main landmark. */
-export function renderMeetingRoomPage(snap: MeetingRoomSnapshot): string {
+export function renderMeetingRoomPage(snap: MeetingRoomSnapshot, aiSelfSrc?: string | null): string {
+  const twinStage = twinStageHtml({ imageSrc: aiSelfSrc ?? null, modeLabel: "Offline demo", narrowPlacement: "before" });
   const body = renderMeetingRoomBody(snap);
   return `<!DOCTYPE html>
 <html lang="en">
@@ -519,8 +520,13 @@ ${THEME_CSS}</style>
 </head>
 <body>
 <main>
+<div class="ss-shell">
+<div class="ss-main">
 <h1>Twin meeting room</h1>
 <div id="mr-live" role="${A11Y_LIVE_REGION.role}" aria-live="${A11Y_LIVE_REGION.ariaLive}" aria-label="Meeting room announcements"></div>
+</div>
+${twinStage}
+</div>
 <div id="mr-root" data-room-id="${esc(snap.roomId)}">${body}</div>
 </main>
 <script>
