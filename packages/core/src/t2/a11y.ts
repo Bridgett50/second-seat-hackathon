@@ -91,6 +91,7 @@ export const A11Y_CONTROLS: readonly A11yControl[] = [
   { id: "guidance-input", role: "textbox", label: A11Y_LABELS["guidance-input"], region: "guidance" },
   { id: "guidance-send", role: "button", label: A11Y_LABELS["guidance-send"], region: "guidance" },
   { id: "takeover", role: "button", label: A11Y_LABELS.takeover, region: "takeover" },
+  { id: "resume", role: "button", label: A11Y_LABELS.resume, region: "takeover" },
   { id: "package-editor", role: "textbox", label: A11Y_LABELS["package-editor"], region: "package" },
   { id: "package-save", role: "button", label: A11Y_LABELS["package-save"], region: "package" },
   { id: "run-plugins", role: "button", label: A11Y_LABELS["run-plugins"], region: "plugins" },
@@ -156,8 +157,9 @@ export interface AvailableControlsOptions {
 
 /**
  * Focus order for the current room state: the documented region order with
- * unavailable actions removed. Approve/Send are absent after takeover, Send
- * is absent until the package is approved, demo controls appear only in
+ * unavailable actions removed. Send is hidden until the package is approved,
+ * compare is available while the twin is active and the draft is unsent,
+ * Resume appears only while paused, demo controls appear only in
  * demo mode, and plugin toggles appear only while plugins may run.
  */
 export function availableControls(
@@ -171,11 +173,11 @@ export function availableControls(
   const pluginsRunnable = active && sendState === "unsent";
   // Mirrors the room's own refusals: approve() refuses while paused and
   // once the send state leaves unsent/failed; send() needs an approved,
-  // unsent package on a live twin; compareImported() needs the current
-  // approved package (unavailable paused or once the package locks).
+  // unsent package on a live twin; compareVisible() is available while
+  // active and unsent (using the visible package before approval).
   const canApprove = active && !approved && (sendState === "unsent" || sendState === "failed");
   const canSend = active && approved && sendState === "unsent";
-  const canCompare = active && approved && sendState !== "sent";
+  const canCompare = active && sendState === "unsent";
   const hasEvidence = approved || sendState !== "unsent";
   const pluginControls = pluginsRunnable ? pluginControlsFor(view) : [];
 
@@ -191,6 +193,9 @@ export function availableControls(
       case "guidance-send":
       case "takeover":
         if (active) order.push(control);
+        break;
+      case "resume":
+        if (!active) order.push(control);
         break;
       case "package-editor":
       case "package-save":
@@ -488,6 +493,8 @@ export async function runKeyboardFlow(
       if (text.trim().length > 0) room.guide(text);
     } else if (id === "takeover") {
       room.takeOver();
+    } else if (id === "resume") {
+      room.resume();
     } else if (id === "package-editor" || id === "package-save") {
       const text = bufferOf("package-editor");
       if (text.length > 0 && text !== prev.draft.body) room.editDraft(text);
@@ -499,7 +506,10 @@ export async function runKeyboardFlow(
       sendReason = res.reason;
     } else if (id === "compare-input" || id === "compare-run") {
       const text = bufferOf("compare-input");
-      if (text.length > 0) comparison = room.compareImported(text);
+      if (text.length > 0) {
+        const visible = room.compareVisible(text);
+        comparison = visible === null ? null : visible.comparison;
+      }
     } else if (id === "evidence-export") {
       const json = room.exportEvidenceJson();
       if (json !== null) evidenceJson = json;
