@@ -42,11 +42,15 @@ export interface TwinStageOpts {
   modeLabel: string;
   /** "after" keeps the stage below the main column on narrow screens. */
   narrowPlacement?: "before" | "after";
+  /** Optional caption override. */
+  caption?: string;
 }
 
 function escAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+
+export const MEETING_ROOM_TWIN_CAPTION = "Offline meeting room with made-up meetings. The twin drafts; you approve every step before anything moves.";
 
 export function twinStageHtml(opts: TwinStageOpts): string {
   const visual = opts.imageSrc
@@ -61,7 +65,7 @@ export function twinStageHtml(opts: TwinStageOpts): string {
     `</div>` +
     `<div class="twin-body">` +
     `<p class="twin-title"><span class="twin-title-wide">Your second seat</span><span class="twin-title-narrow">AI Twin of Bridgett</span></p>` +
-    `<p class="twin-caption">Sits beside the brief and suggests. It never sends anything for you.</p>` +
+    `<p class="twin-caption">${escAttr(opts.caption ?? "Sits beside the brief and suggests. It never sends anything for you.")}</p>` +
     `<ul class="twin-pills">` +
     `<li class="pill pill-soft">${escAttr(opts.modeLabel)}</li>` +
     `<li class="pill pill-outline">You approve every step</li>` +
