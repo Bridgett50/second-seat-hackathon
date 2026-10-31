@@ -274,7 +274,7 @@ function evidenceSection(snap: MeetingRoomSnapshot): string {
     `${sectionOpen("evidence")}${esc(headingFor("evidence", snap))}</h2>` +
     `<p>Local saved record for the selected meeting\u2019s approved package. Synthetic data only.</p>` +
     `<div><button type="button" id="evidence-export" aria-label="${esc(A11Y_LABELS["evidence-export"])}" data-mr-action="evidence-export">Export evidence JSON</button></div>` +
-    `<pre id="evidence-json">${esc(snap.demo?.evidenceJson ?? "")}</pre>` +
+    `<pre id="evidence-json">${esc(typeof snap.demo?.evidenceJson === "string" ? snap.demo.evidenceJson : snap.evidencePreviewJson)}</pre>` +
     copy +
     mailto +
     `</section>`
@@ -425,7 +425,7 @@ function applyResult(action,res){
   }
   if(b&&Object.prototype.hasOwnProperty.call(b,"comparison")){
     var box=document.getElementById("compare-result");
-    if(box){showComparison(box,b.comparison);}
+    if(box){showComparison(box,b.comparison);if(b.comparisonApproved===false){var n=document.createElement("p");n.textContent="Not yet approved: compared against the current draft package. Approve it before sending.";box.appendChild(n);}}
   }
 }
 document.addEventListener("click",function(e){

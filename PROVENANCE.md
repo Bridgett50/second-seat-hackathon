@@ -422,3 +422,6 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 
 
 ### Meeting room evidence preview and visible compare, core (Oct 31, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) added the twin room's read-only evidence preview of the visible package and a compare against the visible package marked not yet approved, without changing approve, send, takeover or resume, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result is claimed.
+
+### Meeting room evidence and compare before approve, web (Oct 31, 2026)
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) made the meeting-room evidence panel show the visible unsent, unapproved package before Approve and let the imported-draft compare run against it marked not yet approved, while Send still requires the exact approved package, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result was claimed or sought.
