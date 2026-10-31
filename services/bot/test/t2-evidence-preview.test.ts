@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createTwinRoom } from "../src/t2-room.js";
+import { createTwinRoom, SEEDED_SENSITIVE_VALUES } from "../src/t2-room.js";
 import {
   deriveApprovedPackage,
   serializeApprovedPackage,
@@ -45,6 +45,7 @@ describe("t2 evidence preview", () => {
       "sendState",
       "approvedAt",
       "sentAt",
+      "redactionCounts",
     ]);
     expect(parsed["meetingId"]).toBe(v.draft.meetingId);
     expect(parsed["meetingTitle"]).toBe(v.selectedMeetingTitle);
@@ -154,5 +155,33 @@ describe("t2 evidence preview", () => {
     expect(JSON.stringify(room.view())).toBe(beforeView2);
     const afterRecord2 = room.evidenceRecord();
     expect(afterRecord2 === null ? null : JSON.stringify(afterRecord2)).toBe(beforeRecordJson2);
+  });
+  it("EP-7 preview counts redaction placeholders in the seeded draft without plaintext", () => {
+    const room = makeRoom();
+    streamAllTranscript(room);
+    const json = room.evidencePreviewJson();
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    expect(parsed["redactionCounts"]).toEqual({ email: 1, phone: 1, amount: 1 });
+    expect(Object.keys(parsed["redactionCounts"] as Record<string, unknown>)).toEqual(["email", "phone", "amount"]);
+    for (const v of SEEDED_SENSITIVE_VALUES) {
+      expect(json).not.toContain(v);
+    }
+    expect(json).not.toContain("[REDACTED:");
+    expect(room.evidenceRecord()).toBeNull();
+  });
+  it("EP-8 redaction counts follow the visible draft after an edit and per meeting", () => {
+    const room = makeRoom();
+    streamAllTranscript(room);
+    room.editDraft(room.view().draft.body + "\nmail bob@example.test");
+    const json = room.evidencePreviewJson();
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    expect(parsed["redactionCounts"]).toEqual({ email: 2, phone: 1, amount: 1 });
+    expect(json).not.toContain("bob@example.test");
+    const target = room.view().meetings.find((m) => m.title === "Design review");
+    expect(target).toBeDefined();
+    room.selectMeeting(target!.id);
+    const json2 = room.evidencePreviewJson();
+    const parsed2 = JSON.parse(json2) as Record<string, unknown>;
+    expect(parsed2["redactionCounts"]).toEqual({ email: 0, phone: 0, amount: 0 });
   });
 });

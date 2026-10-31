@@ -434,3 +434,6 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 
 
 ### Meeting room Send label on a public host, web (Oct 31, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) made the meeting room Send button say "Send (refused on this host)" on public hosts (local loopback test mode keeps "Send (test fake transport)"), reworded the public note and linked it to the button with `aria-describedby`, keeping the button enabled and the server-side refusal unchanged, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result was claimed or attempted.
+
+### Evidence preview redaction counts, core (Oct 31, 2026)
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) added a final `redactionCounts` key (email, phone, amount) to the evidence preview, counted from the placeholders in the visible draft by one new helper in `redaction.ts` rather than the draft's stored redaction metadata, leaving the exported evidence record and saved drafts unchanged, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim.

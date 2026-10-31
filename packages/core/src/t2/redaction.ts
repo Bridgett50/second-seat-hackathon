@@ -54,6 +54,23 @@ export function placeholderFor(category: RedactionCategory, n: number): string {
   return `[REDACTED:${category}:${n}]`;
 }
 
+/** Counts redaction placeholders in text; a literal placeholder typed by the owner is also counted. */
+export function countRedactionPlaceholders(text: string): Readonly<Record<RedactionCategory, number>> {
+  const counts: Record<RedactionCategory, number> = {
+    email: 0,
+    phone: 0,
+    amount: 0,
+  };
+  const re = /\[REDACTED:(email|phone|amount):\d+\]/g;
+  for (const m of text.matchAll(re)) {
+    const cat = m[1];
+    if (cat === "email" || cat === "phone" || cat === "amount") {
+      counts[cat] += 1;
+    }
+  }
+  return counts;
+}
+
 /**
  * Redact `input` deterministically. Categories apply in `email`, `phone`,
  * `amount` order with per-category numbering from 1. Returns the redacted
