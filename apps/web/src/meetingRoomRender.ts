@@ -139,11 +139,12 @@ function takeoverSection(snap: MeetingRoomSnapshot): string {
   const takenOver = snap.view.twinStatus !== "active";
   const dis = takenOver ? " disabled" : "";
   const note = takenOver ? `<p>You took over. The twin is paused.</p>` : "";
+  const resumeBtn = takenOver ? `<button type="button" id="resume" aria-label="${esc(A11Y_LABELS.resume)}" data-mr-action="resume">Resume twin</button>` : "";
   return (
     `${sectionOpen("takeover")}${esc(headingFor("takeover", snap))}</h2>` +
     `<p>Pause the twin and take over the meeting yourself.</p>` +
     note +
-    `<div><button type="button" id="takeover" aria-label="${esc(A11Y_LABELS.takeover)}" data-mr-action="takeover"${dis}>Take over</button></div>` +
+    `<div><button type="button" id="takeover" aria-label="${esc(A11Y_LABELS.takeover)}" data-mr-action="takeover"${dis}>Take over</button>${resumeBtn}</div>` +
     `</section>`
   );
 }

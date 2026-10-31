@@ -123,6 +123,7 @@ const ACTING_ACTIONS = new Set([
   "edit-draft",
   "approve",
   "takeover",
+  "resume",
   "run-plugins",
   "plugin-include",
   "plugin-exclude",
@@ -567,6 +568,9 @@ export function createMeetingRoomService(opts?: {
           break;
         case "takeover":
           entry.room.takeOver();
+          break;
+        case "resume":
+          entry.room.resume();
           break;
         case "edit-draft":
           entry.room.editDraft(text as string);

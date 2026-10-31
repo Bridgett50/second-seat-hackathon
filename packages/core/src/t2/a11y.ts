@@ -68,6 +68,7 @@ export const A11Y_LABELS = {
   "guidance-input": "Guide the twin (private guidance)",
   "guidance-send": "Send guidance to the twin",
   takeover: "Take over from the twin",
+  resume: "Resume the twin",
   "package-editor": "Edit draft follow-up package",
   "package-save": "Save draft edit",
   "run-plugins": "Run plugins on the transcript so far",
@@ -351,6 +352,9 @@ export function diffAnnouncements(
   }
   if (prev.twinStatus !== next.twinStatus && next.twinStatus !== "active") {
     out.push("You took over. The twin is paused.");
+  }
+  if (prev.twinStatus !== next.twinStatus && next.twinStatus === "active") {
+    out.push("You resumed. The twin is active again.");
   }
   if (next.refusal !== null && next.refusal !== prev.refusal) {
     out.push(next.refusal);
