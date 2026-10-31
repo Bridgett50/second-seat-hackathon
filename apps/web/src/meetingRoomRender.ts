@@ -228,7 +228,9 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
     snap.approvalNote !== null ? `<p>${esc(snap.approvalNote)}</p>` : "";
   const sendNote = snap.fakeSend
     ? ""
-    : `<p>Sending is disabled outside test mode. The server refuses send requests.</p>`;
+    : `<p id="send-refused-note">Sending is refused on this host. The server only sends in local loopback test mode.</p>`;
+  const sendText = snap.fakeSend ? "Send (test fake transport)" : "Send (refused on this host)";
+  const sendDescribedBy = snap.fakeSend ? "" : ` aria-describedby="send-refused-note"`;
   return (
     `${sectionOpen("approval")}${esc(headingFor("approval", snap))}</h2>` +
     `<p id="mr-approval-state">Approved: ${approved} · Send: ${esc(view.draft.sendState)}</p>` +
@@ -237,7 +239,7 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
     refusal +
     sendNote +
     `<div><button type="button" id="approve" aria-label="${esc(A11Y_LABELS.approve)}" data-mr-action="approve" data-mr-package="${esc(snap.packageId)}"${dis}>Approve</button> ` +
-    `<button type="button" id="send" aria-label="${esc(A11Y_LABELS.send)}" data-mr-action="send" data-mr-package="${esc(snap.packageId)}">Send (test fake transport)</button></div>` +
+    `<button type="button" id="send" aria-label="${esc(A11Y_LABELS.send)}" data-mr-action="send" data-mr-package="${esc(snap.packageId)}"${sendDescribedBy}>${esc(sendText)}</button></div>` +
     (snap.sendNotice
       ? `<p id="send-notice" role="alert" class="mr-send-notice">${esc(snap.sendNotice)}</p>`
       : "") +
