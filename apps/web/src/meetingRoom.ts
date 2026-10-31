@@ -184,6 +184,7 @@ export type MeetingRoomSnapshot = {
   readonly packageId: string;
   /** Visible notice for a refused Send; null otherwise. */
   readonly sendNotice: string | null;
+  readonly evidencePreviewJson: string;
 };
 
 export type MeetingRoomActionResult = {
@@ -191,6 +192,7 @@ export type MeetingRoomActionResult = {
   readonly announcements: string[];
   readonly evidenceJson?: string;
   readonly comparison?: unknown;
+  readonly comparisonApproved?: boolean;
 };
 
 export type MeetingRoomService = {
@@ -363,6 +365,7 @@ export function createMeetingRoomService(opts?: {
       mailtoHref: entry.room.mailtoHref(),
       packageId: meetingRoomPackageId(view),
       sendNotice,
+      evidencePreviewJson: entry.room.evidencePreviewJson(),
     };
   }
 
@@ -684,11 +687,20 @@ export function createMeetingRoomService(opts?: {
         announcements: string[];
         evidenceJson?: string;
         comparison?: unknown;
+        comparisonApproved?: boolean;
       } = {
         snapshot: snap(roomId, entry, after),
         announcements: diffAnnouncements(before, after),
       };
-      if (action === "compare") result.comparison = entry.room.compareImported(text as string);
+      if (action === "compare") {
+        const visible = entry.room.compareVisible(text as string);
+        if (visible !== null) {
+          result.comparison = visible.comparison;
+          result.comparisonApproved = visible.approved;
+        } else {
+          result.comparison = null;
+        }
+      }
       if (action === "evidence-export") {
         const json = entry.room.exportEvidenceJson();
         if (json !== null) result.evidenceJson = json;

@@ -1331,6 +1331,54 @@ export function createTwinRoom(opts: TwinRoomOptions) {
       return record === null ? null : exportEvidenceJson(record);
     },
 
+    evidencePreviewJson(): string {
+      const st = active();
+      const ms = selected(st);
+      const d = ms.draft;
+      const record = evidence.get(ms.meetingId);
+      let approvedAt: number | null = null;
+      let sentAt: number | null = null;
+      if (d.approved && record !== null) {
+        approvedAt = record.approvedAt;
+        sentAt = record.sentAt;
+      }
+      return JSON.stringify(
+        {
+          meetingId: ms.meetingId,
+          meetingTitle: ms.title,
+          packageHash: packageHash(d.body),
+          approved: d.approved,
+          sendState: d.sendState,
+          approvedAt,
+          sentAt,
+        },
+        null,
+        2,
+      );
+    },
+
+    compareVisible(text: string): { approved: boolean; comparison: EmailComparison } | null {
+      const st = active();
+      if (st.takenOver) return null;
+      const ms = selected(st);
+      const body = approvedBodyText(st, ms);
+      if (body !== null) {
+        const approvedPkg = deriveApprovedPackage({
+          title: ms.title,
+          script: ms.script,
+          body,
+        });
+        return { approved: true, comparison: compareImportedText(approvedPkg, text) };
+      }
+      if (ms.draft.sendState !== "unsent") return null;
+      const visiblePkg = deriveApprovedPackage({
+        title: ms.title,
+        script: ms.script,
+        body: ms.draft.body,
+      });
+      return { approved: false, comparison: compareImportedText(visiblePkg, text) };
+    },
+
     compareImported(text: string): EmailComparison | null {
       // Read-only: compares pasted/local draft text against the selected
       // meeting's CURRENT APPROVED package only. Never mutates the draft,
