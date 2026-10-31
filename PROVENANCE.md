@@ -431,3 +431,6 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 
 
 ### Keyboard contract: compare before approve and resume while paused, core a11y (Oct 31, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) aligned the accessibility contract with the twin room and the meeting room page (compare offered while the twin is active and the draft unsent, using the visible package before approval; a Resume control and keyboard-driver branch while paused), updated T17-2 and added regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result was claimed.
+
+### Evidence preview redaction counts, core (Oct 31, 2026)
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) added a final `redactionCounts` key (email, phone, amount) to the evidence preview, counted from the placeholders in the visible draft by one new helper in `redaction.ts` rather than the draft's stored redaction metadata, leaving the exported evidence record and saved drafts unchanged, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim.

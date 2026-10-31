@@ -20,7 +20,7 @@ import {
   deriveApprovedPackage,
   type EmailComparison,
 } from "./email-compare.js";
-import { redactPackageText, type CategoryRedactions } from "./redaction.js";
+import { countRedactionPlaceholders, redactPackageText, type CategoryRedactions } from "./redaction.js";
 import {
   BUILTIN_PLUGINS,
   renderPluginOutput,
@@ -1351,6 +1351,7 @@ export function createTwinRoom(opts: TwinRoomOptions) {
           sendState: d.sendState,
           approvedAt,
           sentAt,
+          redactionCounts: countRedactionPlaceholders(d.body),
         },
         null,
         2,
