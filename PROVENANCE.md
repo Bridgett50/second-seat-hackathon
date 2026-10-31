@@ -425,3 +425,6 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 
 
 ### Meeting room evidence and compare before approve, web (Oct 31, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) made the meeting-room evidence panel show the visible unsent, unapproved package before Approve and let the imported-draft compare run against it marked not yet approved, while Send still requires the exact approved package, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result was claimed or sought.
+
+### Meeting room twin caption and evidence intro, web copy (Oct 31, 2026)
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) gave the meeting room its own twin stage caption through a new optional `caption` option (the brief and session pages keep the default) and made the evidence intro follow the draft state (unsent preview before Approve, evidence record once approved or sent), with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result is claimed.

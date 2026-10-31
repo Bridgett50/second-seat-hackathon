@@ -270,9 +270,13 @@ function evidenceSection(snap: MeetingRoomSnapshot): string {
     snap.mailtoHref !== null
       ? `<p><a id="evidence-mailto" href="${esc(snap.mailtoHref)}">${esc(MAILTO_LABEL)}</a></p>`
       : "";
+  const intro =
+    !snap.view.draft.approved && snap.view.draft.sendState === "unsent"
+      ? `<p>Unsent evidence preview for the selected meeting\u2019s current draft. Nothing has been sent. Synthetic data only.</p>`
+      : `<p>Evidence record for the selected meeting\u2019s package (send state shown below). Synthetic data only.</p>`;
   return (
     `${sectionOpen("evidence")}${esc(headingFor("evidence", snap))}</h2>` +
-    `<p>Local saved record for the selected meeting\u2019s approved package. Synthetic data only.</p>` +
+    intro +
     `<div><button type="button" id="evidence-export" aria-label="${esc(A11Y_LABELS["evidence-export"])}" data-mr-action="evidence-export">Export evidence JSON</button></div>` +
     `<pre id="evidence-json">${esc(typeof snap.demo?.evidenceJson === "string" ? snap.demo.evidenceJson : snap.evidencePreviewJson)}</pre>` +
     copy +
@@ -498,7 +502,7 @@ document.addEventListener("keydown",function(e){
 
 /** Full `<!DOCTYPE html>` meeting room document with one main landmark. */
 export function renderMeetingRoomPage(snap: MeetingRoomSnapshot, aiSelfSrc?: string | null): string {
-  const twinStage = twinStageHtml({ imageSrc: aiSelfSrc ?? null, modeLabel: "Offline demo", narrowPlacement: "before" });
+  const twinStage = twinStageHtml({ imageSrc: aiSelfSrc ?? null, modeLabel: "Offline demo", narrowPlacement: "before", caption: "Offline meeting room with made-up meetings. The twin drafts; you approve every step before anything moves." });
   const body = renderMeetingRoomBody(snap);
   return `<!DOCTYPE html>
 <html lang="en">
