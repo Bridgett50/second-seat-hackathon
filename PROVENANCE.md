@@ -437,3 +437,6 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 
 
 ### Evidence preview redaction counts, core (Oct 31, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) added a final `redactionCounts` key (email, phone, amount) to the evidence preview, counted from the placeholders in the visible draft by one new helper in `redaction.ts` rather than the draft's stored redaction metadata, leaving the exported evidence record and saved drafts unchanged, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim.
+
+### Send accessible name and compare reason (Oct 31, 2026)
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) made the public-host Send button's accessible name match its visible refusal label (test mode unchanged) and replaced the misleading "approve first" message when Compare has no result with the real reason (twin paused, or the send state) from one core helper, returned as `comparisonReason` and announced in the live region, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim.

@@ -10,8 +10,14 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import {
+  COMPARE_CANCELLED_REASON,
+  COMPARE_FAILED_REASON,
+  COMPARE_PAUSED_REASON,
+  COMPARE_SENT_REASON,
+  COMPARE_UNCONFIRMED_REASON,
   DEMO_STEPS,
   SEND_DISABLED_REASON,
+  compareUnavailableReason,
   createDemoController,
   createInMemoryRoomStore,
   createTwinRoom,
@@ -193,6 +199,7 @@ export type MeetingRoomActionResult = {
   readonly evidenceJson?: string;
   readonly comparison?: unknown;
   readonly comparisonApproved?: boolean;
+  readonly comparisonReason?: string;
 };
 
 export type MeetingRoomService = {
@@ -688,6 +695,7 @@ export function createMeetingRoomService(opts?: {
         evidenceJson?: string;
         comparison?: unknown;
         comparisonApproved?: boolean;
+        comparisonReason?: string;
       } = {
         snapshot: snap(roomId, entry, after),
         announcements: diffAnnouncements(before, after),
@@ -699,6 +707,10 @@ export function createMeetingRoomService(opts?: {
           result.comparisonApproved = visible.approved;
         } else {
           result.comparison = null;
+          const reason = compareUnavailableReason(after.twinStatus, after.draft.sendState);
+          const resolvedReason = reason ?? "Compare is unavailable right now.";
+          result.comparisonReason = resolvedReason;
+          result.announcements.push(resolvedReason);
         }
       }
       if (action === "evidence-export") {

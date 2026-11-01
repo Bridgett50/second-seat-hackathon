@@ -95,6 +95,21 @@ export const PENDING_SEND_EDIT_REASON =
   "Package is locked while a send is pending; it can no longer be edited.";
 export const REAPPROVE_AFTER_RELOAD_NOTE =
   "Approval doesn't survive a reload. Review the text below, then approve again.";
+export const COMPARE_PAUSED_REASON =
+  "Compare is unavailable: you took over; the twin is paused. Resume the twin, then compare.";
+export const COMPARE_SENT_REASON = "Compare is unavailable: this package was already sent.";
+export const COMPARE_FAILED_REASON = "Compare is unavailable: the last send failed.";
+export const COMPARE_CANCELLED_REASON = "Compare is unavailable: the send was cancelled by takeover.";
+export const COMPARE_UNCONFIRMED_REASON =
+  "Compare is unavailable: the send is unconfirmed — check your outbox.";
+export function compareUnavailableReason(twinStatus: TwinStatus, sendState: SendState): string | null {
+  if (twinStatus === "paused (you took over)") return COMPARE_PAUSED_REASON;
+  if (sendState === "sent") return COMPARE_SENT_REASON;
+  if (sendState === "failed") return COMPARE_FAILED_REASON;
+  if (sendState === "cancelled") return COMPARE_CANCELLED_REASON;
+  if (sendState === "unconfirmed") return COMPARE_UNCONFIRMED_REASON;
+  return null;
+}
 
 export type TwinRoomView = {
   readonly ownerId: string;
