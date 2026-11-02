@@ -48,7 +48,7 @@ Not recording-ready. FR1–FR3 are fixed and the offline script matches the exec
 | FR7-1 | RED | PASS | Parent report said a mutated checker missed rows. Head `c3b9894` says analytical baseline. |
 | FR7-2 | CONTROL | PASS | Pattern 14/14, spark 14/14, shield 14/14, gate 11/11, false alarms 0/16. Zero reference stays separate. |
 | FR7-3 | CONTROL | PASS | `node eval/shield-report.mjs --split dev` exit 0. Held-out wrapper still exits 2. No model call. |
-| FR8-1 | DOC | DOCUMENTED | "scrub all the sensitive data" replaced with supported-category masking, owner review, and no universal guarantee. September 7 story kept. |
+| FR8-1 | DOC | DOCUMENTED | "scrub all the sensitive data" replaced with supported-category masking, owner review, and no universal guarantee. The Sept. 7 vendor-quote origin story was removed (Nov 1, 2026). |
 | FR8-2 | DOC | DOCUMENTED | Market paragraph is her requirement. Temperature 0 is not an identical-output proof. |
 | FR8-3 | DOC | DOCUMENTED | Payload note no longer promises real-upload pre-storage masking. |
 | FR8-4 | DOC | DOCUMENTED | Web default 240s, client/batch 90s, override named. |

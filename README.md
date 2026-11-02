@@ -22,12 +22,6 @@ Before the approved text is sent, a redaction check has to pass. After the brief
 
 ## Why this matters to me
 
-I didn't build Second Seat because I wanted to play with AI. I built it because I was losing money on the phone.
-
-As a small business owner, my livelihood depends on vendor calls. Just last month, on September 7, I was negotiating the purchase of point-of-sale hardware for my store. We had a phone call. We agreed on a price of $700 a month. But when the written quote arrived, it said $750.
-
-I caught the difference, emailed the vendor, and he corrected it. But it made me realize: what happens on the weeks when I don't catch it? What happens to the business owner who is exhausted, juggling ten other things, and just trusts the written quote or an AI summary to be accurate? They lose money. They miss the hidden price increase, the conditional deadline, or the liability shift.
-
 In the meeting assistants I tried, I hit two problems. They summarized the whole call and missed the specific financial details I actually needed to act on. And to get those summaries, I had to send private client data, vendor names, and proprietary numbers to someone else's cloud. As a business owner, that was a privacy risk I couldn't take.
 
 So I built Second Seat for myself first. The idea predates this hackathon; this week's build is the live engine. It takes the messy transcript, uses Meta's open-weights model (Glimmer) on GPU hardware I control to mask the supported sensitive-data categories, and asks for my explicit approval. I still review every mask. This is not a guarantee that every sensitive detail is gone. Only then does it use Meta's Spark model to hand me a bulleted brief of what was offered, what was asked, and what needs a decision—with every single claim cited back to the transcript.
