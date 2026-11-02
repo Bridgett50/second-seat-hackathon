@@ -1,20 +1,41 @@
 # Demo script (offline engineering proof of one pasted meeting) — target 2:45, max 3:00
 
+# Second Seat — LOCKED 3-minute video script (Oct 29, 2026). Do not change a word.
+
+[0:00-0:10] DISCLOSURE (text card, VO): "Disclosure: The Second Seat idea, an earlier prototype in a separate repo, and my AI-self portrait existed before the event. Everything shown here was built from an empty repo starting October 26."
+
+[0:10-0:40] HOOK (on camera): "I'm a solo founder. I run a liquor store and a tech company. I am supposed to be in three meetings at the same time. I can't be. So I built Second Seat—a personal AI twin that sits in the second seat for me. But I don't trust current AI. It hallucinates, it leaks private data, and it acts without permission. I needed a twin that knows its place."
+
+[0:40-2:15] DEMO (meeting room screen recording, VO): "Here is the meeting room. My twin is in the meeting. I can guide it live (show live guidance), or I can take over instantly (show takeover). It keeps an evidence record of the session. When it writes the follow-up, it masks sensitive details. (Show redaction). It checks the draft against an imported email draft. Then, it presents the exact package. I review the draft and the evidence record. I approve it. It will only send the exact text I approved. If anything changes, it won't send. Right now, that send goes through a test path. The live call connection and real email sending come next."
+
+[2:15-2:45] TECH & TRUST (architecture slide): "This was built AI-first. Muse Code wrote it. Opus reviewed it. Every change was independently reviewed and tested. It is honest, verified AI."
+
+[2:45-3:00] CLOSE (on camera): "Second Seat is the future of the solo founder. It's the leverage to be in two places at once, without giving up your privacy or your control. The future of superintelligence has a human in the final seat. I'm Bridgett Sanders, and this is Second Seat."
+
+# LOCKED Founder Story (README top + submission form description)
+
+I'm a solo founder running Mo'ja Liquor and Loving Grace Technologies. There are days when I need to be in three different meetings at the exact same time. I can't clone myself, but I can build an AI twin to sit in the second seat.
+
+Second Seat is my answer to the solo founder's paradox: how to scale your time without sacrificing your privacy or your voice. Today, it is a scripted meeting room where my AI twin attends, and I can guide it live or take over instantly. It keeps an evidence record of the session, masks sensitive details, and drafts the follow-up. It checks the draft against an imported email draft. I review and approve the exact package, and it sends through a test path.
+
+It doesn't join live calls yet, and it doesn't send real emails yet. That is the vision. But what is built right now is the safety layer: an AI twin that protects your data and keeps you in the final seat. Every change was independently reviewed and tested.
+
+## Offline engineering proof (not the recorded video)
+
+The LOCKED script above is the video Bridgett records. The material below is the earlier offline engineering proof of one pasted meeting, kept as a checklist.
+
 This plan is an offline take labeled Offline demo. It is a safe fallback, not a decision that the submission must be offline-only. A future live clip is optional and would replace time inside this plan. It is not authorized and not recorded here.
 
 Timecodes include speech at about 150 words per minute plus clicks, corrections, waiting, and short pauses. The timing table is an unspoken note at the end.
 
 Founder story: done — supplied in the README founder section. User observations: PENDING — not yet supplied. Video URLs: PENDING — not yet supplied. Windows citation and clipboard checks: PENDING. Record nothing for the pending slots until they are supplied; invent no quotes, anecdotes, or URLs.
 
-## Opening line (founder-supplied, spoken verbatim)
-
-> "Just last month, on September 7, a vendor and I agreed on seven hundred dollars a month for point-of-sale hardware. The written quote said seven hundred fifty. I caught the difference and he corrected it. I built Second Seat for myself first. The idea predates this hackathon. This week's build is the live engine."
 
 The whole video follows ONE meeting through the connected `/session` flow: paste the unchanged `demo/synthetic-transcript.txt`, look at the local mock, show the blocked Analyze, correct by hand, approve, analyze, click a citation that is on the page, type a draft, approve that exact text, copy once, and edit a word so Copy turns off. No screenshot upload. No SAM. No timed replay.
 
 | Time | On screen | Bridgett says |
 |---|---|---|
-| 0:00–0:25 | Bridgett on camera. Disclosure card visible: "Pre-existing: the Second Seat idea and an earlier prototype in a separate repo. Built this week (Oct 26–Nov 4): everything in this repo." Story card: on September 7 a vendor agreed $700 a month; the written quote said $750 [README.md]. | "Just last month, on September 7, a vendor and I agreed on seven hundred dollars a month for point-of-sale hardware. The written quote said seven hundred fifty. I caught the difference and he corrected it. I built Second Seat for myself first. The idea predates this hackathon. This week's build is the live engine." |
+| 0:00–0:25 | Bridgett on camera. Disclosure card visible: "Pre-existing: the Second Seat idea and an earlier prototype in a separate repo. Built this week (Oct 26–Nov 4): everything in this repo." | "The disclosure and hook from the LOCKED script above, spoken verbatim." |
 | 0:25–0:40 | `/session?demo=1`. "Offline demo" label (`#offline-label`) stays visible. Paste the full unchanged `demo/synthetic-transcript.txt` into `#transcript-input`. Click `#btn-redact`. State reads "Review required". | "I paste that made-up call in. This is an offline demo." |
 | 0:40–0:50 | Preview: full names and `555-013-8844` are masked. Bare `Amira` is still visible. `ellis.ward@northglass-retail.example` is still visible. Do not correct them yet. Do not credit this preview to a model. | "The phone and the full names are masked. Bare Amira and the email are still visible." |
 | 0:50–1:08 | Click `#btn-approve` while the email is still in the preview. Click `#btn-analyze`. State returns to "Review required — check the redacted preview, then approve." No findings appear. Unspoken note, not a caption: historical evidence for a different meeting remains Playwright test [apps/web/e2e/d2-approval.spec.ts](../../apps/web/e2e/d2-approval.spec.ts) test "D2-6" (full paste-to-copy flow with exact clipboard bytes, fake transport); scripted walkthrough in [apps/web/proof/d6-public-demo-session.md](../../apps/web/proof/d6-public-demo-session.md) (screen video pending a human recording). Do not say this paste shows "last chance" or a fifty-dollar gap. | "This Analyze attempt was blocked before downstream analysis." |
@@ -37,7 +58,7 @@ The whole video follows ONE meeting through the connected `/session` flow: paste
 
 | Beat | Clock | Speech words | Speech at 150 wpm | Actions | Slot |
 |---|---|---|---|---|---|
-| Founder, verbatim, plus disclosure card | 0:00–0:25 | 54 | 22 s | show the card, about 3 s | 25 s |
+| Disclosure and hook (LOCKED script above) | 0:00–0:25 | see LOCKED script | see LOCKED script | show the card, about 3 s | 25 s |
 | Paste and Redact | 0:25–0:40 | 11 | 4 s | paste, click, wait, about 8 s | 15 s |
 | Point at mock misses | 0:40–0:50 | 14 | 6 s | point, about 4 s | 10 s |
 | Blocked Analyze | 0:50–1:08 | 8 | 3 s | approve, analyze, wait, about 12 s | 18 s |
@@ -47,4 +68,4 @@ The whole video follows ONE meeting through the connected `/session` flow: paste
 | Draft, one Copy, edit | 1:56–2:24 | 32 | 13 s, overlapping the typing | type, approve, copy, edit one word, about 16 s | 28 s |
 | Evidence card | 2:24–2:34 | 15 | 6 s | card already visible | 10 s |
 | Close | 2:34–2:45 | 6 | 2 s | logo hold | 11 s |
-| Total | 0:00–2:45 | 196 | about 78 s of speech | actions and pauses fill the rest | 165 s |
+| Total | 0:00–2:45 | 142 plus the LOCKED opening | about 56 s plus the LOCKED opening | actions and pauses fill the rest | 165 s |

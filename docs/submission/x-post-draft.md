@@ -12,9 +12,9 @@ We run Muse Glimmer (open weights) on our own Modal A100.
 
 ## Founder-story post (alternative)
 
-In September a vendor and I agreed on $700/month for store POS hardware by phone. The written quote said $750. I caught it and they corrected it. That's why Second Seat matters to me: it checks the call against the paper, and a human stays in the final seat. <REPO> <VIDEO>
+I'm a solo founder who needs to be in three meetings at once. I built Second Seat so my AI twin sits in the second seat — it masks details, drafts the follow-up, and I approve the exact package before it goes through a test path. A human stays in the final seat. <REPO> <VIDEO>
 
-273 characters with `<REPO>` and `<VIDEO>` left as placeholders. Replacing `<REPO>` with the repository URL and `<VIDEO>` with `<VIDEO PENDING>` is 326 characters, and 320 after dropping "store ". Use a shorter link before posting. This sentence is otherwise unchanged.
+Keep the post under 280 characters after replacing `<REPO>` and `<VIDEO>`; use a short link.
 
 ## Optional reply
 

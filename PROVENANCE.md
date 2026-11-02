@@ -440,3 +440,8 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 
 
 ### Send accessible name and compare reason (Oct 31, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) made the public-host Send button's accessible name match its visible refusal label (test mode unchanged) and replaced the misleading "approve first" message when Compare has no result with the real reason (twin paused, or the send state) from one core helper, returned as `comparisonReason` and announced in the live region, with regression tests, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim.
+
+### Remove the vendor-quote origin story from docs (Nov 1, 2026)
+
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) removed the old vendor-quote origin story from the README, both video scripts, the X post draft and the release acceptance note, put Bridgett's locked video script into both script files, and left the solo-founder story as the only origin story, in a source-only, no-tools, docs-only session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production outcome is claimed.
+
