@@ -10,5 +10,5 @@ export * from "./plugins.js";
 export * from "./twin-room.js";
 export * from "./a11y.js";
 export * from "./test-mode-gate.js";
-export { createMeetingPolicyRecorder, getPolicyGeneration } from "./session-policy.js";
-export type { GuidanceStatus } from "./session-policy.js";
+export { createMeetingPolicyRecorder, getPolicyGeneration, evaluateOutgoing } from "./session-policy.js";
+export type { GuidanceStatus, EvaluateResult, OutgoingKind } from "./session-policy.js";
