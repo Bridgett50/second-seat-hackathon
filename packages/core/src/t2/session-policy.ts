@@ -192,8 +192,8 @@ function replaceProhibited(text: string): string {
   const reps: RegExp[] = [
     new RegExp(`\\b(?:${MONTHS})\\b\\.?\\s*\\d{1,2}(?:st|nd|rd|th)?\\b`, "gi"),
     new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+of\\s+(?:${MONTHS})\\b`, "gi"),
-    /\b\d{1,2}[\/\-\.]\d{1,2}(?:[\/\-\.]\d{2,4})?\b/g,
     /\b\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}\b/g,
+    /\b\d{1,2}[\/\-\.]\d{1,2}(?:[\/\-\.]\d{2,4})?\b/g,
     new RegExp(`\\b(?:${WEEKDAY_FULL}|${WEEKDAY_ABBR})\\b\\s+(?:at\\s+)?\\d{1,2}(?::\\d{2})?\\s*(?:am|pm|a\\.m\\.|p\\.m\\.)?`, "gi"),
     new RegExp(`\\b(?:${WEEKDAY_FULL}|${WEEKDAY_ABBR})\\b`, "gi"),
     /\b\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)\b/gi,

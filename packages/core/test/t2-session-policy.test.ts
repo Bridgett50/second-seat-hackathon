@@ -403,3 +403,48 @@ describe("S2 held records", () => {
     expect(dispatchedC.length).toBe(1);
   });
 });
+
+describe("S3 iso dates", () => {
+  it("S3-1 a complete ISO date under no-date policy never releases its year fragment", () => {
+    resetAllPolicyState();
+    const owner = "owner-s3-1";
+    const meeting = "meet-s3-1";
+    const sub = submitGuidance(owner, meeting, "Please do not share any dates");
+    expect(sub.status).toBe("applied");
+    const candidate = "Venue is booked. The launch review is 2027-03-14, bring the slides.";
+    const r = evaluateOutgoing(owner, meeting, candidate, "turn");
+    const releasedText = r.outcome === "released" ? (r.text ?? "") : "";
+    expect(releasedText).not.toContain("2027");
+    expect(releasedText).not.toContain("03-14");
+    if (r.outcome === "released") {
+      expect(r.text).toContain("Venue is booked.");
+      expect(r.text).toContain("The launch review is");
+      expect(r.text).toContain("bring the slides.");
+    } else {
+      expect(r.outcome).toBe("held");
+    }
+    const dispatched: string[] = [];
+    const spy = (t: string): void => {
+      dispatched.push(t);
+    };
+    const handle = holdCandidate(owner, meeting, candidate, "turn");
+    const rel = releaseHeld(handle, spy);
+    expect(dispatched.join(" ")).not.toContain("2027");
+    if (rel.outcome === "released") {
+      expect(rel.text).not.toContain("2027");
+    } else {
+      expect(rel.outcome).toBe("held");
+    }
+  });
+
+  it("S3-2 control: with no policy the ISO date is released unchanged", () => {
+    resetAllPolicyState();
+    const owner = "owner-s3-2";
+    const meeting = "meet-s3-2";
+    const candidate = "Venue is booked. The launch review is 2027-03-14, bring the slides.";
+    const r = evaluateOutgoing(owner, meeting, candidate, "turn");
+    expect(r.outcome).toBe("released");
+    expect(r.text).toBe(candidate);
+    expect(r.text).toContain("2027-03-14");
+  });
+});
