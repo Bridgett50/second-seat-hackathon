@@ -163,4 +163,17 @@ describe("docs honesty edits 1-4", () => {
     expect(corr).toContain("written run summary (owner-attested, synthetic data), not a screen recording");
     expect(corr).toContain("Partner prize: none selected. Partner providers used: Baseten (Muse Code), Modal (Glimmer, Live mode only).");
   });
+
+  it('README and rules-check describe the meeting room demo and the transcript workflow', () => {
+    const readme = rd('README.md');
+    const rules = rd('docs/submission/rules-check.md');
+    expect(readme).toContain('Second Seat works in two places: during a meeting, a scripted offline twin sits in the second seat on synthetic data while you guide it or take over, with no model calls; after the meeting, the transcript workflow below turns your pasted meeting text into a cited brief.');
+    expect(readme).toContain('In the meeting room demo, Send works only on a local server started in test mode, where it goes to a test (fake) transport after you approve the exact package; on the public demo site, Send is refused and the evidence record shows the package as unsent.');
+    expect(readme).toContain('The meeting room twin is a scripted demonstration on synthetic data: it calls no model, and its Send reaches the fake transport only in local test mode and is refused on the public site (see "Meeting room demo walkthrough").');
+    expect(readme).toContain('- *Auto-sending replies.* Rejected. In the transcript workflow (`/session`), Copy is the only exit, and only after you approve the exact draft; in the meeting room demo, Send reaches only a test (fake) transport in local test mode and is refused on the public site.');
+    expect(readme).not.toContain('sits next to you after the call');
+    expect(readme).not.toContain('- *Auto-sending replies.* Rejected. Copy is the only exit, and only after you approve the exact draft.');
+    expect(rules).toContain('- [ ] No banned category. This is a meeting-time AI twin demo (a scripted offline meeting room with no model calls) plus a transcript review workflow, not any of the excluded builds.');
+    expect(rules).not.toContain('after-call review tool');
+  });
 });

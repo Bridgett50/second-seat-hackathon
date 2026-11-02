@@ -1,7 +1,7 @@
 # Rules check
 
 - [ ] Video shows only Oct 26+ work. The disclosure card is line 1, spoken and on screen.
-- [ ] No banned category. This is an after-call review tool, not any of the excluded builds.
+- [ ] No banned category. This is a meeting-time AI twin demo (a scripted offline meeting room with no model calls) plus a transcript review workflow, not any of the excluded builds.
 - [ ] Every number traces to a log. Any on-screen or spoken number without a source file in brackets gets cut before recording.
 - [ ] X post is draft only. Bridgett posts it herself; nothing here auto-posts.
 - [ ] No deploy on camera. The public link is demo mode with recorded examples. The Oct 28 live run (3/3 at `0365fdb`) is documented as a written run summary (owner-attested, synthetic data), not a screen recording. No live-run clip is planned for the video; the video shows only the scripted offline meeting room. Organizers confirmed recorded runs are fine if labeled. Do not present a fixture as that run. Spend cap $5/day plus daily call-count cap with refuse-and-stop behavior [docs/failure-modes.md].
