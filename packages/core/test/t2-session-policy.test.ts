@@ -8,6 +8,7 @@ import {
   releaseHeld,
   resetAllPolicyState,
 } from "../src/t2/session-policy.js";
+import type { HoldHandle } from "../src/t2/session-policy.js";
 
 // independent scanner for test assertions
 function testHasProhibited(text: string): boolean {
@@ -247,5 +248,158 @@ describe("P1 session policy", () => {
   it("P1-5 legacy scripted applyGuidance behavior is unchanged", () => {
     expect(applyGuidance("Launch is in March.", "Keep it calm")).toBe("Noted — Launch is in March.");
     expect(applyGuidance("Launch is in March.", "no dates")).toBe("Launch is in a date Bridgett will confirm.");
+  });
+});
+
+describe("S2 held records", () => {
+  it("S2-1 a stale handle with edited generationAtHold is invalidated with zero dispatch", () => {
+    resetAllPolicyState();
+    const owner = "owner-s2-1";
+    const meeting = "meet-s2-1";
+    const clean = "Hello, please review the document.";
+    const handle = holdCandidate(owner, meeting, clean, "turn");
+    submitGuidance(owner, meeting, "Please do not share any dates");
+    const dispatched: string[] = [];
+    const spy = (t: string): void => {
+      dispatched.push(t);
+    };
+    const forged = { ...handle, generationAtHold: 1 };
+    const r = releaseHeld(forged, spy);
+    expect(dispatched).toEqual([]);
+    expect(r.outcome).toBe("invalidated");
+    const dispatched2: string[] = [];
+    const spy2 = (t: string): void => {
+      dispatched2.push(t);
+    };
+    const r2 = releaseHeld(handle, spy2);
+    expect(dispatched2).toEqual([]);
+    expect(r2.outcome).toBe("invalidated");
+  });
+
+  it("S2-2 an unissued fabricated handle is invalidated with zero dispatch", () => {
+    resetAllPolicyState();
+    const dispatched: string[] = [];
+    const spy = (t: string): void => {
+      dispatched.push(t);
+    };
+    const clean = "Hello, please review the document.";
+    const forged: HoldHandle = {
+      id: "hold-forged-1",
+      ownerId: "owner-s2-2",
+      meetingId: "meet-s2-2",
+      generationAtHold: 0,
+      candidate: clean,
+      kind: "turn",
+    };
+    const r = releaseHeld(forged, spy);
+    expect(dispatched).toEqual([]);
+    expect(r.outcome).toBe("invalidated");
+  });
+
+  it("S2-3 owner or meeting substitution on a handle is invalidated with zero dispatch", () => {
+    resetAllPolicyState();
+    const ownerA = "owner-s2-3-A";
+    const meetingA = "meet-s2-3-A";
+    const otherMeeting = "meet-s2-3-other";
+    const otherOwner = "owner-s2-3-other";
+    const clean = "Hello, please review the document.";
+    const handle = holdCandidate(ownerA, meetingA, clean, "turn");
+    submitGuidance(ownerA, meetingA, "Please do not share any dates");
+    const dispatched: string[] = [];
+    const spy = (t: string): void => {
+      dispatched.push(t);
+    };
+    const forgedMeeting = { ...handle, meetingId: otherMeeting };
+    const r1 = releaseHeld(forgedMeeting, spy);
+    expect(dispatched).toEqual([]);
+    expect(r1.outcome).toBe("invalidated");
+    const dispatched2: string[] = [];
+    const spy2 = (t: string): void => {
+      dispatched2.push(t);
+    };
+    const forgedOwner = { ...handle, ownerId: otherOwner };
+    const r2 = releaseHeld(forgedOwner, spy2);
+    expect(dispatched2).toEqual([]);
+    expect(r2.outcome).toBe("invalidated");
+  });
+
+  it("S2-4 a forged attempt does not consume a legitimate pending hold", () => {
+    resetAllPolicyState();
+    const owner = "owner-s2-4";
+    const meeting = "meet-s2-4";
+    const clean = "Hello, please review the document.";
+    const handle = holdCandidate(owner, meeting, clean, "turn");
+    const dispatched: string[] = [];
+    const spy = (t: string): void => {
+      dispatched.push(t);
+    };
+    const forged = { ...handle, candidate: "Hello, please review the document March 14" };
+    const rForged = releaseHeld(forged, spy);
+    expect(dispatched).toEqual([]);
+    expect(rForged.outcome).toBe("invalidated");
+    const dispatchedLegit: string[] = [];
+    const spyLegit = (t: string): void => {
+      dispatchedLegit.push(t);
+    };
+    const legit = releaseHeld(handle, spyLegit);
+    expect(legit.outcome).toBe("released");
+    expect(dispatchedLegit.length).toBe(1);
+    expect(dispatchedLegit[0]).toBe(clean);
+    const dispatchedSecond: string[] = [];
+    const spySecond = (t: string): void => {
+      dispatchedSecond.push(t);
+    };
+    const second = releaseHeld(handle, spySecond);
+    expect(second.outcome).toBe("invalidated");
+    expect(dispatchedSecond).toEqual([]);
+    expect(second.text).toBeUndefined();
+  });
+
+  it("S2-5 controls: legitimate single release, same-scope invalidation, unrelated-scope release", () => {
+    resetAllPolicyState();
+    const owner = "owner-s2-5";
+    const meeting = "meet-s2-5";
+    const clean = "Hello, please review the document.";
+    const handle = holdCandidate(owner, meeting, clean, "turn");
+    const dispatched: string[] = [];
+    const spy = (t: string): void => {
+      dispatched.push(t);
+    };
+    const r = releaseHeld(handle, spy);
+    expect(r.outcome).toBe("released");
+    expect(dispatched.length).toBe(1);
+    expect(dispatched[0]).toBe(clean);
+    const dispatched2: string[] = [];
+    const spy2 = (t: string): void => {
+      dispatched2.push(t);
+    };
+    const r2 = releaseHeld(handle, spy2);
+    expect(r2.outcome).toBe("invalidated");
+    expect(r2.text).toBeUndefined();
+    expect(dispatched2).toEqual([]);
+    resetAllPolicyState();
+    const ownerB = "owner-s2-5-b";
+    const meetingB = "meet-s2-5-b";
+    const handleB = holdCandidate(ownerB, meetingB, clean, "turn");
+    submitGuidance(ownerB, meetingB, "Please do not share any dates");
+    const dispatchedB: string[] = [];
+    const spyB = (t: string): void => {
+      dispatchedB.push(t);
+    };
+    const rB = releaseHeld(handleB, spyB);
+    expect(dispatchedB).toEqual([]);
+    expect(rB.outcome).toBe("invalidated");
+    resetAllPolicyState();
+    const ownerC = "owner-s2-5-c";
+    const meetingC = "meet-s2-5-c";
+    const handleC = holdCandidate(ownerC, meetingC, clean, "turn");
+    submitGuidance("other-owner-s2-5", "other-meet-s2-5", "Please do not share any dates");
+    const dispatchedC: string[] = [];
+    const spyC = (t: string): void => {
+      dispatchedC.push(t);
+    };
+    const rC = releaseHeld(handleC, spyC);
+    expect(rC.outcome).toBe("released");
+    expect(dispatchedC.length).toBe(1);
   });
 });

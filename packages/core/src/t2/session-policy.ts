@@ -11,6 +11,14 @@ interface ScopeState {
 const scopes = new Map<string, ScopeState>();
 const heldUsed = new Set<string>();
 let holdSeq = 0;
+type HeldRecord = Readonly<{
+  ownerId: string;
+  meetingId: string;
+  generationAtHold: number;
+  candidate: string | Readonly<{ subject: string; body: string }>;
+  kind: OutgoingKind;
+}>;
+const heldRecords = new Map<string, HeldRecord>();
 
 function scopeKey(ownerId: string, meetingId: string): string {
   return `${ownerId}\u001F${meetingId}`;
@@ -37,6 +45,7 @@ export function clearPolicy(ownerId: string, meetingId: string): { version: stri
 export function resetAllPolicyState(): void {
   scopes.clear();
   heldUsed.clear();
+  heldRecords.clear();
   holdSeq = 0;
 }
 
@@ -257,15 +266,29 @@ export function evaluateOutgoing(
   return { outcome: "released", text, version: SESSION_POLICY_VERSION, generation: s.generation };
 }
 
+function copyCandidate(candidate: string | { subject: string; body: string }): string | { subject: string; body: string } {
+  if (typeof candidate === "string") return candidate;
+  return { subject: candidate.subject, body: candidate.body };
+}
+
+function candidatesEqual(
+  a: string | { subject: string; body: string },
+  b: string | { subject: string; body: string },
+): boolean {
+  if (typeof a === "string" && typeof b === "string") return a === b;
+  if (typeof a !== "string" && typeof b !== "string") return a.subject === b.subject && a.body === b.body;
+  return false;
+}
+
 // --- hold / release ---
 
 export interface HoldHandle {
-  id: string;
-  ownerId: string;
-  meetingId: string;
-  generationAtHold: number;
-  candidate: string | { subject: string; body: string };
-  kind: OutgoingKind;
+  readonly id: string;
+  readonly ownerId: string;
+  readonly meetingId: string;
+  readonly generationAtHold: number;
+  readonly candidate: string | { subject: string; body: string };
+  readonly kind: OutgoingKind;
 }
 
 export function holdCandidate(
@@ -276,7 +299,26 @@ export function holdCandidate(
 ): HoldHandle {
   const s = getScope(ownerId, meetingId);
   const id = `hold-${holdSeq++}`;
-  return { id, ownerId, meetingId, generationAtHold: s.generation, candidate, kind };
+  const storedCandidate = copyCandidate(candidate);
+  const recordCandidate = typeof storedCandidate === "string" ? storedCandidate : Object.freeze({ ...storedCandidate });
+  const record: HeldRecord = Object.freeze({
+    ownerId,
+    meetingId,
+    generationAtHold: s.generation,
+    candidate: recordCandidate,
+    kind,
+  });
+  heldRecords.set(id, record);
+  const handleCandidate = copyCandidate(candidate);
+  const handle: HoldHandle = Object.freeze({
+    id,
+    ownerId,
+    meetingId,
+    generationAtHold: s.generation,
+    candidate: handleCandidate,
+    kind,
+  });
+  return handle;
 }
 
 export interface ReleaseResult {
@@ -288,20 +330,58 @@ export interface ReleaseResult {
 }
 
 export function releaseHeld(handle: HoldHandle, onDispatch?: (text: string) => void): ReleaseResult {
+  const stored = heldRecords.get(handle.id);
+  if (stored === undefined) {
+    return {
+      outcome: "invalidated",
+      reason: "unknown hold id",
+      version: SESSION_POLICY_VERSION,
+      generation: getScope(handle.ownerId, handle.meetingId).generation,
+    };
+  }
+  if (
+    handle.ownerId !== stored.ownerId ||
+    handle.meetingId !== stored.meetingId ||
+    handle.generationAtHold !== stored.generationAtHold ||
+    handle.kind !== stored.kind ||
+    !candidatesEqual(handle.candidate, stored.candidate)
+  ) {
+    return {
+      outcome: "invalidated",
+      reason: "handle mismatch",
+      version: SESSION_POLICY_VERSION,
+      generation: getScope(stored.ownerId, stored.meetingId).generation,
+    };
+  }
   if (heldUsed.has(handle.id)) {
-    return { outcome: "invalidated", reason: "already released", version: SESSION_POLICY_VERSION, generation: getScope(handle.ownerId, handle.meetingId).generation };
+    return {
+      outcome: "invalidated",
+      reason: "already released",
+      version: SESSION_POLICY_VERSION,
+      generation: getScope(stored.ownerId, stored.meetingId).generation,
+    };
   }
   heldUsed.add(handle.id);
-  const s = getScope(handle.ownerId, handle.meetingId);
-  if (s.generation !== handle.generationAtHold) {
+  const s = getScope(stored.ownerId, stored.meetingId);
+  if (s.generation !== stored.generationAtHold) {
     return { outcome: "invalidated", reason: "stale generation", version: SESSION_POLICY_VERSION, generation: s.generation };
   }
-  const evalRes = evaluateOutgoing(handle.ownerId, handle.meetingId, handle.candidate, handle.kind);
+  const evalRes = evaluateOutgoing(stored.ownerId, stored.meetingId, stored.candidate, stored.kind);
   if (evalRes.outcome === "held") {
-    return { outcome: "held", ...(evalRes.reason !== undefined ? { reason: evalRes.reason } : {}), version: evalRes.version, generation: evalRes.generation };
+    return {
+      outcome: "held",
+      ...(evalRes.reason !== undefined ? { reason: evalRes.reason } : {}),
+      version: evalRes.version,
+      generation: evalRes.generation,
+    };
   }
   if (evalRes.text !== undefined && onDispatch !== undefined) {
     onDispatch(evalRes.text);
   }
-  return { outcome: "released", ...(evalRes.text !== undefined ? { text: evalRes.text } : {}), version: evalRes.version, generation: evalRes.generation };
+  return {
+    outcome: "released",
+    ...(evalRes.text !== undefined ? { text: evalRes.text } : {}),
+    version: evalRes.version,
+    generation: evalRes.generation,
+  };
 }
