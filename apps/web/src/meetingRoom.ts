@@ -312,6 +312,7 @@ export function createMeetingRoomService(opts?: {
   conversationInput?: boolean;
   sessionPolicy?: boolean;
   candidateReasoner?: CandidateReasoner;
+  candidateDeadlineMs?: number;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxStores = opts?.maxStores ?? 200;
@@ -319,6 +320,11 @@ export function createMeetingRoomService(opts?: {
   const maxDemoPages = opts?.maxDemoPages ?? 200;
   const idleMs = opts?.idleMs ?? 30 * 60_000;
   const now = opts?.now ?? Date.now;
+  const candidateDeadlineMs = opts?.candidateDeadlineMs ?? 10000;
+  if(opts?.candidateDeadlineMs !== undefined){
+    const v = opts.candidateDeadlineMs;
+    if(!Number.isSafeInteger(v) || v <= 0) throw new RangeError("candidateDeadlineMs must be a positive safe integer");
+  }
   const stores = new Map<string, RoomStore>();
   const sent: string[] = [];
   const rooms = new Map<string, RoomEntry>();
@@ -442,11 +448,11 @@ export function createMeetingRoomService(opts?: {
   }
 
   type CandidateResult = { meetingId: string; status: "provisional" | "failed"; contextRevision: number; subject: string; body: string; sourceRefs: readonly CandidateSourceRef[]; note: string };
-  type CandidateState = { epoch: number; active: boolean; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult };
+  type CandidateState = { epoch: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult };
   const candidateByRoom = new WeakMap<TwinRoom, CandidateState>();
   function getCandidateState(room: TwinRoom){
     let s = candidateByRoom.get(room);
-    if(!s){ s = { epoch:0, active:false, pending:null, result:null }; candidateByRoom.set(room,s); }
+    if(!s){ s = { epoch:0, active:false, timedOut:false, timer:null, pending:null, result:null }; candidateByRoom.set(room,s); }
     return s;
   }
   function isCandidateActive(): boolean{
@@ -456,7 +462,7 @@ export function createMeetingRoomService(opts?: {
     if(!isCandidateActive()) return undefined;
     const st = candidateByRoom.get(entry.room);
     const mid = view.selectedMeetingId;
-    if(st?.active){
+    if(st?.active && !st.timedOut){
       return { meetingId: mid, status:"pending", provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Drafting a private provisional candidate." };
     }
     if(st?.result && st.result.meetingId === mid){
@@ -503,13 +509,59 @@ export function createMeetingRoomService(opts?: {
       notes: Object.freeze([...view.notes]),
     });
     st.active = true;
+    st.timedOut = false;
     st.pending = null;
     st.result = null;
+    const capturedEntry = entry;
+    const capturedRoomId = roomId;
+    const capturedOwnerId = ownerId;
+    const capturedMeetingId = meetingId;
+    const capturedContextRevision = contextRevision;
+    const capturedPolicyGeneration = policyGeneration;
+    const capturedEpoch = epoch;
+    const capturedState = st;
+    const deadlineTimer = setTimeout(()=>{
+      const curSt = candidateByRoom.get(capturedEntry.room);
+      if(!curSt) return;
+      if(curSt !== capturedState) return;
+      if(!curSt.active) return;
+      if(curSt.timedOut) return;
+      const freshView = capturedEntry.room.view();
+      const curConv = conversationByRoom.get(capturedEntry.room)?.get(capturedMeetingId);
+      const curRevision = curConv?.contextRevision ?? 0;
+      const freshOk =
+        rooms.get(capturedRoomId) === capturedEntry &&
+        freshView.ownerId === capturedOwnerId &&
+        freshView.selectedMeetingId === capturedMeetingId &&
+        freshView.twinStatus === "active" &&
+        curRevision === capturedContextRevision &&
+        getPolicyGeneration(capturedOwnerId, capturedMeetingId) === capturedPolicyGeneration &&
+        curSt.epoch === capturedEpoch;
+      curSt.timedOut = true;
+      curSt.timer = null;
+      if(freshOk){
+        curSt.result = { meetingId: capturedMeetingId, status:"failed", contextRevision: capturedContextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: reasoner timed out. It was not retried." };
+      }
+    }, candidateDeadlineMs);
+    st.timer = deadlineTimer;
     let p: Promise<unknown>;
     try{ p = reasoner(input); } catch(e){ p = Promise.reject(e); }
     p.then((val)=>{
       const curSt = candidateByRoom.get(entry.room);
       if(!curSt) return;
+      if(curSt.timedOut){
+        if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
+        // late settlement discarded, free slot and drain
+        curSt.active = false;
+        curSt.timedOut = false;
+        const next = curSt.pending;
+        curSt.pending = null;
+        if(next !== null){
+          dispatchCandidate(next.entry, next.roomId);
+        }
+        return;
+      }
+      if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
       curSt.active = false;
       const freshView = entry.room.view();
       const curConv = conversationByRoom.get(entry.room)?.get(meetingId);
@@ -563,6 +615,18 @@ export function createMeetingRoomService(opts?: {
     }, (err)=>{
       const curSt = candidateByRoom.get(entry.room);
       if(!curSt) return;
+      if(curSt.timedOut){
+        if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
+        curSt.active = false;
+        curSt.timedOut = false;
+        const next = curSt.pending;
+        curSt.pending = null;
+        if(next !== null){
+          dispatchCandidate(next.entry, next.roomId);
+        }
+        return;
+      }
+      if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
       curSt.active = false;
       const freshView = entry.room.view();
       const curConv = conversationByRoom.get(entry.room)?.get(meetingId);
