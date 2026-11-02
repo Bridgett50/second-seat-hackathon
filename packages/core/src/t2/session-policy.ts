@@ -53,6 +53,15 @@ export function getPolicyGeneration(ownerId: string, meetingId: string): number 
   return scopes.get(scopeKey(ownerId, meetingId))?.generation ?? 0;
 }
 
+export function createMeetingPolicyRecorder(ownerId: string, meetingId: string): { record(text: string): { status: GuidanceStatus; generation: number } } {
+  return {
+    record(text: string): { status: GuidanceStatus; generation: number } {
+      const res = submitGuidance(ownerId, meetingId, text);
+      return { status: res.status, generation: res.generation };
+    },
+  };
+}
+
 // --- guidance interpretation ---
 
 const APPLIED_PATTERNS: RegExp[] = [

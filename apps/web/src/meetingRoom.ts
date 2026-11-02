@@ -30,6 +30,7 @@ import {
   type TwinRoom,
   type TwinRoomView,
 } from "@second-seat/bot/dist/src/t2-room.js";
+import { createMeetingPolicyRecorder, getPolicyGeneration } from "@second-seat/core";
 
 export const MEETING_ROOM_PATH = "/meeting-room";
 export const MEETING_ROOM_API = "/api/meeting-room";
@@ -205,6 +206,7 @@ export type MeetingRoomSnapshot = {
   /** Visible notice for a refused Send; null otherwise. */
   readonly sendNotice: string | null;
   readonly evidencePreviewJson: string;
+  readonly sessionPolicy?: { readonly meetingId: string; readonly generation: number; readonly status: "none" | "applied" | "needs-clarification" | "not-applied"; readonly note: string };
   readonly conversation?: ConversationSnapshot;
 };
 
@@ -281,6 +283,7 @@ export function createMeetingRoomService(opts?: {
   idleMs?: number;
   now?: () => number;
   conversationInput?: boolean;
+  sessionPolicy?: boolean;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxStores = opts?.maxStores ?? 200;
@@ -410,6 +413,7 @@ export function createMeetingRoomService(opts?: {
     };
   }
 
+  const policyStatusByScope = new Map<string, "applied" | "needs-clarification" | "not-applied">();
   function snap(roomId: string, entry: RoomEntry, view: TwinRoomView, sendNotice: string | null = null): MeetingRoomSnapshot {
     const current = entry.demo?.current() ?? null;
     const base: MeetingRoomSnapshot = {
@@ -444,10 +448,24 @@ export function createMeetingRoomService(opts?: {
       sendNotice,
       evidencePreviewJson: entry.room.evidencePreviewJson(),
     };
-    if (opts?.conversationInput === true) {
-      return { ...base, conversation: conversationSnapshotFor(entry, view) };
+    let out: MeetingRoomSnapshot = base as MeetingRoomSnapshot;
+    if (opts?.sessionPolicy === true) {
+      const gen = getPolicyGeneration(view.ownerId, view.selectedMeetingId);
+      const st = policyStatusByScope.get(`${view.ownerId}\0${view.selectedMeetingId}`) ?? "none";
+      const note =
+        st === "applied"
+          ? "Policy recorded; output enforcement is not active."
+          : st === "needs-clarification"
+            ? "Policy needs clarification."
+            : st === "not-applied"
+              ? "Policy not applied."
+              : "No policy recorded.";
+      (out as unknown as Record<string, unknown>).sessionPolicy = { meetingId: view.selectedMeetingId, generation: gen, status: st, note };
     }
-    return base;
+    if (opts?.conversationInput === true) {
+      return { ...out, conversation: conversationSnapshotFor(entry, view) };
+    }
+    return out;
   }
 
   function notFound(): { status: number; body: MeetingRoomActionResult } {
@@ -638,6 +656,7 @@ export function createMeetingRoomService(opts?: {
           },
         };
       }
+      let policyAnnouncementStatus: "applied" | "needs-clarification" | "not-applied" | null = null;
       const before = entry.room.view();
       switch (action) {
         case "state":
@@ -659,9 +678,17 @@ export function createMeetingRoomService(opts?: {
         case "stream-next":
           entry.room.streamNextLine();
           break;
-        case "guide":
-          entry.room.guide(text as string);
+        case "guide": {
+          const guideResult = entry.room.guide(text as string);
+          const recorded = (guideResult as { recorded: boolean }).recorded;
+          if (opts?.sessionPolicy === true && recorded === true && entry.demo === null) {
+            const v = entry.room.view();
+            const rec = createMeetingPolicyRecorder(v.ownerId, v.selectedMeetingId).record(text as string);
+            policyStatusByScope.set(`${v.ownerId}\0${v.selectedMeetingId}`, rec.status);
+            policyAnnouncementStatus = rec.status;
+          }
           break;
+        }
         case "takeover":
           entry.room.takeOver();
           break;
@@ -786,6 +813,9 @@ export function createMeetingRoomService(opts?: {
         snapshot: snap(roomId, entry, after),
         announcements: diffAnnouncements(before, after),
       };
+      if (policyAnnouncementStatus === "applied") result.announcements.push("Meeting policy recorded for this meeting.");
+      else if (policyAnnouncementStatus === "needs-clarification") result.announcements.push("Meeting policy needs clarification: Please clarify the date restriction.");
+      else if (policyAnnouncementStatus === "not-applied") result.announcements.push("Meeting policy not applied.");
       if (action === "compare") {
         const visible = entry.room.compareVisible(text as string);
         if (visible !== null) {
