@@ -1,6 +1,6 @@
 # Final repair acceptance
 
-Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This ledger was written by the Cursor cloud agent. Reviewed target `005201ef83c2c94b110a643b6f89606928d3d349`. Platform for every local command below is Linux. GitHub CI is listed separately and is not treated as a local run. This run's token usage was not reported by the environment. No zero-cost claim is made.
+This ledger was written by the Cursor cloud agent. Reviewed target `005201ef83c2c94b110a643b6f89606928d3d349`. Platform for every local command below is Linux. GitHub CI is listed separately and is not treated as a local run. This run's token usage was not reported by the environment. No zero-cost claim is made.
 
 Not recording-ready. FR1–FR3 are fixed and the offline script matches the executed synthetic flow, but the Windows citation and clipboard checks are UNVERIFIED.
 
