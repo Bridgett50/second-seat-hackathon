@@ -96,4 +96,11 @@ describe("docs honesty edits 1-4", () => {
       for (const b of banned) expect(c).not.toContain(b);
     }
   });
+
+  it("PROVENANCE has no empty Session B heading", () => {
+    const prov = rd("PROVENANCE.md");
+    const lines = prov.split("\n");
+    expect(lines.filter((l) => l === "## Session B").length).toBe(0);
+    expect(lines.filter((l) => l === "## Session B: meeting room page (written fresh in the event repo, Oct 29, 2026)").length).toBe(1);
+  });
 });

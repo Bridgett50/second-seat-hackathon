@@ -79,8 +79,6 @@ Not ported:
 
 None found (Opus copy check, Oct 29, 2026). The companion repo code from Bridgett50/loving-grace-holo-demo PR #6 is not pre-event code: it was written and merged Oct 29, 2026, during the event, and ported here via PR #139, merged Oct 30, 2026.
 
-## Session B
-
 ## Session B: meeting room page (written fresh in the event repo, Oct 29, 2026)
 
 These files were written fresh in this repo on Oct 29, 2026 by Muse Code
