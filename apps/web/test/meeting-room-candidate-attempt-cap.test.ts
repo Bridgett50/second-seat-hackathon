@@ -209,25 +209,21 @@ describe("P3e candidate reasoner attempt cap", () => {
     expect(fake.calls.length).toBe(1);
 
     // select-meeting away and back
-    const opened = makeRoom(options);
-    // need second meeting id from same room's view: use svc view
     snap = await stateOf(svc, key, roomId);
-    const otherId = snap.view.meetings.find((m) => m.id !== meetingId)?.id ?? meetingId;
-    if (otherId !== meetingId) {
-      const sel1 = await svc.actAs(key, { roomId, action: "select-meeting", id: otherId }, HEADERS);
-      expect(sel1.status).toBe(200);
-      const sel2 = await svc.actAs(key, { roomId, action: "select-meeting", id: meetingId }, HEADERS);
-      expect(sel2.status).toBe(200);
-      await ingest(svc, key, roomId, { meetingId, utteranceId: "u5", sequence: 5, revision: 1, speaker: "a", text: "t5" });
-      await flush();
-      expect(fake.calls.length).toBe(1);
-    }
+    expect(snap.view.meetings.length).toBeGreaterThanOrEqual(2);
+    const otherId = must(snap.view.meetings.find((m) => m.id !== meetingId)).id;
+    const sel1 = await svc.actAs(key, { roomId, action: "select-meeting", id: otherId }, HEADERS);
+    expect(sel1.status).toBe(200);
+    const sel2 = await svc.actAs(key, { roomId, action: "select-meeting", id: meetingId }, HEADERS);
+    expect(sel2.status).toBe(200);
+    await ingest(svc, key, roomId, { meetingId, utteranceId: "u5", sequence: 5, revision: 1, speaker: "a", text: "t5" });
+    await flush();
+    expect(fake.calls.length).toBe(1);
 
     // correction
     await ingest(svc, key, roomId, { meetingId, utteranceId: "u5", sequence: 5, revision: 2, speaker: "a", text: "t5-corrected" });
     await flush();
     expect(fake.calls.length).toBe(1);
-    void opened;
   });
 
   it("shared page and isolation", async () => {
@@ -252,52 +248,50 @@ describe("P3e candidate reasoner attempt cap", () => {
     expect(cand.note).toBe("Candidate unavailable: attempt limit reached. It was not retried.");
 
     // different store key independent
-    const fake2 = createFake();
-    const options2: CapOptions = { env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fake2.reasoner, candidateMaxAttempts: 1 };
-    const svc2 = createMeetingRoomService(options2);
-    // use separate service instance to avoid shared map across services; but spec says different store keys => different rooms
-    // For same service with different key:
     const keyB = randomUUID();
     const openedB = svc.open("", HEADERS, keyB);
     const roomIdB = openedB.roomId;
     const meetingIdB = openedB.view.selectedMeetingId;
-    // need a fake tied to svc's reasoner; svc's reasoner is fake (already exhausted) so we test isolation via new service with new fake
-    void roomIdB; void meetingIdB; void svc2;
+    expect(openedB.view.meetings[0]?.title).toBe(snap.view.meetings[0]?.title);
+    await ingest(svc, keyB, roomIdB, { meetingId: meetingIdB, utteranceId: "ub1", sequence: 1, revision: 1, speaker: "a", text: "tb1" });
+    await flush();
+    expect(fake.calls.length).toBe(2);
+    pendingAt(fake, 1).resolve({ subject: "sb1", body: "bb1", sourceRefs: [{ utteranceId: "ub1", revision: 1 }] });
+    await flush();
+    snap = await stateOf(svc, keyB, roomIdB);
+    cand = candidateOf(snap);
+    expect(cand.status).toBe("provisional");
+    await ingest(svc, key, roomId, { meetingId, utteranceId: "u3", sequence: 3, revision: 1, speaker: "a", text: "t3" });
+    await flush();
+    expect(fake.calls.length).toBe(2);
+    snap = await stateOf(svc, key, roomId);
+    cand = candidateOf(snap);
+    expect(cand.status).toBe("failed");
+    expect(cand.note).toBe("Candidate unavailable: attempt limit reached. It was not retried.");
 
     // Different meeting in same room independent
     snap = await stateOf(svc, key, roomId);
-    const otherMeetingId = snap.view.meetings.find((m) => m.id !== meetingId)?.id;
-    if (otherMeetingId !== undefined) {
-      const fakeOther = createFake();
-      // create new service for other meeting test with fresh budget map; use same svc but other meetingId has its own counter
-      // To test, create a fresh svc with same budget semantics: use a new service instance
-      const svc3 = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fakeOther.reasoner, candidateMaxAttempts: 1 } as CapOptions);
-      const key3 = randomUUID();
-      const opened3 = svc3.open("", HEADERS, key3);
-      const roomId3 = opened3.roomId;
-      const midA = opened3.view.selectedMeetingId;
-      const midB = opened3.view.meetings.find((m) => m.id !== midA)?.id;
-      if (midB !== undefined) {
-        // exhaust meeting A
-        await ingest(svc3, key3, roomId3, { meetingId: midA, utteranceId: "ua1", sequence: 1, revision: 1, speaker: "a", text: "ta1" });
-        expect(fakeOther.calls.length).toBe(1);
-        pendingAt(fakeOther, 0).resolve({ subject: "sa", body: "ba", sourceRefs: [{ utteranceId: "ua1", revision: 1 }] });
-        await flush();
-        // switch to B and ingest -> should get its call
-        const selB = await svc3.actAs(key3, { roomId: roomId3, action: "select-meeting", id: midB }, HEADERS);
-        expect(selB.status).toBe(200);
-        await ingest(svc3, key3, roomId3, { meetingId: midB, utteranceId: "ub1", sequence: 2, revision: 1, speaker: "a", text: "tb1" });
-        await flush();
-        expect(fakeOther.calls.length).toBe(2);
-        // different store key independent (new randomUUID) gets its call
-        const fakeC = createFake();
-        const svcC = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fakeC.reasoner, candidateMaxAttempts: 1 } as CapOptions);
-        const keyC = randomUUID();
-        const openedC = svcC.open("", HEADERS, keyC);
-        await ingest(svcC, keyC, openedC.roomId, { meetingId: openedC.view.selectedMeetingId, utteranceId: "uc1", sequence: 1, revision: 1, speaker: "a", text: "tc1" });
-        expect(fakeC.calls.length).toBe(1);
-      }
-    }
+    expect(snap.view.meetings.length).toBeGreaterThanOrEqual(2);
+    const otherMeetingId = must(snap.view.meetings.find((m) => m.id !== meetingId)).id;
+    const selB = await svc.actAs(key, { roomId, action: "select-meeting", id: otherMeetingId }, HEADERS);
+    expect(selB.status).toBe(200);
+    await ingest(svc, key, roomId, { meetingId: otherMeetingId, utteranceId: "um1", sequence: 1, revision: 1, speaker: "a", text: "tm1" });
+    await flush();
+    expect(fake.calls.length).toBe(3);
+    pendingAt(fake, 2).resolve({ subject: "sm1", body: "bm1", sourceRefs: [{ utteranceId: "um1", revision: 1 }] });
+    await flush();
+    snap = await stateOf(svc, key, roomId);
+    cand = candidateOf(snap);
+    expect(cand.status).toBe("provisional");
+    const selA = await svc.actAs(key, { roomId, action: "select-meeting", id: meetingId }, HEADERS);
+    expect(selA.status).toBe(200);
+    await ingest(svc, key, roomId, { meetingId, utteranceId: "u4", sequence: 4, revision: 1, speaker: "a", text: "t4" });
+    await flush();
+    expect(fake.calls.length).toBe(3);
+    snap = await stateOf(svc, key, roomId);
+    cand = candidateOf(snap);
+    expect(cand.status).toBe("failed");
+    expect(cand.note).toBe("Candidate unavailable: attempt limit reached. It was not retried.");
   });
 
   it("config", async () => {
