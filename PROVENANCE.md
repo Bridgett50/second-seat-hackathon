@@ -2,7 +2,7 @@
 
 Ported Oct 29, 2026 by Muse Code (muse-spark-1.3 via scripts/muse_pr.sh) from
 Bridgett50/loving-grace-holo-demo PR #6 (https://github.com/Bridgett50/loving-grace-holo-demo/pull/6),
-merged as holo main `8499e74`. PR #6 was built on Oct 29, 2026.
+merged as holo main `8499e74` and merged into this repo via PR #139 (https://github.com/Bridgett50/second-seat-hackathon/pull/139) on Oct 30, 2026. PR #6 was built on Oct 29, 2026.
 SHAs below are the holo commits that touched each source file.
 
 ## Ported core (packages/core/src/t2/ ← holo second-seat/packages/core/src/t2/)
@@ -77,16 +77,9 @@ Not ported:
 
 ## Pre-event code
 
-None found (Opus copy check, Oct 29, 2026).
+None found (Opus copy check, Oct 29, 2026). The companion repo code from Bridgett50/loving-grace-holo-demo PR #6 is not pre-event code: it was written and merged Oct 29, 2026, during the event, and ported here via PR #139, merged Oct 30, 2026.
 
-## Commit identities (git log on main `ea11592`, Oct 29, 2026)
-
-- `muse-code@second-seat.local`: 196 commits.
-  - 131 are authored "Muse Code".
-  - 65 are Bridgett's own hand edits, labeled "Bridgett Sanders (maintainer hand edit)" (47) or "Bridgett Sanders" (18).
-- Bridgett50 (GitHub): 96 commits, 81 of them merge commits.
-- Cursor Agent: 60 commits.
-- Grok Bot: 10 commits.
+## Session B
 
 ## Session B: meeting room page (written fresh in the event repo, Oct 29, 2026)
 
@@ -445,3 +438,6 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 
 
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) removed the old vendor-quote origin story from the README, both video scripts, the X post draft and the release acceptance note, put Bridgett's locked video script into both script files, and left the solo-founder story as the only origin story, in a source-only, no-tools, docs-only session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production outcome is claimed.
 
+### Docs honesty edits 1-4 (Nov 1, 2026)
+
+Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) applied Bridgett's approved wording for review, the transcript workflow, authorship and the new-work disclosure across the README, both video scripts, the submission fields, the engineering log and the release acceptance note, removed the stale commit counts (including the Oct 29 commit-identities snapshot), recorded the PR #139 port date, and added one docs regression test, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result is claimed.

@@ -1,4 +1,4 @@
-Pre-existing: the Second Seat idea and an earlier prototype. Built this week (Oct 26–Nov 4): everything in this repo.
+Pre-existing: the idea, an earlier prototype, and my AI-self portrait. Built during the event (Oct 26–Nov 4): all the code, partly in a companion repo and brought over on Oct 30.
 
 # Second Seat
 
@@ -8,7 +8,7 @@ I'm a solo founder running Mo'ja Liquor and Loving Grace Technologies. There are
 
 Second Seat is my answer to the solo founder's paradox: how to scale your time without sacrificing your privacy or your voice. Today, it is a scripted meeting room where my AI twin attends, and I can guide it live or take over instantly. It keeps an evidence record of the session, masks sensitive details, and drafts the follow-up. It checks the draft against an imported email draft. I review and approve the exact package, and it sends through a test path.
 
-It doesn't join live calls yet, and it doesn't send real emails yet. That is the vision. But what is built right now is the safety layer: an AI twin that protects your data and keeps you in the final seat. Every change was independently reviewed and tested.
+It doesn't join live calls yet, and it doesn't send real emails yet. That is the vision. But what is built right now is the safety layer: an AI twin that protects your data and keeps you in the final seat. Changes were reviewed by independent AI reviewers and checked by automated tests, with the results documented in the repo.
 
 ## What it does
 
@@ -150,6 +150,6 @@ These are human tasks. They are not done by tests or by this repair:
 
 The recorded reviews (Opus and Codex, with Grok; see PROVENANCE.md and docs/engineering-log.md) covered the reviewed pull request heads and the test suites listed at those heads; they do not show that every intermediate commit was reviewed or that the full suite passed on every commit.
 
-Muse Code authored 127 commits on this history, the most of any one name, not every commit. Bridgett Sanders and Bridgett50 authored 142. The repair stack (FR1–FR10) was done by Cursor Agent (51 commits). Grok Bot authored 10. Grok and Codex reviewed. This history's token usage was not reported here. Bridgett Sanders directed the work and made hand edits. Cursor implemented the FR1–FR10 repairs; Grok and Codex reviewed the work. Those commit counts name the git author. They are not a line-by-line proof of which model wrote each line.
+Muse Code wrote most of the code. Cursor did a repair pass, I directed the work and made hand edits, and other AI tools reviewed it. PROVENANCE.md records who did what.
 
 License: MIT. See [LICENSE](LICENSE).

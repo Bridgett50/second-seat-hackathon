@@ -1,16 +1,16 @@
 # Demo script (offline engineering proof of one pasted meeting) — target 2:45, max 3:00
 
-# Second Seat — LOCKED 3-minute video script (Oct 29, 2026). Do not change a word.
+# Second Seat — LOCKED 3-minute video script (Oct 29, 2026), revised Nov 1, 2026 with owner approval.
 
-[0:00-0:10] DISCLOSURE (text card, VO): "Disclosure: The Second Seat idea, an earlier prototype in a separate repo, and my AI-self portrait existed before the event. Everything shown here was built from an empty repo starting October 26."
+[0:00-0:14] DISCLOSURE (text card, VO): "Disclosure: Pre-existing: the idea, an earlier prototype, and my AI-self portrait. Built during the event (Oct 26–Nov 4): all the code, partly in a companion repo and brought over on Oct 30."
 
-[0:10-0:40] HOOK (on camera): "I'm a solo founder. I run a liquor store and a tech company. I am supposed to be in three meetings at the same time. I can't be. So I built Second Seat—a personal AI twin that sits in the second seat for me. But I don't trust current AI. It hallucinates, it leaks private data, and it acts without permission. I needed a twin that knows its place."
+[0:14-0:43] HOOK (on camera): "I'm a solo founder. I run a liquor store and a tech company. I am supposed to be in three meetings at the same time. I can't be. So I built Second Seat—a personal AI twin that sits in the second seat for me. But I don't trust current AI. It hallucinates, it leaks private data, and it acts without permission. I needed a twin that knows its place."
 
-[0:40-2:15] DEMO (meeting room screen recording, VO): "Here is the meeting room. My twin is in the meeting. I can guide it live (show live guidance), or I can take over instantly (show takeover). It keeps an evidence record of the session. When it writes the follow-up, it masks sensitive details. (Show redaction). It checks the draft against an imported email draft. Then, it presents the exact package. I review the draft and the evidence record. I approve it. It will only send the exact text I approved. If anything changes, it won't send. Right now, that send goes through a test path. The live call connection and real email sending come next."
+[0:43-1:58] DEMO (meeting room screen recording, VO): "Here is the meeting room. My twin is in the meeting. I can guide it live (show live guidance), or I can take over instantly (show takeover). It keeps an evidence record of the session. When it writes the follow-up, it masks sensitive details. (Show redaction). It checks the draft against an imported email draft. Then, it presents the exact package. I review the draft and the evidence record. I approve it. It will only send the exact text I approved. If anything changes, it won't send. Right now, that send goes through a test path. The live call connection and real email sending come next."
 
-[2:15-2:45] TECH & TRUST (architecture slide): "This was built AI-first. Muse Code wrote it. Opus reviewed it. Every change was independently reviewed and tested. It is honest, verified AI."
+[1:58-2:29] TECH & TRUST (architecture slide): "The meeting room you just saw is a scripted demo with no model calls. Meta's Glimmer and Spark run in a separate transcript workflow. Muse Code wrote most of the code. Cursor did a repair pass, I directed the work and made hand edits, and other AI tools reviewed it. PROVENANCE.md records who did what. Changes were reviewed by independent AI reviewers and checked by automated tests, with the results documented in the repo."
 
-[2:45-3:00] CLOSE (on camera): "Second Seat is the future of the solo founder. It's the leverage to be in two places at once, without giving up your privacy or your control. The future of superintelligence has a human in the final seat. I'm Bridgett Sanders, and this is Second Seat."
+[2:29-2:49] CLOSE (on camera): "Second Seat is the future of the solo founder. It's the leverage to be in two places at once, without giving up your privacy or your control. The future of superintelligence has a human in the final seat. I'm Bridgett Sanders, and this is Second Seat."
 
 # LOCKED Founder Story (README top + submission form description)
 
@@ -18,7 +18,7 @@ I'm a solo founder running Mo'ja Liquor and Loving Grace Technologies. There are
 
 Second Seat is my answer to the solo founder's paradox: how to scale your time without sacrificing your privacy or your voice. Today, it is a scripted meeting room where my AI twin attends, and I can guide it live or take over instantly. It keeps an evidence record of the session, masks sensitive details, and drafts the follow-up. It checks the draft against an imported email draft. I review and approve the exact package, and it sends through a test path.
 
-It doesn't join live calls yet, and it doesn't send real emails yet. That is the vision. But what is built right now is the safety layer: an AI twin that protects your data and keeps you in the final seat. Every change was independently reviewed and tested.
+It doesn't join live calls yet, and it doesn't send real emails yet. That is the vision. But what is built right now is the safety layer: an AI twin that protects your data and keeps you in the final seat. Changes were reviewed by independent AI reviewers and checked by automated tests, with the results documented in the repo.
 
 ## Offline engineering proof (not the recorded video)
 
@@ -35,7 +35,7 @@ The whole video follows ONE meeting through the connected `/session` flow: paste
 
 | Time | On screen | Bridgett says |
 |---|---|---|
-| 0:00–0:25 | Bridgett on camera. Disclosure card visible: "Pre-existing: the Second Seat idea and an earlier prototype in a separate repo. Built this week (Oct 26–Nov 4): everything in this repo." | "The disclosure and hook from the LOCKED script above, spoken verbatim." |
+| 0:00–0:25 | Bridgett on camera. Disclosure card visible: "Pre-existing: the idea, an earlier prototype, and my AI-self portrait. Built during the event (Oct 26–Nov 4): all the code, partly in a companion repo and brought over on Oct 30." | "The disclosure and hook from the LOCKED script above, spoken verbatim." |
 | 0:25–0:40 | `/session?demo=1`. "Offline demo" label (`#offline-label`) stays visible. Paste the full unchanged `demo/synthetic-transcript.txt` into `#transcript-input`. Click `#btn-redact`. State reads "Review required". | "I paste that made-up call in. This is an offline demo." |
 | 0:40–0:50 | Preview: full names and `555-013-8844` are masked. Bare `Amira` is still visible. `ellis.ward@northglass-retail.example` is still visible. Do not correct them yet. Do not credit this preview to a model. | "The phone and the full names are masked. Bare Amira and the email are still visible." |
 | 0:50–1:08 | Click `#btn-approve` while the email is still in the preview. Click `#btn-analyze`. State returns to "Review required — check the redacted preview, then approve." No findings appear. Unspoken note, not a caption: historical evidence for a different meeting remains Playwright test [apps/web/e2e/d2-approval.spec.ts](../../apps/web/e2e/d2-approval.spec.ts) test "D2-6" (full paste-to-copy flow with exact clipboard bytes, fake transport); scripted walkthrough in [apps/web/proof/d6-public-demo-session.md](../../apps/web/proof/d6-public-demo-session.md) (screen video pending a human recording). Do not say this paste shows "last chance" or a fifty-dollar gap. | "This Analyze attempt was blocked before downstream analysis." |
