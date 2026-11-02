@@ -182,6 +182,7 @@ export type CandidateReasoner = (input: CandidateReasonerInput) => Promise<unkno
 export type MeetingRoomCandidateSnapshot = {
   readonly meetingId: string;
   readonly status: "none" | "pending" | "provisional" | "failed";
+  readonly candidateId: string | null;
   readonly provisional: true;
   readonly policyChecked: false;
   readonly approved: false;
@@ -453,7 +454,7 @@ export function createMeetingRoomService(opts?: {
     };
   }
 
-  type CandidateResult = { meetingId: string; status: "provisional" | "failed"; contextRevision: number; subject: string; body: string; sourceRefs: readonly CandidateSourceRef[]; note: string };
+  type CandidateResult = { candidateId: string; meetingId: string; status: "provisional" | "failed"; contextRevision: number; subject: string; body: string; sourceRefs: readonly CandidateSourceRef[]; note: string };
   type CandidateState = { epoch: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult };
   const candidateByRoom = new WeakMap<TwinRoom, CandidateState>();
   const candidateAttemptsByRoom = new WeakMap<TwinRoom, Map<string, number>>();
@@ -470,17 +471,17 @@ export function createMeetingRoomService(opts?: {
     const st = candidateByRoom.get(entry.room);
     const mid = view.selectedMeetingId;
     if(st?.active && !st.timedOut){
-      return { meetingId: mid, status:"pending", provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Drafting a private provisional candidate." };
+      return { meetingId: mid, status:"pending", candidateId: null, provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Drafting a private provisional candidate." };
     }
     if(st?.result && st.result.meetingId === mid){
       const r = st.result;
       if(r.status === "provisional"){
-        return { meetingId: mid, status:"provisional", provisional:true, policyChecked:false, approved:false, contextRevision: r.contextRevision, subject: r.subject, body: r.body, sourceRefs: r.sourceRefs, note: r.note };
+        return { meetingId: mid, status:"provisional", candidateId: r.candidateId, provisional:true, policyChecked:false, approved:false, contextRevision: r.contextRevision, subject: r.subject, body: r.body, sourceRefs: r.sourceRefs, note: r.note };
       } else {
-        return { meetingId: mid, status:"failed", provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: r.note };
+        return { meetingId: mid, status:"failed", candidateId: r.candidateId, provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: r.note };
       }
     }
-    return { meetingId: mid, status:"none", provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"No candidate yet." };
+    return { meetingId: mid, status:"none", candidateId: null, provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"No candidate yet." };
   }
   function invalidateCandidate(entry: RoomEntry){
     const s = getCandidateState(entry.room);
@@ -520,7 +521,7 @@ export function createMeetingRoomService(opts?: {
     const attempts = attemptsMap.get(meetingId) ?? 0;
     if(attempts >= candidateMaxAttempts){
       st.pending = null;
-      st.result = { meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: attempt limit reached. It was not retried." };
+      st.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: attempt limit reached. It was not retried." };
       return;
     }
     st.active = true;
@@ -555,7 +556,7 @@ export function createMeetingRoomService(opts?: {
       curSt.timedOut = true;
       curSt.timer = null;
       if(freshOk){
-        curSt.result = { meetingId: capturedMeetingId, status:"failed", contextRevision: capturedContextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: reasoner timed out. It was not retried." };
+        curSt.result = { candidateId: randomUUID(), meetingId: capturedMeetingId, status:"failed", contextRevision: capturedContextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: reasoner timed out. It was not retried." };
       }
     }, candidateDeadlineMs);
     st.timer = deadlineTimer;
@@ -620,9 +621,9 @@ export function createMeetingRoomService(opts?: {
           }
         }
         if(ok){
-          curSt.result = { meetingId, status:"provisional", contextRevision, subject, body, sourceRefs: refs, note:"Private provisional candidate: not policy-checked, not approved, and it cannot be sent." };
+          curSt.result = { candidateId: randomUUID(), meetingId, status:"provisional", contextRevision, subject, body, sourceRefs: refs, note:"Private provisional candidate: not policy-checked, not approved, and it cannot be sent." };
         } else {
-          curSt.result = { meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: `Candidate rejected: ${reason}. It was not retried.` };
+          curSt.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: `Candidate rejected: ${reason}. It was not retried.` };
         }
       }
       const next = curSt.pending;
@@ -658,7 +659,7 @@ export function createMeetingRoomService(opts?: {
         getPolicyGeneration(ownerId, meetingId) === policyGeneration &&
         curSt.epoch === epoch;
       if(freshOk){
-        curSt.result = { meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate rejected: request failed. It was not retried." };
+        curSt.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate rejected: request failed. It was not retried." };
       }
       const next = curSt.pending;
       curSt.pending = null;
