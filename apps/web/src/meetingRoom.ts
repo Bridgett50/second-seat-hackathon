@@ -20,17 +20,18 @@ import {
   compareUnavailableReason,
   createDemoController,
   createInMemoryRoomStore,
+  createMeetingPolicyRecorder,
   createTwinRoom,
   demoStepAnnouncement,
   diffAnnouncements,
   fakeSendAllowed,
+  getPolicyGeneration,
   isDemoMode,
   type DemoController,
   type RoomStore,
   type TwinRoom,
   type TwinRoomView,
 } from "@second-seat/bot/dist/src/t2-room.js";
-import { createMeetingPolicyRecorder, getPolicyGeneration } from "@second-seat/core";
 
 export const MEETING_ROOM_PATH = "/meeting-room";
 export const MEETING_ROOM_API = "/api/meeting-room";
