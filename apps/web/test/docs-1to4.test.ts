@@ -129,4 +129,16 @@ describe("docs honesty edits 1-4", () => {
     expect(rd("docs/submission/rules-check.md")).toContain(runLabel);
     expect(rd("docs/release/video-status-notes.md")).toContain(runLabel);
   });
+
+  it("live clip is not called a written run summary", () => {
+    const noClip = "No live-run clip is planned for the video; the video shows only the scripted offline meeting room.";
+    const runLabel2 = "documented as a written run summary (owner-attested, synthetic data), not a screen recording";
+    const clipSummaryRe = /clip[^.\n]*written run summary/i;
+    for (const p of ["docs/submission/rules-check.md", "docs/release/b10-demo-freeze-prep.md"] as const) {
+      const c = rd(p);
+      expect(c).not.toMatch(clipSummaryRe);
+      expect(c).toContain(noClip);
+      expect(c).toContain(runLabel2);
+    }
+  });
 });

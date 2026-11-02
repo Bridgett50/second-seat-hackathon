@@ -21,7 +21,7 @@ existing evidence-run facts from [runbook-holdout-run.md](../runbook-holdout-run
   `SECOND_SEAT_MODE=live` + `GLIMMER_BASE_URL` + `META_API_KEY`). Live end-to-end
   passed 3/3 on Oct 28, 2026 at `0365fdb`. Rehearsals passed at `8c00c32` and on
   the November 15 fix (#116). The public link is demo mode with recorded examples.
-  A live clip is a written run summary (owner-attested, synthetic data), not a screen recording. Status: pending.
+  The Oct 28 live run is documented as a written run summary (owner-attested, synthetic data), not a screen recording. No live-run clip is planned for the video; the video shows only the scripted offline meeting room. Status: pending.
 - [ ] **Criterion 3 — Show one meaningful correction or refusal that the current implementation actually supports.**
   How to verify: demonstrate exactly one supported behavior from the current build,
   e.g. editing the draft clears approval so `#btn-copy` disables until the exact
