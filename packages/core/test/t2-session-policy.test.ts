@@ -200,6 +200,7 @@ describe("P1 session policy", () => {
     expect(dispatchCount2).toBe(1);
   });
 
+  // Scanner control only: P1-4 seeds a wrapper-level violation; it is not mutation proof of the production module.
   it("P1-4 seeded violation: a checker that lets March through is caught", () => {
     resetAllPolicyState();
     const owner = "owner-p1-4";
@@ -446,5 +447,125 @@ describe("S3 iso dates", () => {
     expect(r.outcome).toBe("released");
     expect(r.text).toBe(candidate);
     expect(r.text).toContain("2027-03-14");
+  });
+});
+
+describe("S4 controls and acceptance", () => {
+  it("S4-1 current-generation owner-only substitution is invalidated with zero dispatch and the original still releases once", () => {
+    resetAllPolicyState();
+    const ownerA = "owner-s4-1-A";
+    const meetingA = "meet-s4-1-A";
+    const ownerB = "owner-s4-1-B";
+    const clean = "Hello, please review the document.";
+    const handle = holdCandidate(ownerA, meetingA, clean, "turn");
+    expect(handle.generationAtHold).toBe(0);
+    const probeA = evaluateOutgoing(ownerA, meetingA, clean, "turn");
+    const probeB = evaluateOutgoing(ownerB, meetingA, clean, "turn");
+    expect(probeA.generation).toBe(0);
+    expect(probeB.generation).toBe(0);
+    const dispatched: string[] = [];
+    const spy = (t: string): void => {
+      dispatched.push(t);
+    };
+    const forged = { ...handle, ownerId: ownerB };
+    const r = releaseHeld(forged, spy);
+    expect(r.outcome).toBe("invalidated");
+    expect(dispatched).toEqual([]);
+    const dispatched2: string[] = [];
+    const spy2 = (t: string): void => {
+      dispatched2.push(t);
+    };
+    const legit = releaseHeld(handle, spy2);
+    expect(legit.outcome).toBe("released");
+    expect(dispatched2.length).toBe(1);
+    expect(dispatched2[0]).toBe(clean);
+    const dispatched3: string[] = [];
+    const spy3 = (t: string): void => {
+      dispatched3.push(t);
+    };
+    const second = releaseHeld(handle, spy3);
+    expect(second.outcome).toBe("invalidated");
+    expect(dispatched3).toEqual([]);
+    expect(second.text).toBeUndefined();
+  });
+
+  it("S4-2 current-generation meeting-only substitution is invalidated with zero dispatch and the original still releases once", () => {
+    resetAllPolicyState();
+    const ownerA = "owner-s4-2-A";
+    const meetingA = "meet-s4-2-A";
+    const meetingB = "meet-s4-2-B";
+    const clean = "Hello, please review the document.";
+    const handle = holdCandidate(ownerA, meetingA, clean, "turn");
+    expect(handle.generationAtHold).toBe(0);
+    const probeA = evaluateOutgoing(ownerA, meetingA, clean, "turn");
+    const probeB = evaluateOutgoing(ownerA, meetingB, clean, "turn");
+    expect(probeA.generation).toBe(0);
+    expect(probeB.generation).toBe(0);
+    const dispatched: string[] = [];
+    const spy = (t: string): void => {
+      dispatched.push(t);
+    };
+    const forged = { ...handle, meetingId: meetingB };
+    const r = releaseHeld(forged, spy);
+    expect(r.outcome).toBe("invalidated");
+    expect(dispatched).toEqual([]);
+    const dispatched2: string[] = [];
+    const spy2 = (t: string): void => {
+      dispatched2.push(t);
+    };
+    const legit = releaseHeld(handle, spy2);
+    expect(legit.outcome).toBe("released");
+    expect(dispatched2.length).toBe(1);
+    expect(dispatched2[0]).toBe(clean);
+    const dispatched3: string[] = [];
+    const spy3 = (t: string): void => {
+      dispatched3.push(t);
+    };
+    const second = releaseHeld(handle, spy3);
+    expect(second.outcome).toBe("invalidated");
+    expect(dispatched3).toEqual([]);
+    expect(second.text).toBeUndefined();
+  });
+
+  it("S4-3 acceptance: under no-date policy released text never contains the literal March", () => {
+    resetAllPolicyState();
+    const owner = "owner-s4-3";
+    const meeting = "meet-s4-3";
+    const sub = submitGuidance(owner, meeting, "Please do not share any dates");
+    expect(sub.status).toBe("applied");
+    const candidates = [
+      "Launch is in March, bring the slides.",
+      "Venue confirmed. Kickoff is March, see you there.",
+    ];
+    for (const candidate of candidates) {
+      const r = evaluateOutgoing(owner, meeting, candidate, "turn");
+      const releasedText = r.outcome === "released" ? (r.text ?? "") : "";
+      expect(releasedText).not.toContain("March");
+      if (r.outcome === "released") {
+        if (candidate.includes("Launch is in")) {
+          expect(r.text).toContain("Launch is in");
+          expect(r.text).toContain("bring the slides.");
+        }
+        if (candidate.includes("Venue confirmed")) {
+          expect(r.text).toContain("Venue confirmed.");
+          expect(r.text).toContain("Kickoff is");
+          expect(r.text).toContain("see you there.");
+        }
+      } else {
+        expect(r.outcome).toBe("held");
+      }
+      const dispatched: string[] = [];
+      const spy = (t: string): void => {
+        dispatched.push(t);
+      };
+      const handle = holdCandidate(owner, meeting, candidate, "turn");
+      const rel = releaseHeld(handle, spy);
+      expect(dispatched.join(" ")).not.toContain("March");
+      if (rel.outcome === "released") {
+        expect(rel.text).not.toContain("March");
+      } else {
+        expect(rel.outcome).toBe("held");
+      }
+    }
   });
 });
