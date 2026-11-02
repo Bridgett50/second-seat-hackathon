@@ -10,3 +10,4 @@ export * from "./plugins.js";
 export * from "./twin-room.js";
 export * from "./a11y.js";
 export * from "./test-mode-gate.js";
+export { getPolicyGeneration } from "./session-policy.js";

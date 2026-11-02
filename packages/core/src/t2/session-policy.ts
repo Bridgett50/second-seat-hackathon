@@ -49,6 +49,10 @@ export function resetAllPolicyState(): void {
   holdSeq = 0;
 }
 
+export function getPolicyGeneration(ownerId: string, meetingId: string): number {
+  return scopes.get(scopeKey(ownerId, meetingId))?.generation ?? 0;
+}
+
 // --- guidance interpretation ---
 
 const APPLIED_PATTERNS: RegExp[] = [
