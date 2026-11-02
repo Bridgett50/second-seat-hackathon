@@ -166,6 +166,31 @@ export function meetingRoomSetCookie(key: string, headers: IncomingHttpHeaders):
   return cookieHostIsLoopback(host) ? base : `${base}; Secure`;
 }
 
+export type CandidateSourceRef = { readonly utteranceId: string; readonly revision: number };
+export type CandidateReasonerInput = {
+  readonly roomId: string;
+  readonly ownerId: string;
+  readonly meetingId: string;
+  readonly contextRevision: number;
+  readonly policyGeneration: number;
+  readonly utterances: ConversationSnapshot["utterances"];
+  readonly guidance: readonly string[];
+  readonly notes: readonly string[];
+};
+export type CandidateReasoner = (input: CandidateReasonerInput) => Promise<unknown>;
+export type MeetingRoomCandidateSnapshot = {
+  readonly meetingId: string;
+  readonly status: "none" | "pending" | "provisional" | "failed";
+  readonly provisional: true;
+  readonly policyChecked: false;
+  readonly approved: false;
+  readonly contextRevision: number | null;
+  readonly subject: string | null;
+  readonly body: string | null;
+  readonly sourceRefs: readonly CandidateSourceRef[];
+  readonly note: string;
+};
+
 export type ConversationSnapshot = {
   readonly version: 1;
   readonly meetingId: string;
@@ -208,6 +233,7 @@ export type MeetingRoomSnapshot = {
   readonly evidencePreviewJson: string;
   readonly sessionPolicy?: { readonly meetingId: string; readonly generation: number; readonly status: "none" | "applied" | "needs-clarification" | "not-applied"; readonly note: string };
   readonly conversation?: ConversationSnapshot;
+  readonly candidate?: MeetingRoomCandidateSnapshot;
 };
 
 export type MeetingRoomActionResult = {
@@ -284,6 +310,7 @@ export function createMeetingRoomService(opts?: {
   now?: () => number;
   conversationInput?: boolean;
   sessionPolicy?: boolean;
+  candidateReasoner?: CandidateReasoner;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxStores = opts?.maxStores ?? 200;
@@ -413,6 +440,151 @@ export function createMeetingRoomService(opts?: {
     };
   }
 
+  type CandidateResult = { meetingId: string; status: "provisional" | "failed"; contextRevision: number; subject: string; body: string; sourceRefs: readonly CandidateSourceRef[]; note: string };
+  type CandidateState = { epoch: number; active: boolean; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult };
+  const candidateByRoom = new WeakMap<TwinRoom, CandidateState>();
+  function getCandidateState(room: TwinRoom){
+    let s = candidateByRoom.get(room);
+    if(!s){ s = { epoch:0, active:false, pending:null, result:null }; candidateByRoom.set(room,s); }
+    return s;
+  }
+  function isCandidateActive(): boolean{
+    return opts?.conversationInput === true && opts?.sessionPolicy === true && typeof opts?.candidateReasoner === "function";
+  }
+  function buildCandidateSnapshot(entry: RoomEntry, view: TwinRoomView): MeetingRoomCandidateSnapshot | undefined{
+    if(!isCandidateActive()) return undefined;
+    const st = candidateByRoom.get(entry.room);
+    const mid = view.selectedMeetingId;
+    if(st?.active){
+      return { meetingId: mid, status:"pending", provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Drafting a private provisional candidate." };
+    }
+    if(st?.result && st.result.meetingId === mid){
+      const r = st.result;
+      if(r.status === "provisional"){
+        return { meetingId: mid, status:"provisional", provisional:true, policyChecked:false, approved:false, contextRevision: r.contextRevision, subject: r.subject, body: r.body, sourceRefs: r.sourceRefs, note: r.note };
+      } else {
+        return { meetingId: mid, status:"failed", provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: r.note };
+      }
+    }
+    return { meetingId: mid, status:"none", provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"No candidate yet." };
+  }
+  function invalidateCandidate(entry: RoomEntry){
+    const s = getCandidateState(entry.room);
+    s.epoch += 1;
+    s.pending = null;
+    s.result = null;
+  }
+  function dispatchCandidate(entry: RoomEntry, roomId: string){
+    if(!isCandidateActive()) return;
+    const st = getCandidateState(entry.room);
+    if(st.active) return;
+    if(rooms.get(roomId) !== entry) return;
+    const view = entry.room.view();
+    if(view.twinStatus !== "active") return;
+    const reasoner = opts?.candidateReasoner;
+    if(reasoner === undefined) return;
+    const ownerId = view.ownerId;
+    const meetingId = view.selectedMeetingId;
+    const convMap = conversationByRoom.get(entry.room);
+    const conv = convMap?.get(meetingId);
+    const contextRevision = conv?.contextRevision ?? 0;
+    const policyGeneration = getPolicyGeneration(ownerId, meetingId);
+    const epoch = st.epoch;
+    const snapConv = conversationSnapshotFor(entry, view);
+    const input: CandidateReasonerInput = Object.freeze({
+      roomId,
+      ownerId,
+      meetingId,
+      contextRevision,
+      policyGeneration,
+      utterances: snapConv.utterances,
+      guidance: Object.freeze([...view.guidance]),
+      notes: Object.freeze([...view.notes]),
+    });
+    st.active = true;
+    st.pending = null;
+    st.result = null;
+    let p: Promise<unknown>;
+    try{ p = reasoner(input); } catch(e){ p = Promise.reject(e); }
+    p.then((val)=>{
+      const curSt = candidateByRoom.get(entry.room);
+      if(!curSt) return;
+      curSt.active = false;
+      const freshView = entry.room.view();
+      const curConv = conversationByRoom.get(entry.room)?.get(meetingId);
+      const curRevision = curConv?.contextRevision ?? 0;
+      const freshOk =
+        rooms.get(roomId) === entry &&
+        freshView.ownerId === ownerId &&
+        freshView.selectedMeetingId === meetingId &&
+        freshView.twinStatus === "active" &&
+        curRevision === contextRevision &&
+        getPolicyGeneration(ownerId, meetingId) === policyGeneration &&
+        curSt.epoch === epoch;
+      if(freshOk){
+        let ok = false;
+        let subject = "";
+        let body = "";
+        let refs: readonly CandidateSourceRef[] = [];
+        let reason = "invalid output";
+        if(val !== null && typeof val === "object" && !Array.isArray(val)){
+          const o = val as Record<string,unknown>;
+          const s = o["subject"];
+          const b = o["body"];
+          const sr = o["sourceRefs"];
+          if(typeof s === "string" && s.trim().length>0 && s.trim().length<=200 && s.length<=200 && typeof b === "string" && b.trim().length>0 && b.length<=20000 && Array.isArray(sr) && sr.length>0){
+            let allOk = true;
+            const tmp: CandidateSourceRef[] = [];
+            for(const e of sr){
+              if(e===null||typeof e!=="object"||Array.isArray(e)){ allOk=false; break; }
+              const eo = e as Record<string,unknown>;
+              if(typeof eo["utteranceId"]!=="string" || typeof eo["revision"]!=="number" || !Number.isSafeInteger(eo["revision"] as number)){ allOk=false; break; }
+              const uid = eo["utteranceId"] as string;
+              const rev = eo["revision"] as number;
+              const match = (input.utterances as readonly { readonly utteranceId: string; readonly revision: number }[]).find((u) => u.utteranceId===uid && u.revision===rev);
+              if(!match){ allOk=false; reason="unknown source reference"; break; }
+              tmp.push(Object.freeze({ utteranceId:uid, revision:rev }) as CandidateSourceRef);
+            }
+            if(allOk){ ok=true; subject=s; body=b; refs=Object.freeze(tmp); }
+          }
+        }
+        if(ok){
+          curSt.result = { meetingId, status:"provisional", contextRevision, subject, body, sourceRefs: refs, note:"Private provisional candidate: not policy-checked, not approved, and it cannot be sent." };
+        } else {
+          curSt.result = { meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: `Candidate rejected: ${reason}. It was not retried.` };
+        }
+      }
+      const next = curSt.pending;
+      curSt.pending = null;
+      if(next !== null){
+        dispatchCandidate(next.entry, next.roomId);
+      }
+    }, (err)=>{
+      const curSt = candidateByRoom.get(entry.room);
+      if(!curSt) return;
+      curSt.active = false;
+      const freshView = entry.room.view();
+      const curConv = conversationByRoom.get(entry.room)?.get(meetingId);
+      const curRevision = curConv?.contextRevision ?? 0;
+      const freshOk =
+        rooms.get(roomId) === entry &&
+        freshView.ownerId === ownerId &&
+        freshView.selectedMeetingId === meetingId &&
+        freshView.twinStatus === "active" &&
+        curRevision === contextRevision &&
+        getPolicyGeneration(ownerId, meetingId) === policyGeneration &&
+        curSt.epoch === epoch;
+      if(freshOk){
+        curSt.result = { meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate rejected: request failed. It was not retried." };
+      }
+      const next = curSt.pending;
+      curSt.pending = null;
+      if(next !== null){
+        dispatchCandidate(next.entry, next.roomId);
+      }
+    });
+  }
+
   const policyStatusByScope = new Map<string, "applied" | "needs-clarification" | "not-applied">();
   function snap(roomId: string, entry: RoomEntry, view: TwinRoomView, sendNotice: string | null = null): MeetingRoomSnapshot {
     const current = entry.demo?.current() ?? null;
@@ -463,7 +635,11 @@ export function createMeetingRoomService(opts?: {
       (out as unknown as Record<string, unknown>).sessionPolicy = { meetingId: view.selectedMeetingId, generation: gen, status: st, note };
     }
     if (opts?.conversationInput === true) {
-      return { ...out, conversation: conversationSnapshotFor(entry, view) };
+      out = { ...out, conversation: conversationSnapshotFor(entry, view) } as MeetingRoomSnapshot;
+    }
+    if(isCandidateActive()){
+      const cand = buildCandidateSnapshot(entry, view);
+      if(cand) (out as unknown as Record<string,unknown>).candidate = cand;
     }
     return out;
   }
@@ -673,6 +849,7 @@ export function createMeetingRoomService(opts?: {
               },
             };
           }
+          invalidateCandidate(entry);
           break;
         }
         case "stream-next":
@@ -686,17 +863,21 @@ export function createMeetingRoomService(opts?: {
             const rec = createMeetingPolicyRecorder(v.ownerId, v.selectedMeetingId).record(text as string);
             policyStatusByScope.set(`${v.ownerId}\0${v.selectedMeetingId}`, rec.status);
             policyAnnouncementStatus = rec.status;
+            invalidateCandidate(entry);
           }
           break;
         }
         case "takeover":
           entry.room.takeOver();
+          invalidateCandidate(entry);
           break;
         case "resume":
           entry.room.resume();
+          invalidateCandidate(entry);
           break;
         case "edit-draft":
           entry.room.editDraft(text as string);
+          invalidateCandidate(entry);
           break;
         case "approve":
           entry.room.approve();
@@ -896,10 +1077,24 @@ export function createMeetingRoomService(opts?: {
         conv.utterances.set(utteranceId, { sequence: existing.sequence, revision, speaker, text });
         conv.contextRevision += 1;
         conv.latestCorrection = { utteranceId, revision };
+        if(isCandidateActive()){
+          const v = entry.room.view();
+          if(v.twinStatus==="active"){
+            const st=getCandidateState(entry.room);
+            if(st.active) st.pending={ roomId: rid, entry }; else dispatchCandidate(entry, rid);
+          }
+        }
         return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
       }
       conv.utterances.set(utteranceId, { sequence, revision, speaker, text });
       conv.contextRevision += 1;
+      if(isCandidateActive()){
+        const v = entry.room.view();
+        if(v.twinStatus==="active"){
+          const st=getCandidateState(entry.room);
+          if(st.active) st.pending={ roomId: rid, entry }; else dispatchCandidate(entry, rid);
+        }
+      }
       return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
     },
 
