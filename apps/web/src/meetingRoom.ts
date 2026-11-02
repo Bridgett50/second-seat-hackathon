@@ -165,6 +165,20 @@ export function meetingRoomSetCookie(key: string, headers: IncomingHttpHeaders):
   return cookieHostIsLoopback(host) ? base : `${base}; Secure`;
 }
 
+export type ConversationSnapshot = {
+  readonly version: 1;
+  readonly meetingId: string;
+  readonly contextRevision: number;
+  readonly utterances: ReadonlyArray<{
+    readonly utteranceId: string;
+    readonly sequence: number;
+    readonly revision: number;
+    readonly speaker: string;
+    readonly text: string;
+  }>;
+  readonly latestCorrection: null | { readonly utteranceId: string; readonly revision: number };
+};
+
 export type MeetingRoomSnapshot = {
   readonly roomId: string;
   readonly demo: null | {
@@ -191,6 +205,7 @@ export type MeetingRoomSnapshot = {
   /** Visible notice for a refused Send; null otherwise. */
   readonly sendNotice: string | null;
   readonly evidencePreviewJson: string;
+  readonly conversation?: ConversationSnapshot;
 };
 
 export type MeetingRoomActionResult = {
@@ -218,6 +233,11 @@ export type MeetingRoomService = {
     body: Readonly<Record<string, unknown>>,
     headers: IncomingHttpHeaders,
   ): Promise<{ status: number; body: MeetingRoomActionResult }>;
+  ingestConversationAs(
+    callerKey: string | null,
+    roomId: unknown,
+    event: unknown,
+  ): { status: number; body: MeetingRoomActionResult };
   sentBodies(): readonly string[];
   /** Test-visible counts: pages, stores, activity entries and demo pages held. */
   sizes(): { pages: number; stores: number; activity: number; demoPages: number };
@@ -260,6 +280,7 @@ export function createMeetingRoomService(opts?: {
   maxDemoPages?: number;
   idleMs?: number;
   now?: () => number;
+  conversationInput?: boolean;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxStores = opts?.maxStores ?? 200;
@@ -340,9 +361,58 @@ export function createMeetingRoomService(opts?: {
     return openOnly ?? idle;
   }
 
+  type ConversationEntry = { sequence: number; revision: number; speaker: string; text: string };
+  type ConversationState = {
+    meetingId: string;
+    contextRevision: number;
+    utterances: Map<string, ConversationEntry>;
+    latestCorrection: null | { utteranceId: string; revision: number };
+  };
+  const conversationByRoom = new WeakMap<TwinRoom, Map<string, ConversationState>>();
+
+  function getConversationState(room: TwinRoom, meetingId: string): ConversationState {
+    let byMeeting = conversationByRoom.get(room);
+    if (byMeeting === undefined) {
+      byMeeting = new Map<string, ConversationState>();
+      conversationByRoom.set(room, byMeeting);
+    }
+    let conv = byMeeting.get(meetingId);
+    if (conv === undefined) {
+      conv = { meetingId, contextRevision: 0, utterances: new Map(), latestCorrection: null };
+      byMeeting.set(meetingId, conv);
+    }
+    return conv;
+  }
+
+  function conversationSnapshotFor(entry: RoomEntry, view: TwinRoomView): ConversationSnapshot {
+    const meetingId = view.selectedMeetingId;
+    const byMeeting = conversationByRoom.get(entry.room);
+    const conv = byMeeting?.get(meetingId);
+    if (conv === undefined) {
+      return {
+        version: 1 as const,
+        meetingId,
+        contextRevision: 0,
+        utterances: Object.freeze([] as unknown as ConversationSnapshot["utterances"]) as ConversationSnapshot["utterances"],
+        latestCorrection: null,
+      };
+    }
+    const list = [...conv.utterances.entries()]
+      .map(([utteranceId, e]) => ({ utteranceId, sequence: e.sequence, revision: e.revision, speaker: e.speaker, text: e.text }))
+      .sort((a, b) => a.sequence - b.sequence);
+    const frozen = Object.freeze(list.map((u) => Object.freeze({ ...u })));
+    return {
+      version: 1 as const,
+      meetingId: conv.meetingId,
+      contextRevision: conv.contextRevision,
+      utterances: frozen as unknown as ConversationSnapshot["utterances"],
+      latestCorrection: conv.latestCorrection === null ? null : Object.freeze({ ...conv.latestCorrection }),
+    };
+  }
+
   function snap(roomId: string, entry: RoomEntry, view: TwinRoomView, sendNotice: string | null = null): MeetingRoomSnapshot {
     const current = entry.demo?.current() ?? null;
-    return {
+    const base: MeetingRoomSnapshot = {
       roomId,
       demo:
         entry.demo === null
@@ -374,6 +444,10 @@ export function createMeetingRoomService(opts?: {
       sendNotice,
       evidencePreviewJson: entry.room.evidencePreviewJson(),
     };
+    if (opts?.conversationInput === true) {
+      return { ...base, conversation: conversationSnapshotFor(entry, view) };
+    }
+    return base;
   }
 
   function notFound(): { status: number; body: MeetingRoomActionResult } {
@@ -382,6 +456,17 @@ export function createMeetingRoomService(opts?: {
       body: { snapshot: null, announcements: ["This room expired. Reload to start again."] },
     };
   }
+
+  function boundEntry(callerKey: string | null, roomId: unknown): RoomEntry | null {
+    if (callerKey === null) return null;
+    if (typeof roomId !== "string") return null;
+    const e = rooms.get(roomId);
+    if (e === undefined) return null;
+    if (e.storeKey !== callerKey) return null;
+    return e;
+  }
+
+
 
   const service: MeetingRoomService = {
     open(search: string, headers: IncomingHttpHeaders, storeKey = "default"): MeetingRoomSnapshot {
@@ -442,7 +527,8 @@ export function createMeetingRoomService(opts?: {
       const entry: RoomEntry = { room, demo, testMode, reused, storeKey };
       rooms.set(roomId, entry);
       if (demoMode) demoPages.add(roomId);
-      return snap(roomId, entry, room.view());
+      const v0 = room.view();
+      return snap(roomId, entry, v0);
     },
 
     async act(
@@ -721,16 +807,80 @@ export function createMeetingRoomService(opts?: {
       return { status: 200, body: result };
     },
 
+    ingestConversationAs(
+      callerKey: string | null,
+      roomId: unknown,
+      event: unknown,
+    ): { status: number; body: MeetingRoomActionResult } {
+      const entry = boundEntry(callerKey, roomId);
+      if (entry === null) return notFound();
+      const rid = roomId as string;
+      const view = entry.room.view();
+      if (opts?.conversationInput !== true) {
+        return {
+          status: 403,
+          body: { snapshot: snap(rid, entry, view), announcements: ["Conversation input is not enabled."] },
+        };
+      }
+      // strict v1 validation
+      if (event === null || typeof event !== "object" || Array.isArray(event)) {
+        return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      const ev = event as Record<string, unknown>;
+      if (ev["version"] !== 1) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      const meetingId = ev["meetingId"];
+      const utteranceId = ev["utteranceId"];
+      const sequence = ev["sequence"];
+      const revision = ev["revision"];
+      const speaker = ev["speaker"];
+      const text = ev["text"];
+      if (typeof meetingId !== "string") return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof utteranceId !== "string" || utteranceId.length === 0) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof speaker !== "string" || speaker.length === 0) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof text !== "string") return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision <= 0) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      // only allowed keys
+      const allowed = new Set(["version", "meetingId", "utteranceId", "sequence", "revision", "speaker", "text", "ownerId"]);
+      for (const k of Object.keys(ev)) if (!allowed.has(k)) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if ("ownerId" in ev && ev["ownerId"] !== undefined) {
+        if (typeof ev["ownerId"] !== "string") return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      if (text.length > 2000 || speaker.length > 200) {
+        return { status: 413, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      // never trust supplied ownerId
+      if (typeof ev["ownerId"] === "string" && ev["ownerId"] !== view.ownerId) {
+        return { status: 403, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      if (meetingId !== view.selectedMeetingId) {
+        return { status: 409, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      const conv = getConversationState(entry.room, meetingId);
+      const existing = conv.utterances.get(utteranceId);
+      if (existing !== undefined) {
+        if (revision <= existing.revision) {
+          return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+        }
+        // correction: keep original sequence
+        conv.utterances.set(utteranceId, { sequence: existing.sequence, revision, speaker, text });
+        conv.contextRevision += 1;
+        conv.latestCorrection = { utteranceId, revision };
+        return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      conv.utterances.set(utteranceId, { sequence, revision, speaker, text });
+      conv.contextRevision += 1;
+      return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+    },
+
     async actAs(
       callerKey: string | null,
       body: Readonly<Record<string, unknown>>,
       headers: IncomingHttpHeaders,
     ): Promise<{ status: number; body: MeetingRoomActionResult }> {
       const roomId = body["roomId"];
-      const entry = typeof roomId === "string" ? rooms.get(roomId) : undefined;
-      if (callerKey === null || entry === undefined || entry.storeKey !== callerKey) {
-        return notFound();
-      }
+      const entry = boundEntry(callerKey, roomId);
+      if (entry === null) return notFound();
       const action = body["action"];
       if (action === "approve" || action === "send") {
         // Bind Approve and Send to the package this browser displayed. No
