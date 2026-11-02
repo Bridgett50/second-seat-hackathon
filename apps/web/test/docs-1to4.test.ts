@@ -108,7 +108,6 @@ describe("docs honesty edits 1-4", () => {
     const docs = [
       "docs/submission/submission-fields.md",
       "docs/submission/rules-check.md",
-      "docs/release/video-status-notes.md",
       "NEW_DURING_HACKATHON.md",
       "docs/release/acceptance-registry.md",
       "docs/release/live-e2e-plan.md",
@@ -140,5 +139,28 @@ describe("docs honesty edits 1-4", () => {
       expect(c).toContain(noClip);
       expect(c).toContain(runLabel2);
     }
+  });
+
+  it("verbatim statuses paragraph restored with a dated correction after it", () => {
+    const ORIGINAL = '- Statuses spoken accurately, per [docs/release/acceptance-registry.md]: A1–A9 merged (A1–A3 criteria reconstructed, not verbatim); C1–C7 criteria with per-criterion outcomes on the tested commits, including pending C1-9, C2-7, C3-7/C3-8, C4-7/C4-8/C4-9/C4-11, C6-4/C6-7 and partial pressure/model rows; C8 docs checks; C9 prep only with execution blocked; D-series review verdicts per [docs/release/acceptance-registry.md]: D1-1 partly, D1-2 closed, D1-3 closed, D1-4 closed, D1-5 closed; D2-1 closed, D2-2 partly, D2-3 closed, D2-4 closed, D2-5 closed, D2-6 partly; D3-1 closed, D3-2 partly, D3-3 partly, D3-4 open, D3-5 partly; D4-1 closed, D4-2 partly, D4-3 partly, D4-4 open, D4-5 closed, D4-6 partly; D5-1 partly, D5-2 closed, D5-3 partly, D5-4 partly, D5-5 partly; D6-1 closed, D6-2 open, D6-3 closed, D6-4 open, D6-5 closed; live end-to-end passed 3/3 on Oct 28, 2026 at 0365fdb; rehearsals passed at 8c00c32 and on the November 15 fix (#116); verification is wired into the session (#113); Persuasion Shield: experimental layer; on dev set the pattern layer caught 14/14 and Spark added no extra catches [eval/resistance-table.mjs]; held-out run Nov 2 will test it (#114/#115); the public link is demo mode with recorded examples; the live run was recorded and must be labeled as a recorded run; partner none. Video URL and user observations stay PENDING. Founder story: done. Never say blanket "criteria met."';
+    const text = rd("docs/release/video-status-notes.md");
+    const lines = text.split("\n");
+    const line14 = lines[14];
+    const line12 = lines[12];
+    expect(line14).toBe(ORIGINAL);
+    expect(line12).toBe('## Removed "statuses spoken" paragraph, verbatim');
+    let nextNonEmpty: string | undefined = undefined;
+    for (let i = 15; i < lines.length; i++) {
+      const v = lines[i];
+      if (v !== undefined && v !== "") {
+        nextNonEmpty = v;
+        break;
+      }
+    }
+    expect(nextNonEmpty).toBeDefined();
+    const corr = nextNonEmpty ?? "";
+    expect(corr.startsWith("- Correction (Nov 1, 2026")).toBe(true);
+    expect(corr).toContain("written run summary (owner-attested, synthetic data), not a screen recording");
+    expect(corr).toContain("Partner prize: none selected. Partner providers used: Baseten (Muse Code), Modal (Glimmer, Live mode only).");
   });
 });
