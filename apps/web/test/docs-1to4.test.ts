@@ -103,4 +103,30 @@ describe("docs honesty edits 1-4", () => {
     expect(lines.filter((l) => l === "## Session B").length).toBe(0);
     expect(lines.filter((l) => l === "## Session B: meeting room page (written fresh in the event repo, Oct 29, 2026)").length).toBe(1);
   });
+
+  it("partner line and run label wording", () => {
+    const docs = [
+      "docs/submission/submission-fields.md",
+      "docs/submission/rules-check.md",
+      "docs/release/video-status-notes.md",
+      "NEW_DURING_HACKATHON.md",
+      "docs/release/acceptance-registry.md",
+      "docs/release/live-e2e-plan.md",
+      "docs/models.md",
+      "docs/release/b10-demo-freeze-prep.md",
+    ];
+    const partnerText = "Partner prize: none selected. Partner providers used: Baseten (Muse Code), Modal (Glimmer, Live mode only).";
+    const runLabel = "written run summary (owner-attested, synthetic data), not a screen recording";
+    const kept = "recorded runs are fine if labeled";
+    for (const p of docs) {
+      const c = rd(p);
+      expect(c.toLowerCase()).not.toContain("partner none");
+      const stripped = c.split(kept).join("");
+      expect(stripped.toLowerCase()).not.toContain("recorded run");
+    }
+    expect(rd("docs/submission/submission-fields.md")).toContain(partnerText);
+    expect(rd("docs/submission/submission-fields.md")).toContain(runLabel);
+    expect(rd("docs/submission/rules-check.md")).toContain(runLabel);
+    expect(rd("docs/release/video-status-notes.md")).toContain(runLabel);
+  });
 });
