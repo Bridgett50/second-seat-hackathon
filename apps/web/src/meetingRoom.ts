@@ -313,6 +313,7 @@ export function createMeetingRoomService(opts?: {
   sessionPolicy?: boolean;
   candidateReasoner?: CandidateReasoner;
   candidateDeadlineMs?: number;
+  candidateMaxAttempts?: number;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxStores = opts?.maxStores ?? 200;
@@ -324,6 +325,11 @@ export function createMeetingRoomService(opts?: {
   if(opts?.candidateDeadlineMs !== undefined){
     const v = opts.candidateDeadlineMs;
     if(!Number.isSafeInteger(v) || v <= 0) throw new RangeError("candidateDeadlineMs must be a positive safe integer");
+  }
+  const candidateMaxAttempts = opts?.candidateMaxAttempts ?? 8;
+  if(opts?.candidateMaxAttempts !== undefined){
+    const v = opts.candidateMaxAttempts;
+    if(!Number.isSafeInteger(v) || v <= 0) throw new RangeError("candidateMaxAttempts must be a positive safe integer");
   }
   const stores = new Map<string, RoomStore>();
   const sent: string[] = [];
@@ -450,6 +456,7 @@ export function createMeetingRoomService(opts?: {
   type CandidateResult = { meetingId: string; status: "provisional" | "failed"; contextRevision: number; subject: string; body: string; sourceRefs: readonly CandidateSourceRef[]; note: string };
   type CandidateState = { epoch: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult };
   const candidateByRoom = new WeakMap<TwinRoom, CandidateState>();
+  const candidateAttemptsByRoom = new WeakMap<TwinRoom, Map<string, number>>();
   function getCandidateState(room: TwinRoom){
     let s = candidateByRoom.get(room);
     if(!s){ s = { epoch:0, active:false, timedOut:false, timer:null, pending:null, result:null }; candidateByRoom.set(room,s); }
@@ -508,6 +515,14 @@ export function createMeetingRoomService(opts?: {
       guidance: Object.freeze([...view.guidance]),
       notes: Object.freeze([...view.notes]),
     });
+    let attemptsMap = candidateAttemptsByRoom.get(entry.room);
+    if(!attemptsMap){ attemptsMap = new Map<string, number>(); candidateAttemptsByRoom.set(entry.room, attemptsMap); }
+    const attempts = attemptsMap.get(meetingId) ?? 0;
+    if(attempts >= candidateMaxAttempts){
+      st.pending = null;
+      st.result = { meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: attempt limit reached. It was not retried." };
+      return;
+    }
     st.active = true;
     st.timedOut = false;
     st.pending = null;
@@ -544,6 +559,9 @@ export function createMeetingRoomService(opts?: {
       }
     }, candidateDeadlineMs);
     st.timer = deadlineTimer;
+    let attemptsInc = candidateAttemptsByRoom.get(entry.room);
+    if(!attemptsInc){ attemptsInc = new Map<string, number>(); candidateAttemptsByRoom.set(entry.room, attemptsInc); }
+    attemptsInc.set(meetingId, (attemptsInc.get(meetingId) ?? 0) + 1);
     let p: Promise<unknown>;
     try{ p = reasoner(input); } catch(e){ p = Promise.reject(e); }
     p.then((val)=>{
