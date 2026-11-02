@@ -26,7 +26,7 @@ function parseSlots(text: string) {
   const slots: { start: number; end: number }[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
-    slots.push({ start: parseInt(m[1]) * 60 + parseInt(m[2]), end: parseInt(m[3]) * 60 + parseInt(m[4]) });
+    slots.push({ start: parseInt(m[1]!) * 60 + parseInt(m[2]!), end: parseInt(m[3]!) * 60 + parseInt(m[4]!) });
   }
   return slots;
 }
@@ -75,9 +75,9 @@ describe("docs honesty edits 1-4", () => {
       const text = rd(p);
       const slots = parseSlots(text);
       expect(slots.length).toBe(5);
-      expect(slots[0].start).toBe(0);
-      for (let i = 1; i < slots.length; i++) expect(slots[i].start).toBe(slots[i - 1].end);
-      expect(slots[slots.length - 1].end).toBeLessThanOrEqual(180);
+      expect(slots[0]!.start).toBe(0);
+      for (let i = 1; i < slots.length; i++) expect(slots[i]!.start).toBe(slots[i - 1]!.end);
+      expect(slots[slots.length - 1]!.end).toBeLessThanOrEqual(180);
     }
   });
 
