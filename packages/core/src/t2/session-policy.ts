@@ -298,10 +298,10 @@ export function releaseHeld(handle: HoldHandle, onDispatch?: (text: string) => v
   }
   const evalRes = evaluateOutgoing(handle.ownerId, handle.meetingId, handle.candidate, handle.kind);
   if (evalRes.outcome === "held") {
-    return { outcome: "held", reason: evalRes.reason, version: evalRes.version, generation: evalRes.generation };
+    return { outcome: "held", ...(evalRes.reason !== undefined ? { reason: evalRes.reason } : {}), version: evalRes.version, generation: evalRes.generation };
   }
   if (evalRes.text !== undefined && onDispatch !== undefined) {
     onDispatch(evalRes.text);
   }
-  return { outcome: "released", text: evalRes.text, version: evalRes.version, generation: evalRes.generation };
+  return { outcome: "released", ...(evalRes.text !== undefined ? { text: evalRes.text } : {}), version: evalRes.version, generation: evalRes.generation };
 }

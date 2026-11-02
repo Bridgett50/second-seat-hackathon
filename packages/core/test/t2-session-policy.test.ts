@@ -228,7 +228,7 @@ describe("P1 session policy", () => {
     // real checker: should have no violations
     const realViolations = collectViolations((o, m, c) => {
       const r = evaluateOutgoing(o, m, c, "turn");
-      return { outcome: r.outcome, text: r.text };
+      return { outcome: r.outcome, ...(r.text !== undefined ? { text: r.text } : {}) };
     });
     expect(realViolations.length).toBe(0);
 
