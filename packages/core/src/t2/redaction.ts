@@ -97,3 +97,27 @@ export function redactPackageText(input: string): RedactionResult {
   });
   return { redactedText: text, redactions };
 }
+
+export function redactionsFromPlaceholders(text: string): CategoryRedactions[] {
+  const re = /\[REDACTED:(email|phone|amount):\d+\]/g;
+  const grouped: Record<RedactionCategory, { placeholders: string[]; positions: number[] }> = {
+    email: { placeholders: [], positions: [] },
+    phone: { placeholders: [], positions: [] },
+    amount: { placeholders: [], positions: [] },
+  };
+  for (const m of text.matchAll(re)) {
+    const cat = m[1] as RedactionCategory;
+    const placeholder = m[0];
+    const pos = m.index ?? 0;
+    if (cat === "email" || cat === "phone" || cat === "amount") {
+      grouped[cat].placeholders.push(placeholder);
+      grouped[cat].positions.push(pos);
+    }
+  }
+  return REDACTION_CATEGORIES.map((category) => ({
+    category,
+    count: grouped[category].placeholders.length,
+    placeholders: grouped[category].placeholders,
+    positions: grouped[category].positions,
+  }));
+}

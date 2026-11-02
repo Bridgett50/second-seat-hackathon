@@ -20,7 +20,7 @@ import {
   deriveApprovedPackage,
   type EmailComparison,
 } from "./email-compare.js";
-import { countRedactionPlaceholders, redactPackageText, type CategoryRedactions } from "./redaction.js";
+import { countRedactionPlaceholders, redactPackageText, redactionsFromPlaceholders, type CategoryRedactions } from "./redaction.js";
 import {
   BUILTIN_PLUGINS,
   renderPluginOutput,
@@ -448,7 +448,7 @@ export function createTwinRoom(opts: TwinRoomOptions) {
     let combined = base;
     for (const s of sections) combined += s.text;
     const redone = redactPackageText(combined);
-    return { body: redone.redactedText, redactions: [...redone.redactions] };
+    return { body: redone.redactedText, redactions: [...redactionsFromPlaceholders(redone.redactedText)] };
   }
 
   /** The selected meeting's context for plugins: never another meeting's. */
@@ -660,7 +660,7 @@ export function createTwinRoom(opts: TwinRoomOptions) {
         }
         restoredFromPersistence = true;
         ms.draft.body = saved.body;
-        ms.draft.redactions = [...saved.redactions];
+        ms.draft.redactions = [...redactionsFromPlaceholders(saved.body)];
         ms.pluginBase = saved.pluginBase;
         ms.pluginSections = saved.pluginSections.map((s) => ({
           id: s.id,
