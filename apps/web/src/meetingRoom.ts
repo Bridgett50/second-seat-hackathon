@@ -16,6 +16,7 @@ import {
   COMPARE_SENT_REASON,
   COMPARE_UNCONFIRMED_REASON,
   DEMO_STEPS,
+  evaluateOutgoing,
   SEND_DISABLED_REASON,
   compareUnavailableReason,
   createDemoController,
@@ -209,6 +210,16 @@ export type ConversationSnapshot = {
 
 export type MeetingRoomSnapshot = {
   readonly roomId: string;
+  readonly candidatePreview?: {
+    readonly status: "released" | "held" | "unavailable" | "stale";
+    readonly candidateId: string;
+    readonly evaluatedSubject?: string;
+    readonly evaluatedBody?: string;
+    readonly subjectChanged?: boolean;
+    readonly bodyChanged?: boolean;
+    readonly reason?: string;
+    readonly generation: number;
+  };
   readonly demo: null | {
     readonly stepLabel: string | null;
     readonly completed: number;
@@ -455,12 +466,91 @@ export function createMeetingRoomService(opts?: {
   }
 
   type CandidateResult = { candidateId: string; meetingId: string; status: "provisional" | "failed"; contextRevision: number; subject: string; body: string; sourceRefs: readonly CandidateSourceRef[]; note: string };
-  type CandidateState = { epoch: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult };
+  type CandidatePreview =
+    | { status: "released"; candidateId: string; evaluatedSubject: string; evaluatedBody: string; subjectChanged: boolean; bodyChanged: boolean; generation: number }
+    | { status: "held"; candidateId: string; reason: string; generation: number }
+    | { status: "unavailable"; candidateId: string; reason: string; generation: number };
+  type CandidatePreviewState = {
+    preview: CandidatePreview | null;
+    ownerId: string;
+    meetingId: string;
+    contextRevision: number;
+    epoch: number;
+    generation: number;
+    candidateId: string;
+  };
+  type CandidateState = { epoch: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult; preview: CandidatePreviewState | null };
   const candidateByRoom = new WeakMap<TwinRoom, CandidateState>();
   const candidateAttemptsByRoom = new WeakMap<TwinRoom, Map<string, number>>();
+  function isValidReleasedResult(v: unknown): v is { outcome: string; text: string; generation: number } {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+    const o = v as Record<string, unknown>;
+    if (o["outcome"] !== "released") return false;
+    if (typeof o["text"] !== "string") return false;
+    if (o["text"].trim().length === 0) return false;
+    if (typeof o["version"] !== "string" || o["version"].trim().length === 0) return false;
+    if (typeof o["generation"] !== "number") return false;
+    return true;
+  }
+  function isValidHeldResult(v: unknown): v is { outcome: string; reason: string; generation: number } {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+    const o = v as Record<string, unknown>;
+    if (o["outcome"] !== "held") return false;
+    if (typeof o["reason"] !== "string" || o["reason"].trim().length === 0) return false;
+    if (typeof o["version"] !== "string" || o["version"].trim().length === 0) return false;
+    if (typeof o["generation"] !== "number") return false;
+    return true;
+  }
+  function buildPreviewForResult(
+    ownerId: string,
+    meetingId: string,
+    contextRevision: number,
+    epoch: number,
+    generation: number,
+    candidateId: string,
+    subject: string,
+    body: string,
+  ): CandidatePreview {
+    const safeReason = "preview unavailable";
+    if (typeof subject !== "string" || typeof body !== "string" || subject.length > 200 || body.length > 20000) {
+      return { status: "unavailable", candidateId, reason: safeReason, generation };
+    }
+    let sRes: unknown;
+    let bRes: unknown;
+    try {
+      sRes = evaluateOutgoing(ownerId, meetingId, subject, "follow-up-draft");
+      bRes = evaluateOutgoing(ownerId, meetingId, body, "follow-up-draft");
+    } catch {
+      return { status: "unavailable", candidateId, reason: safeReason, generation };
+    }
+    const sReleased = isValidReleasedResult(sRes);
+    const bReleased = isValidReleasedResult(bRes);
+    const sHeld = isValidHeldResult(sRes);
+    const bHeld = isValidHeldResult(sHeld ? sRes : sRes) && sHeld;
+    const bHeld2 = isValidHeldResult(bRes);
+    const sValid = sReleased || sHeld;
+    const bValid = bReleased || bHeld2;
+    if (!sValid || !bValid) {
+      return { status: "unavailable", candidateId, reason: safeReason, generation };
+    }
+    if (sReleased && bReleased && (sRes as { generation: number }).generation === generation && (bRes as { generation: number }).generation === generation) {
+      const sText = (sRes as { text: string }).text;
+      const bText = (bRes as { text: string }).text;
+      if (sText.trim().length === 0 || bText.trim().length === 0) {
+        return { status: "unavailable", candidateId, reason: safeReason, generation };
+      }
+      if (sText.length > 200 || bText.length > 20000) {
+        return { status: "unavailable", candidateId, reason: safeReason, generation };
+      }
+      return { status: "released", candidateId, evaluatedSubject: sText, evaluatedBody: bText, subjectChanged: sText !== subject, bodyChanged: bText !== body, generation };
+    }
+    if (sHeld && (sRes as { generation: number }).generation === generation && bValid && (bRes as { generation: number }).generation === generation) return { status: "held", candidateId, reason: (sRes as { reason: string }).reason, generation };
+    if (bHeld2 && (bRes as { generation: number }).generation === generation && sValid && (sRes as { generation: number }).generation === generation) return { status: "held", candidateId, reason: (bRes as { reason: string }).reason, generation };
+    return { status: "unavailable", candidateId, reason: safeReason, generation };
+  }
   function getCandidateState(room: TwinRoom){
     let s = candidateByRoom.get(room);
-    if(!s){ s = { epoch:0, active:false, timedOut:false, timer:null, pending:null, result:null }; candidateByRoom.set(room,s); }
+    if(!s){ s = { epoch:0, active:false, timedOut:false, timer:null, pending:null, result:null, preview: null }; candidateByRoom.set(room,s); }
     return s;
   }
   function isCandidateActive(): boolean{
@@ -483,11 +573,33 @@ export function createMeetingRoomService(opts?: {
     }
     return { meetingId: mid, status:"none", candidateId: null, provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"No candidate yet." };
   }
+  function buildCandidatePreviewSnapshot(entry: RoomEntry, view: TwinRoomView): CandidatePreview | { status: "stale"; candidateId: string; generation: number } | undefined {
+    if (!isCandidateActive()) return undefined;
+    const st = candidateByRoom.get(entry.room);
+    if (!st || !st.preview) return undefined;
+    if (st.active && !st.timedOut) return undefined;
+    if (!st.result || st.result.status !== "provisional") return undefined;
+    const r = st.result;
+    if (r.meetingId !== view.selectedMeetingId) return undefined;
+    const p = st.preview;
+    if (p.candidateId !== r.candidateId) return { status: "stale", candidateId: p.candidateId, generation: p.generation };
+    const curOwnerId = view.ownerId;
+    const curMeetingId = view.selectedMeetingId;
+    const curConv = conversationByRoom.get(entry.room)?.get(curMeetingId);
+    const curRevision = curConv?.contextRevision ?? 0;
+    const curGen = getPolicyGeneration(curOwnerId, curMeetingId);
+    if (p.ownerId !== curOwnerId || p.meetingId !== curMeetingId || p.contextRevision !== curRevision || p.epoch !== st.epoch || p.generation !== curGen) {
+      return { status: "stale", candidateId: p.candidateId, generation: p.generation };
+    }
+    if (p.preview === null) return undefined;
+    return p.preview;
+  }
   function invalidateCandidate(entry: RoomEntry){
     const s = getCandidateState(entry.room);
     s.epoch += 1;
     s.pending = null;
     s.result = null;
+    s.preview = null;
   }
   function dispatchCandidate(entry: RoomEntry, roomId: string){
     if(!isCandidateActive()) return;
@@ -528,6 +640,7 @@ export function createMeetingRoomService(opts?: {
     st.timedOut = false;
     st.pending = null;
     st.result = null;
+    st.preview = null;
     const capturedEntry = entry;
     const capturedRoomId = roomId;
     const capturedOwnerId = ownerId;
@@ -621,7 +734,10 @@ export function createMeetingRoomService(opts?: {
           }
         }
         if(ok){
-          curSt.result = { candidateId: randomUUID(), meetingId, status:"provisional", contextRevision, subject, body, sourceRefs: refs, note:"Private provisional candidate: not policy-checked, not approved, and it cannot be sent." };
+          const newId = randomUUID();
+          curSt.result = { candidateId: newId, meetingId, status:"provisional", contextRevision, subject, body, sourceRefs: refs, note:"Private provisional candidate: not policy-checked, not approved, and it cannot be sent." };
+          const preview = buildPreviewForResult(ownerId, meetingId, contextRevision, epoch, policyGeneration, newId, subject, body);
+          curSt.preview = { preview, ownerId, meetingId, contextRevision, epoch, generation: policyGeneration, candidateId: newId };
         } else {
           curSt.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: `Candidate rejected: ${reason}. It was not retried.` };
         }
@@ -723,7 +839,11 @@ export function createMeetingRoomService(opts?: {
     }
     if(isCandidateActive()){
       const cand = buildCandidateSnapshot(entry, view);
-      if(cand) (out as unknown as Record<string,unknown>).candidate = cand;
+      if(cand) out = { ...out, candidate: cand } as MeetingRoomSnapshot;
+      const preview = buildCandidatePreviewSnapshot(entry, view);
+      if (preview !== undefined) {
+        out = { ...out, candidatePreview: preview } as MeetingRoomSnapshot;
+      }
     }
     return out;
   }
