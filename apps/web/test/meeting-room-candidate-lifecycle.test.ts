@@ -1,0 +1,156 @@
+import { describe, it, expect } from "vitest";
+import { randomUUID } from "node:crypto";
+import { createMeetingRoomService } from "../src/meetingRoom.js";
+import type { CandidateReasonerInput, CandidateCurrentBinding } from "../src/meetingRoom.js";
+const HEADERS = { host: "127.0.0.1:4174" };
+const TEST_ENV: Readonly<Record<string, string>> = { SECOND_SEAT_TEST_MODE: "1" };
+type Service = ReturnType<typeof createMeetingRoomService>;
+type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void };
+function deferred<T>(): Deferred<T> {
+  let resolve: (v: T) => void = () => {};
+  let reject: (e: unknown) => void = () => {};
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+type Fake = { reasoner: (input: CandidateReasonerInput) => Promise<unknown>; calls: CandidateReasonerInput[]; pending: Deferred<unknown>[] };
+function createFake(): Fake {
+  const calls: CandidateReasonerInput[] = [];
+  const pending: Deferred<unknown>[] = [];
+  const reasoner = (input: CandidateReasonerInput): Promise<unknown> => {
+    calls.push(input);
+    const d = deferred<unknown>();
+    pending.push(d);
+    return d.promise;
+  };
+  return { reasoner, calls, pending };
+}
+const flush = (): Promise<void> => new Promise<void>((r) => setImmediate(r));
+function must<T>(v: T | null | undefined): T {
+  expect(v).toBeDefined();
+  expect(v).not.toBeNull();
+  if (v === null || v === undefined) throw new Error("must nullish");
+  return v;
+}
+function ingest(svc: Service, key: string, roomId: string, p: { meetingId: string; utteranceId: string; sequence: number; revision: number; speaker: string; text: string }) {
+  return svc.ingestConversationAs(key, roomId, { version: 1, meetingId: p.meetingId, utteranceId: p.utteranceId, sequence: p.sequence, revision: p.revision, speaker: p.speaker, text: p.text });
+}
+function makeRoom(svc: Service): { svc: Service; key: string; roomId: string; meetingId: string } {
+  const key = randomUUID();
+  const opened = svc.open("", HEADERS, key);
+  return { svc, key, roomId: opened.roomId, meetingId: opened.view.selectedMeetingId };
+}
+function toBinding(input: CandidateReasonerInput): CandidateCurrentBinding {
+  const b: CandidateCurrentBinding = { roomId: input.roomId, ownerId: input.ownerId, meetingId: input.meetingId, contextRevision: input.contextRevision, policyGeneration: input.policyGeneration, ...(input.epoch !== undefined ? { epoch: input.epoch } : {}) };
+  return b;
+}
+
+describe("candidate lifecycle revoke", () => {
+  it("takeover/resume revoke the registered callback; stale epoch stays invalid; other room untouched", async () => {
+    const fake = createFake();
+    const svc = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fake.reasoner });
+    const ctxA = makeRoom(svc);
+    const ctxB = makeRoom(svc);
+    ingest(svc, ctxA.key, ctxA.roomId, { meetingId: ctxA.meetingId, utteranceId: randomUUID(), sequence: 1, revision: 1, speaker: "alice", text: "hello" });
+    ingest(svc, ctxB.key, ctxB.roomId, { meetingId: ctxB.meetingId, utteranceId: randomUUID(), sequence: 1, revision: 1, speaker: "bob", text: "hey" });
+    await flush();
+    expect(fake.calls.length).toBe(2);
+    const callA = must(fake.calls.find((c) => c.roomId === ctxA.roomId));
+    const callB = must(fake.calls.find((c) => c.roomId === ctxB.roomId));
+    const bA = toBinding(callA);
+    const bB = toBinding(callB);
+    let cbACount = 0;
+    let cbBCount = 0;
+    const cbA = (): void => { cbACount += 1; };
+    const cbB = (): void => { cbBCount += 1; };
+    callA.registerRevoke?.(cbA);
+    callB.registerRevoke?.(cbB);
+    expect(cbACount).toBe(0);
+    expect(cbBCount).toBe(0);
+    const tk = await svc.actAs(ctxA.key, { roomId: ctxA.roomId, action: "takeover" }, HEADERS);
+    expect(tk.status).toBe(200);
+    expect(cbACount).toBe(1);
+    expect(cbBCount).toBe(0);
+    expect(svc.candidateIsCurrent(bA)).toBe(false);
+    expect(svc.candidateIsCurrent(bB)).toBe(true);
+    const rs = await svc.actAs(ctxA.key, { roomId: ctxA.roomId, action: "resume" }, HEADERS);
+    expect(rs.status).toBe(200);
+    expect(cbACount).toBe(1);
+    expect(svc.candidateIsCurrent(bA)).toBe(false);
+    expect(svc.candidateIsCurrent(bB)).toBe(true);
+    for (const d of fake.pending) d.resolve(null);
+    await flush();
+  });
+  it("late OLD registration after real first settlement + fresh dispatch is revoked immediately; fresh callback stays registered and usable", async () => {
+    const fake = createFake();
+    const svc = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fake.reasoner });
+    const ctx = makeRoom(svc);
+    ingest(svc, ctx.key, ctx.roomId, { meetingId: ctx.meetingId, utteranceId: randomUUID(), sequence: 1, revision: 1, speaker: "alice", text: "first" });
+    await flush();
+    expect(fake.calls.length).toBe(1);
+    const call1 = must(fake.calls[0]);
+    must(fake.pending[0]).resolve(null);
+    await flush();
+    ingest(svc, ctx.key, ctx.roomId, { meetingId: ctx.meetingId, utteranceId: randomUUID(), sequence: 2, revision: 1, speaker: "alice", text: "second" });
+    await flush();
+    expect(fake.calls.length).toBe(2);
+    const call2 = must(fake.calls[1]);
+    // second dispatch saw exactly one more accepted context revision
+    expect(call2.contextRevision).toBe(call1.contextRevision + 1);
+    let cbNewCount = 0;
+    let cbOldCount = 0;
+    const cbNew = (): void => { cbNewCount += 1; };
+    const cbOld = (): void => { cbOldCount += 1; };
+    call2.registerRevoke?.(cbNew);
+    expect(cbNewCount).toBe(0);
+    call1.registerRevoke?.(cbOld);
+    expect(cbOldCount).toBe(1);
+    expect(cbNewCount).toBe(0);
+    const tk = await svc.actAs(ctx.key, { roomId: ctx.roomId, action: "takeover" }, HEADERS);
+    expect(tk.status).toBe(200);
+    expect(cbNewCount).toBe(1);
+    expect(cbOldCount).toBe(1);
+    for (const d of fake.pending) d.resolve(null);
+    await flush();
+  });
+  it("normal settlement clears only its own callback, no extra revoke", async () => {
+    const fake = createFake();
+    const svc = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fake.reasoner });
+    const ctx = makeRoom(svc);
+    ingest(svc, ctx.key, ctx.roomId, { meetingId: ctx.meetingId, utteranceId: randomUUID(), sequence: 1, revision: 1, speaker: "alice", text: "hello" });
+    await flush();
+    expect(fake.calls.length).toBe(1);
+    const call1 = must(fake.calls[0]);
+    let cbCount = 0;
+    const cb = (): void => { cbCount += 1; };
+    call1.registerRevoke?.(cb);
+    expect(cbCount).toBe(0);
+    must(fake.pending[0]).resolve(null);
+    await flush();
+    expect(cbCount).toBe(0);
+    const tk = await svc.actAs(ctx.key, { roomId: ctx.roomId, action: "takeover" }, HEADERS);
+    expect(tk.status).toBe(200);
+    expect(cbCount).toBe(0);
+    for (const d of fake.pending) d.resolve(null);
+    await flush();
+  });
+  it("unrecorded guide invalidates", async () => {
+    const fake = createFake();
+    const svc = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fake.reasoner });
+    const ctx = makeRoom(svc);
+    ingest(svc, ctx.key, ctx.roomId, { meetingId: ctx.meetingId, utteranceId: randomUUID(), sequence: 1, revision: 1, speaker: "alice", text: "hello" });
+    await flush();
+    expect(fake.calls.length).toBe(1);
+    const call1 = must(fake.calls[0]);
+    const b1 = toBinding(call1);
+    let cbCount = 0;
+    const cb = (): void => { cbCount += 1; };
+    call1.registerRevoke?.(cb);
+    expect(cbCount).toBe(0);
+    const gr = await svc.actAs(ctx.key, { roomId: ctx.roomId, action: "guide", text: "   " }, HEADERS);
+    expect(gr.status).toBe(200);
+    expect(cbCount).toBe(1);
+    expect(svc.candidateIsCurrent(b1)).toBe(false);
+    for (const d of fake.pending) d.resolve(null);
+    await flush();
+  });
+});
