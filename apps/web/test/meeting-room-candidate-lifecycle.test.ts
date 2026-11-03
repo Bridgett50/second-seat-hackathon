@@ -47,6 +47,45 @@ function toBinding(input: CandidateReasonerInput): CandidateCurrentBinding {
 }
 
 describe("candidate lifecycle revoke", () => {
+  it("candidateBindingAs exposes frozen current initiating-page binding; takeover revokes; guards hold", async () => {
+    const fake = createFake();
+    const svc = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fake.reasoner });
+    const ctx = makeRoom(svc);
+    try {
+      ingest(svc, ctx.key, ctx.roomId, { meetingId: ctx.meetingId, utteranceId: randomUUID(), sequence: 1, revision: 1, speaker: "alice", text: "hello" });
+      await flush();
+      expect(fake.calls.length).toBe(1);
+      const input = must(fake.calls[0]);
+      expect(svc.candidateBindingAs(ctx.key, ctx.roomId)).toBeNull();
+      expect(typeof input.registerRevoke).toBe("function");
+      let revoked = 0;
+      input.registerRevoke?.(() => { revoked += 1; });
+      const binding = svc.candidateBindingAs(ctx.key, ctx.roomId);
+      expect(binding).toEqual(toBinding(input));
+      expect(typeof must(input.epoch)).toBe("number");
+      expect(Object.keys(must(binding)).sort()).toEqual(["contextRevision", "epoch", "meetingId", "ownerId", "policyGeneration", "roomId"].sort());
+      expect(Object.isFrozen(must(binding))).toBe(true);
+      expect(svc.candidateIsCurrent(must(binding))).toBe(true);
+      const second = svc.open("", HEADERS, ctx.key);
+      expect(svc.candidateBindingAs(ctx.key, second.roomId)).toBeNull();
+      expect(svc.candidateBindingAs(ctx.key, ctx.roomId)).toEqual(toBinding(input));
+      const beforeSizes = svc.sizes();
+      expect(svc.candidateBindingAs(null, ctx.roomId)).toBeNull();
+      expect(svc.candidateBindingAs(randomUUID(), ctx.roomId)).toBeNull();
+      expect(svc.candidateBindingAs(ctx.key, "unknown-room-id")).toBeNull();
+      expect(svc.candidateBindingAs(ctx.key, 123)).toBeNull();
+      expect(svc.sizes()).toEqual(beforeSizes);
+      expect(fake.calls.length).toBe(1);
+      const res = await svc.actAs(ctx.key, { roomId: ctx.roomId, action: "takeover" }, HEADERS);
+      expect(res.status).toBe(200);
+      expect(svc.candidateBindingAs(ctx.key, ctx.roomId)).toBeNull();
+      expect(revoked).toBe(1);
+      expect(fake.pending.length).toBe(1);
+    } finally {
+      for (const d of fake.pending) d.resolve(null);
+      await flush();
+    }
+  });
   it("takeover/resume revoke the registered callback; stale epoch stays invalid; other room untouched", async () => {
     const fake = createFake();
     const svc = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: fake.reasoner });

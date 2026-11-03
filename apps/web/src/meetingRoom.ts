@@ -283,6 +283,7 @@ export type MeetingRoomService = {
     roomId: unknown,
     event: unknown,
   ): { status: number; body: MeetingRoomActionResult };
+  candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null;
   candidateIsCurrent(binding: CandidateCurrentBinding): boolean;
   sentBodies(): readonly string[];
   /** Test-visible counts: pages, stores, activity entries and demo pages held. */
@@ -1438,6 +1439,32 @@ export function createMeetingRoomService(opts?: {
         }
       }
       return service.act(body, headers);
+    },
+
+    candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null {
+      if (!isCandidateActive()) return null;
+      const entry = boundEntry(callerKey, roomId);
+      if (entry === null) return null;
+      if (entry.demo !== null) return null;
+      if (typeof roomId !== "string") return null;
+      const st = candidateByRoom.get(entry.room);
+      if (st === undefined) return null;
+      if (!st.active) return null;
+      if (st.timedOut) return null;
+      const revoke = st.revoke;
+      if (revoke === null) return null;
+      if (revoke.roomId !== roomId) return null;
+      if (revoke.attempt !== st.attempt) return null;
+      if (revoke.epoch !== st.epoch) return null;
+      const view = entry.room.view();
+      const ownerId = view.ownerId;
+      const meetingId = view.selectedMeetingId;
+      const contextRevision = conversationByRoom.get(entry.room)?.get(meetingId)?.contextRevision ?? 0;
+      const policyGeneration = getPolicyGeneration(ownerId, meetingId);
+      const epoch = st.epoch;
+      const binding: CandidateCurrentBinding & { readonly epoch: number } = { roomId, ownerId, meetingId, contextRevision, policyGeneration, epoch };
+      if (!service.candidateIsCurrent(binding)) return null;
+      return Object.freeze(binding);
     },
 
     candidateIsCurrent(binding: CandidateCurrentBinding): boolean {
