@@ -1,4 +1,4 @@
-export const CANDIDATE_CONTEXT_CLIENT_JS = `(function(){const ROOT_ID='mr-root',SEC_ID='mr-context-section',TA_ID='mr-context-text',SAVE_ID='mr-context-save',APP_ID='mr-context-approve',DENY_ID='mr-context-deny',STAT_ID='mr-context-status';let gen=0,busy=false,curRoom='',preview=null,roomEl=null,sec,ta,saveBtn,approveBtn,denyBtn,statusEl;function isValidPreview(p){return p&&typeof p==='object'&&!Array.isArray(p)&&Object.keys(p).length===6&&'requestId' in p&&'redactedText' in p&&'version' in p&&'previewHash' in p&&'expiresAt' in p&&'status' in p&&typeof p.requestId==='string'&&/^[0-9a-f]{32}$/.test(p.requestId)&&typeof p.redactedText==='string'&&p.redactedText.length<=8000&&Number.isSafeInteger(p.version)&&p.version>0&&typeof p.previewHash==='string'&&/^[0-9a-f]{64}$/.test(p.previewHash)&&Number.isFinite(p.expiresAt)&&p.expiresAt>Date.now()&&p.status==='pending';}
+export const CANDIDATE_CONTEXT_CLIENT_JS = `(function(){const ROOT_ID='mr-root',SEC_ID='mr-context-section',TA_ID='mr-context-text',SAVE_ID='mr-context-save',APP_ID='mr-context-approve',DENY_ID='mr-context-deny',STAT_ID='mr-context-status';let gen=0,busy=false,curRoom='',preview=null,roomEl=null,sec,ta,saveBtn,approveBtn,denyBtn,statusEl;function setStatus(m){if(!statusEl||statusEl.textContent===m)return;statusEl.textContent=m;var l=document.getElementById('mr-live');if(l)l.textContent=m;}function isValidPreview(p){return p&&typeof p==='object'&&!Array.isArray(p)&&Object.keys(p).length===6&&'requestId' in p&&'redactedText' in p&&'version' in p&&'previewHash' in p&&'expiresAt' in p&&'status' in p&&typeof p.requestId==='string'&&/^[0-9a-f]{32}$/.test(p.requestId)&&typeof p.redactedText==='string'&&p.redactedText.length<=8000&&Number.isSafeInteger(p.version)&&p.version>0&&typeof p.previewHash==='string'&&/^[0-9a-f]{64}$/.test(p.previewHash)&&Number.isFinite(p.expiresAt)&&p.expiresAt>Date.now()&&p.status==='pending';}
 function snap(){return window.__mrSnap||null;}
 function isOrdinaryPending(s){return s&&s.candidate&&s.candidate.status==='pending'&&s.view&&s.view.twinStatus==='active'&&s.demo===null;}
 function updateDisabled(){
@@ -11,14 +11,14 @@ function updateDisabled(){
  approveBtn.disabled=!hasValid||busy||changed;
  denyBtn.disabled=!hasValid||busy;
  if(!hasValid&&!busy){
-  if(expired) statusEl.textContent='Context expired. Waiting for updated context.';
- } else if(changed&&hasValid) statusEl.textContent='Save your edits before approving.';
+  if(expired) setStatus('Context expired. Waiting for updated context.');
+ } else if(changed&&hasValid) setStatus('Save your edits before approving.');
 }
 function clearAuthority(msg){
  preview=null;
  ta.value='';
  updateDisabled();
- if(msg){sec.hidden=false;statusEl.textContent=msg;}else{sec.hidden=true;}
+ if(msg){sec.hidden=false;setStatus(msg);}else{sec.hidden=true;}
 }
 function hideEditor(){
  preview=null;ta.value='';sec.hidden=true;updateDisabled();
@@ -38,7 +38,7 @@ async function doFetch(){
   if(preview&&p.requestId===preview.requestId&&p.version===preview.version&&p.previewHash===preview.previewHash){
    preview=p;updateDisabled();return;
   }
-  preview=p;ta.value=p.redactedText;sec.hidden=false;statusEl.textContent='Check this redacted meeting context before allowing the AI to draft your email.';updateDisabled();
+  preview=p;ta.value=p.redactedText;sec.hidden=false;setStatus('Check this redacted meeting context before allowing the AI to draft your email.');updateDisabled();
  }catch(e){
   if(myGen!==gen||rid!==curRoom) return;
   clearAuthority('Could not load context. Please wait for a fresh review.');
@@ -48,7 +48,7 @@ async function doPost(action){
  if(busy||!preview) return;
  if(preview.expiresAt<=Date.now()){clearAuthority('Context expired. Please wait for updated context.');return;}
  if(!isValidPreview(preview)) return;
- if(action==='approve'&&ta.value!==preview.redactedText){statusEl.textContent='Save your edits before approving.';updateDisabled();return;}
+ if(action==='approve'&&ta.value!==preview.redactedText){setStatus('Save your edits before approving.');updateDisabled();return;}
  if(action==='correct'){if(ta.value.trim()===''||ta.value.length>8000) return;}
  const myGen=gen,rid=curRoom,body={action:action,roomId:rid,requestId:preview.requestId,version:preview.version,previewHash:preview.previewHash};
  if(action==='correct') body.text=ta.value;
@@ -61,7 +61,7 @@ async function doPost(action){
   if(myGen!==gen||rid!==curRoom) return;
   if(action==='approve'){if(j.approved!==true||Object.keys(j).length!==1) throw 0;clearAuthority('Context approved. Waiting for the AI suggestion.');return;}
   if(action==='deny'){if(j.denied!==true||Object.keys(j).length!==1) throw 0;clearAuthority('AI drafting canceled.');return;}
-  const p=j.preview;if(!isValidPreview(p)) throw 0;preview=p;ta.value=p.redactedText;statusEl.textContent='Edits saved.';updateDisabled();
+  const p=j.preview;if(!isValidPreview(p)) throw 0;preview=p;ta.value=p.redactedText;setStatus('Edits saved.');updateDisabled();
  }catch(e){
   if(myGen!==gen||rid!==curRoom) return;
   clearAuthority('Request failed. Please wait for a fresh review.');
@@ -70,9 +70,9 @@ async function doPost(action){
 function sync(){
  const root=document.getElementById(ROOT_ID);if(!root) return;
  const newRoom=root.getAttribute('data-room-id')||'';
- if(newRoom!==curRoom){curRoom=newRoom;gen++;busy=false;hideEditor();statusEl.textContent='';}
+ if(newRoom!==curRoom){curRoom=newRoom;gen++;busy=false;hideEditor();setStatus('');}
  const s=snap();
- if(!s||s.demo!==null){hideEditor();gen++;busy=false;if(statusEl) statusEl.textContent='';return;}
+ if(!s||s.demo!==null){hideEditor();gen++;busy=false;if(statusEl) setStatus('');return;}
  if(!isOrdinaryPending(s)){hideEditor();gen++;busy=false;return;}
  if(busy) return;
  doFetch();
@@ -84,7 +84,7 @@ function init(){
  const p=document.createElement('p');p.textContent='Check this redacted meeting context before allowing the AI to draft your email.';
  const lab=document.createElement('label');lab.setAttribute('for',TA_ID);lab.textContent='Context';
  ta=document.createElement('textarea');ta.id=TA_ID;
- statusEl=document.createElement('div');statusEl.id=STAT_ID;statusEl.setAttribute('role','status');statusEl.setAttribute('aria-live','polite');
+ statusEl=document.createElement('div');statusEl.id=STAT_ID;
  saveBtn=document.createElement('button');saveBtn.id=SAVE_ID;saveBtn.textContent='Save context edits';
  approveBtn=document.createElement('button');approveBtn.id=APP_ID;approveBtn.textContent='Approve context for AI';
  denyBtn=document.createElement('button');denyBtn.id=DENY_ID;denyBtn.textContent='Cancel AI drafting';

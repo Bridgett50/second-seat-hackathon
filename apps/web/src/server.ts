@@ -73,6 +73,8 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/session/invalidate": new Set(["sessionId", "scope", "expectedRevision"]),
   "/api/session/pressure-review": new Set(["sessionId", "itemId", "expectedRevision", "assessmentId", "reviewed"]),
   [MEETING_ROOM_API]: new Set(MEETING_ROOM_POST_FIELDS),
+  "/api/meeting-room/conversation": new Set(["roomId", "event"]),
+  "/api/meeting-room/conversation/finish": new Set(["roomId"]),
   "/api/meeting-room/candidate-context": new Set(["roomId", "action", "requestId", "version", "previewHash", "text"]),
 };
 
@@ -454,6 +456,14 @@ export function createWebServer(deps?: WebServerDeps) {
             return;
           }
           const body = asRecord(parsed);
+          if (url.pathname === "/api/meeting-room/conversation" || url.pathname === "/api/meeting-room/conversation/finish") {
+            res.setHeader("Cache-Control", "no-store");
+            if (!contextApprovalApi) { json(res, 404, { error: "not found" }); return; }
+            const caller = meetingRoomStoreKey(req.headers.cookie);
+            const r = url.pathname === "/api/meeting-room/conversation" ? meetingRoom.ingestConversationAs(caller, body?.["roomId"], body?.["event"]) : meetingRoom.finishConversationAs(caller, body?.["roomId"]);
+            json(res, r.status, { ...r.body, html: r.body.snapshot ? renderMeetingRoomBody(r.body.snapshot) : null });
+            return;
+          }
           if (req.method === "POST" && url.pathname === "/api/meeting-room/candidate-context") {
             res.setHeader("Cache-Control", "no-store");
             const candidateApprovalApi = contextApprovalApi;
