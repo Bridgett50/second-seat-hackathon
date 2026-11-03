@@ -26,6 +26,7 @@ import {
   renderMeetingRoomPage,
 } from "./meetingRoomRender.js";
 import type { createCandidateApprovalApi } from "./candidateApprovalApi.js";
+import { createCandidateRuntime } from "./candidateRuntime.js";
 
 const PORT = Number(process.env.PORT ?? 4173);
 /** Loopback only. The demo process does not listen on other interfaces. */
@@ -291,7 +292,9 @@ export function createWebServer(deps?: WebServerDeps) {
       : null;
   const liveAvailable = liveStore !== null;
   const sessions = routeSessions(offlineStore, liveStore);
-  const meetingRoom = deps?.meetingRoom ?? createMeetingRoomService();
+  const candidateRuntime = !deps?.meetingRoom ? createCandidateRuntime(process.env, analysisConfig) : undefined;
+  const meetingRoom = deps?.meetingRoom ?? candidateRuntime?.meetingRoom ?? createMeetingRoomService();
+  const contextApprovalApi = deps?.candidateApprovalApi ?? candidateRuntime?.candidateApprovalApi;
   const gate = deps?.gate ?? createPrivacyGate({ mode: "fixture", redactor: new MockRedactor() });
   const sent: { text: string } = deps?.lastSent ?? { text: "" };
   const sender =
@@ -367,7 +370,7 @@ export function createWebServer(deps?: WebServerDeps) {
         }
         throw err;
       }
-      const html = renderMeetingRoomPage(snapshot, aiSelf?.url ?? null);
+      const html = renderMeetingRoomPage(snapshot, aiSelf?.url ?? null, candidateRuntime !== undefined);
       const headers: Record<string, string> = {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
@@ -405,7 +408,7 @@ export function createWebServer(deps?: WebServerDeps) {
     }
     if (req.method === "GET" && url.pathname === "/api/meeting-room/candidate-context") {
       res.setHeader("Cache-Control", "no-store");
-      const candidateApprovalApi = deps?.candidateApprovalApi;
+      const candidateApprovalApi = contextApprovalApi;
       if (!candidateApprovalApi) {
         json(res, 404, { error: "Not found" });
         return;
@@ -453,7 +456,7 @@ export function createWebServer(deps?: WebServerDeps) {
           const body = asRecord(parsed);
           if (req.method === "POST" && url.pathname === "/api/meeting-room/candidate-context") {
             res.setHeader("Cache-Control", "no-store");
-            const candidateApprovalApi = deps?.candidateApprovalApi;
+            const candidateApprovalApi = contextApprovalApi;
             if (!candidateApprovalApi) {
               json(res, 404, { error: "Not found" });
               return;
