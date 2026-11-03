@@ -46,7 +46,7 @@ describe("candidateReasoner", () => {
     const gated = call[0];
     expect(gated).toBeInstanceOf(GatedText);
     expect(gated.text).toContain("[REDACTED_email]");
-    expect(gated.text).toContain("u1");
+    expect(gated.text).toContain("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab");
     expect(gated.text).not.toContain("alice@example.com");
     expect(gated.text).not.toContain("SECRET_GUIDANCE_XYZ");
     expect(gated.text).not.toContain("SECRET_NOTES_ABC");
@@ -386,7 +386,7 @@ describe("candidateReasoner", () => {
     const result = await reasoner(baseInput());
     expect(result).toBe(captured);
     expect(result).toMatch(/follow-up email/i);
-    expect(result).toContain("u1");
+    expect(result).toContain("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab");
     expect(result).toContain("[REDACTED_email]");
     expect(result).not.toContain("alice@example.com");
     expect(result).not.toContain("SECRET_GUIDANCE_XYZ");
@@ -412,4 +412,57 @@ it("rejects over 20k aggregate context before gate.prepare", async () => {
   }
 });
 
+});
+
+it("forwards meeting text without leaking utteranceId", async () => {
+  const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+  const model = vi.fn(async (_g: GatedText) => "model-ok");
+  const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, { gate, requestOwnerApproval: async (runId, preview) => gate.approve(runId, preview), isCurrent: () => true, callModel: model });
+  if (reasoner === undefined) throw new Error("reasoner off");
+  const input = { ...baseInput(), utterances: [{ utteranceId: "abcdefab-cdef-4abc-8def-123456789abc", sequence: 0, revision: 1, speaker: "Participant", text: "I will confirm the date myself." }] };
+  await expect(reasoner(input)).resolves.toBe("model-ok");
+  expect(model).toHaveBeenCalledTimes(1);
+  const firstCall = model.mock.calls[0];
+  if (!firstCall) throw new Error("no call");
+  const gated = firstCall[0];
+  expect(gated.text).toContain("I will confirm the date myself.");
+  expect(gated.text).not.toContain("abcdefab-cdef-4abc-8def-123456789abc");
+});
+
+it("rejects unmasked phone number before model call", async () => {
+  const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+  const model = vi.fn(async (_g: GatedText) => "model-ok");
+  const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, { gate, requestOwnerApproval: async (runId, preview) => gate.approve(runId, preview), isCurrent: () => true, callModel: model });
+  if (reasoner === undefined) throw new Error("reasoner off");
+  const input = { ...baseInput(), utterances: [{ utteranceId: "u1", sequence: 0, revision: 1, speaker: "Participant", text: "Call 415-555-0112." }] };
+  await expect(reasoner(input)).rejects.toThrow();
+  expect(model).toHaveBeenCalledTimes(0);
+});
+
+it("maps prompt-local aliases back to original utterance identities", async () => {
+  const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+  const model = vi.fn(async (g: GatedText) => {
+    const matches = [...g.text.matchAll(/^([a-f]{8}-[a-f]{4}-4[a-f]{3}-8[a-f]{3}-[a-f]{12}) 1 Participant /gm)];
+    expect(matches.length).toBe(2);
+    const aliases = matches.map((m) => m[1]);
+    expect(aliases).not.toContain("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab");
+    expect(aliases).not.toContain("abcdefab-cdef-4abc-8def-123456789abc");
+    return { subject: "Follow-up", body: "Confirm myself.", sourceRefs: aliases.map((id) => ({ utteranceId: id, revision: 1 })) };
+  });
+  const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, { gate, isCurrent: () => true, requestOwnerApproval: async (runId, preview) => gate.approve(runId, preview), callModel: model });
+  if (!reasoner) throw new Error("reasoner off");
+  const input = { ...baseInput(), utterances: [{ utteranceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab", revision: 7, speaker: "Participant", text: "Confirm myself.", sequence: 0 }, { utteranceId: "abcdefab-cdef-4abc-8def-123456789abc", revision: 123456789, speaker: "Participant", text: "No commitment.", sequence: 1 }] };
+  const result = await reasoner(input);
+  expect(result).toEqual({ subject: "Follow-up", body: "Confirm myself.", sourceRefs: [{ utteranceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab", revision: 7 }, { utteranceId: "abcdefab-cdef-4abc-8def-123456789abc", revision: 123456789 }] });
+  expect(model).toHaveBeenCalledTimes(1);
+});
+it("rejects invalid sourceRefs", async () => {
+  for (const ref of [{ utteranceId: "not-listed", revision: 1 }, { utteranceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab", revision: 2 }]) {
+    const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+    const model = vi.fn(async () => ({ subject: "Follow-up", body: "Hi", sourceRefs: [ref] }));
+    const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, { gate, isCurrent: () => true, requestOwnerApproval: async (runId, preview) => gate.approve(runId, preview), callModel: model });
+    if (!reasoner) throw new Error("reasoner off");
+    await expect(reasoner(baseInput())).rejects.toThrow();
+    expect(model).toHaveBeenCalledTimes(1);
+  }
 });
