@@ -36,7 +36,7 @@ import {
 
 export const MEETING_ROOM_PATH = "/meeting-room";
 export const MEETING_ROOM_API = "/api/meeting-room";
-export const MEETING_ROOM_POST_FIELDS = ["roomId", "action", "text", "id", "packageId"] as const;
+export const MEETING_ROOM_POST_FIELDS = ["roomId", "action", "text", "id", "packageId", "contextRevision", "policyGeneration"] as const;
 
 /** Largest accepted `packageId` for Approve and Send, in characters. */
 export const MEETING_ROOM_MAX_PACKAGE_ID_CHARS = 400;
@@ -140,6 +140,7 @@ const ACTING_ACTIONS = new Set([
   "send",
   "demo-next",
   "demo-restart",
+  "adopt-candidate",
 ]);
 
 const COOKIE_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -175,11 +176,14 @@ export type CandidateReasonerInput = {
   readonly meetingId: string;
   readonly contextRevision: number;
   readonly policyGeneration: number;
+  readonly epoch?: number;
   readonly utterances: ConversationSnapshot["utterances"];
   readonly guidance: readonly string[];
   readonly notes: readonly string[];
+  readonly registerRevoke?: (revoke: () => void) => void;
 };
 export type CandidateReasoner = (input: CandidateReasonerInput) => Promise<unknown>;
+export type CandidateCurrentBinding = { readonly roomId: string; readonly ownerId: string; readonly meetingId: string; readonly contextRevision: number; readonly policyGeneration: number; readonly epoch?: number };
 export type MeetingRoomCandidateSnapshot = {
   readonly meetingId: string;
   readonly status: "none" | "pending" | "provisional" | "failed";
@@ -279,6 +283,9 @@ export type MeetingRoomService = {
     roomId: unknown,
     event: unknown,
   ): { status: number; body: MeetingRoomActionResult };
+  finishConversationAs(callerKey: string | null, roomId: unknown): { status: number; body: MeetingRoomActionResult };
+  candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null;
+  candidateIsCurrent(binding: CandidateCurrentBinding): boolean;
   sentBodies(): readonly string[];
   /** Test-visible counts: pages, stores, activity entries and demo pages held. */
   sizes(): { pages: number; stores: number; activity: number; demoPages: number };
@@ -326,6 +333,7 @@ export function createMeetingRoomService(opts?: {
   candidateReasoner?: CandidateReasoner;
   candidateDeadlineMs?: number;
   candidateMaxAttempts?: number;
+  candidateAutoDispatch?: boolean;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxStores = opts?.maxStores ?? 200;
@@ -378,11 +386,16 @@ export function createMeetingRoomService(opts?: {
    * `${key}:p`), all its pages, and its activity record.
    */
   function evictStoreKey(storeKey: string): void {
+    const tEntry = shared.get(`${storeKey}:t`);
+    if(tEntry !== undefined) revokeOwnedCandidate(tEntry, null);
+    const pEntry = shared.get(`${storeKey}:p`);
+    if(pEntry !== undefined) revokeOwnedCandidate(pEntry, null);
     stores.delete(storeKey);
     shared.delete(`${storeKey}:t`);
     shared.delete(`${storeKey}:p`);
     for (const [roomId, entry] of rooms) {
       if (entry.storeKey === storeKey) {
+        revokeOwnedCandidate(entry.room, null);
         rooms.delete(roomId);
         demoPages.delete(roomId);
       }
@@ -479,7 +492,7 @@ export function createMeetingRoomService(opts?: {
     generation: number;
     candidateId: string;
   };
-  type CandidateState = { epoch: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult; preview: CandidatePreviewState | null };
+  type CandidateState = { epoch: number; attempt: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult; preview: CandidatePreviewState | null; revoke: null | { attempt: number; epoch: number; roomId: string; fn: () => void } };
   const candidateByRoom = new WeakMap<TwinRoom, CandidateState>();
   const candidateAttemptsByRoom = new WeakMap<TwinRoom, Map<string, number>>();
   function isValidReleasedResult(v: unknown): v is { outcome: string; text: string; generation: number } {
@@ -550,7 +563,7 @@ export function createMeetingRoomService(opts?: {
   }
   function getCandidateState(room: TwinRoom){
     let s = candidateByRoom.get(room);
-    if(!s){ s = { epoch:0, active:false, timedOut:false, timer:null, pending:null, result:null, preview: null }; candidateByRoom.set(room,s); }
+    if(!s){ s = { epoch:0, attempt:0, active:false, timedOut:false, timer:null, pending:null, result:null, preview: null, revoke: null }; candidateByRoom.set(room,s); }
     return s;
   }
   function isCandidateActive(): boolean{
@@ -600,9 +613,23 @@ export function createMeetingRoomService(opts?: {
     s.pending = null;
     s.result = null;
     s.preview = null;
+    const rev = s.revoke;
+    s.revoke = null;
+    if(rev !== null) rev.fn();
   }
-  function dispatchCandidate(entry: RoomEntry, roomId: string){
+  function revokeOwnedCandidate(room: TwinRoom, onlyRoomId: string | null): void {
+    const s = candidateByRoom.get(room);
+    if(!s) return;
+    const rev = s.revoke;
+    if(rev === null) return;
+    if(onlyRoomId !== null && rev.roomId !== onlyRoomId) return;
+    s.revoke = null;
+    rev.fn();
+  }
+  function dispatchCandidate(entry: RoomEntry, roomId: string, force = false){
     if(!isCandidateActive()) return;
+    if(opts?.candidateAutoDispatch === false && !force) return;
+    if(entry.demo !== null) return;
     const st = getCandidateState(entry.room);
     if(st.active) return;
     if(rooms.get(roomId) !== entry) return;
@@ -618,15 +645,37 @@ export function createMeetingRoomService(opts?: {
     const policyGeneration = getPolicyGeneration(ownerId, meetingId);
     const epoch = st.epoch;
     const snapConv = conversationSnapshotFor(entry, view);
+    const dispatchAttempt = st.attempt + 1;
+    st.attempt = dispatchAttempt;
+    const capturedAttempt = dispatchAttempt;
+    const registerRevoke = (revoke: () => void): void => {
+      const curSt = candidateByRoom.get(capturedEntry.room);
+      if(curSt !== st) { revoke(); return; }
+      if(curSt !== capturedState) { revoke(); return; }
+      if(!curSt.active || curSt.timedOut) { revoke(); return; }
+      if(curSt.attempt !== capturedAttempt) { revoke(); return; }
+      if(curSt.epoch !== capturedEpoch) { revoke(); return; }
+      if(rooms.get(capturedRoomId) !== capturedEntry) { revoke(); return; }
+      const freshView = capturedEntry.room.view();
+      if(freshView.ownerId !== capturedOwnerId || freshView.selectedMeetingId !== capturedMeetingId) { revoke(); return; }
+      if(freshView.twinStatus !== "active") { revoke(); return; }
+      const curConv = conversationByRoom.get(capturedEntry.room)?.get(capturedMeetingId);
+      const curRevision = curConv?.contextRevision ?? 0;
+      if(curRevision !== capturedContextRevision) { revoke(); return; }
+      if(getPolicyGeneration(capturedOwnerId, capturedMeetingId) !== capturedPolicyGeneration) { revoke(); return; }
+      curSt.revoke = { attempt: capturedAttempt, epoch: capturedEpoch, roomId: capturedRoomId, fn: revoke };
+    };
     const input: CandidateReasonerInput = Object.freeze({
       roomId,
       ownerId,
       meetingId,
       contextRevision,
       policyGeneration,
+      epoch,
       utterances: snapConv.utterances,
       guidance: Object.freeze([...view.guidance]),
       notes: Object.freeze([...view.notes]),
+      registerRevoke,
     });
     let attemptsMap = candidateAttemptsByRoom.get(entry.room);
     if(!attemptsMap){ attemptsMap = new Map<string, number>(); candidateAttemptsByRoom.set(entry.room, attemptsMap); }
@@ -636,11 +685,6 @@ export function createMeetingRoomService(opts?: {
       st.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: attempt limit reached. It was not retried." };
       return;
     }
-    st.active = true;
-    st.timedOut = false;
-    st.pending = null;
-    st.result = null;
-    st.preview = null;
     const capturedEntry = entry;
     const capturedRoomId = roomId;
     const capturedOwnerId = ownerId;
@@ -649,12 +693,18 @@ export function createMeetingRoomService(opts?: {
     const capturedPolicyGeneration = policyGeneration;
     const capturedEpoch = epoch;
     const capturedState = st;
+    st.active = true;
+    st.timedOut = false;
+    st.pending = null;
+    st.result = null;
+    st.preview = null;
     const deadlineTimer = setTimeout(()=>{
       const curSt = candidateByRoom.get(capturedEntry.room);
       if(!curSt) return;
       if(curSt !== capturedState) return;
       if(!curSt.active) return;
       if(curSt.timedOut) return;
+      if(curSt.attempt !== capturedAttempt) return;
       const freshView = capturedEntry.room.view();
       const curConv = conversationByRoom.get(capturedEntry.room)?.get(capturedMeetingId);
       const curRevision = curConv?.contextRevision ?? 0;
@@ -668,6 +718,11 @@ export function createMeetingRoomService(opts?: {
         curSt.epoch === capturedEpoch;
       curSt.timedOut = true;
       curSt.timer = null;
+      if(curSt.revoke !== null && curSt.revoke.attempt === capturedAttempt){
+        const rev = curSt.revoke;
+        curSt.revoke = null;
+        rev.fn();
+      }
       if(freshOk){
         curSt.result = { candidateId: randomUUID(), meetingId: capturedMeetingId, status:"failed", contextRevision: capturedContextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: reasoner timed out. It was not retried." };
       }
@@ -681,6 +736,7 @@ export function createMeetingRoomService(opts?: {
     p.then((val)=>{
       const curSt = candidateByRoom.get(entry.room);
       if(!curSt) return;
+      if(curSt.revoke !== null && curSt.revoke.attempt === capturedAttempt) curSt.revoke = null;
       if(curSt.timedOut){
         if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
         // late settlement discarded, free slot and drain
@@ -750,6 +806,7 @@ export function createMeetingRoomService(opts?: {
     }, (err)=>{
       const curSt = candidateByRoom.get(entry.room);
       if(!curSt) return;
+      if(curSt.revoke !== null && curSt.revoke.attempt === capturedAttempt) curSt.revoke = null;
       if(curSt.timedOut){
         if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
         curSt.active = false;
@@ -903,6 +960,8 @@ export function createMeetingRoomService(opts?: {
         if (demoPages.size >= maxDemoPages) {
           const oldestDemo = demoPages.values().next().value;
           if (oldestDemo !== undefined) {
+            const evicted = rooms.get(oldestDemo);
+            if(evicted !== undefined) revokeOwnedCandidate(evicted.room, null);
             demoPages.delete(oldestDemo);
             rooms.delete(oldestDemo);
           }
@@ -919,6 +978,8 @@ export function createMeetingRoomService(opts?: {
           }
         }
         if (pages >= maxPagesPerKey && oldestOfKey !== null) {
+          const evicted = rooms.get(oldestOfKey);
+          if(evicted !== undefined) revokeOwnedCandidate(evicted.room, oldestOfKey);
           rooms.delete(oldestOfKey);
         }
       }
@@ -1067,8 +1128,8 @@ export function createMeetingRoomService(opts?: {
             const rec = createMeetingPolicyRecorder(v.ownerId, v.selectedMeetingId).record(text as string);
             policyStatusByScope.set(`${v.ownerId}\0${v.selectedMeetingId}`, rec.status);
             policyAnnouncementStatus = rec.status;
-            invalidateCandidate(entry);
           }
+          invalidateCandidate(entry);
           break;
         }
         case "takeover":
@@ -1285,7 +1346,7 @@ export function createMeetingRoomService(opts?: {
           const v = entry.room.view();
           if(v.twinStatus==="active"){
             const st=getCandidateState(entry.room);
-            if(st.active) st.pending={ roomId: rid, entry }; else dispatchCandidate(entry, rid);
+            if(st.active){ revokeOwnedCandidate(entry.room, null); st.pending={ roomId: rid, entry }; } else dispatchCandidate(entry, rid);
           }
         }
         return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
@@ -1296,7 +1357,7 @@ export function createMeetingRoomService(opts?: {
         const v = entry.room.view();
         if(v.twinStatus==="active"){
           const st=getCandidateState(entry.room);
-          if(st.active) st.pending={ roomId: rid, entry }; else dispatchCandidate(entry, rid);
+          if(st.active){ revokeOwnedCandidate(entry.room, null); st.pending={ roomId: rid, entry }; } else dispatchCandidate(entry, rid);
         }
       }
       return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
@@ -1311,6 +1372,47 @@ export function createMeetingRoomService(opts?: {
       const entry = boundEntry(callerKey, roomId);
       if (entry === null) return notFound();
       const action = body["action"];
+      if (action === "adopt-candidate") {
+        const id = body["id"];
+        const cr = body["contextRevision"];
+        const pg = body["policyGeneration"];
+        const view0 = entry.room.view();
+        const badAdopt = (status: number, msg: string): { status: number; body: MeetingRoomActionResult } => ({
+          status,
+          body: { snapshot: snap(roomId as string, entry, view0), announcements: [msg] },
+        });
+        if (typeof id !== "string" || id.length === 0) return badAdopt(400, "Invalid adopt-candidate request.");
+        if (typeof cr !== "number" || !Number.isSafeInteger(cr) || cr < 0 || typeof pg !== "number" || !Number.isSafeInteger(pg) || pg < 0) return badAdopt(400, "Invalid adopt-candidate request.");
+        if (!isCandidateActive() || entry.demo !== null) return badAdopt(409, "Candidate is no longer available.");
+        const st = getCandidateState(entry.room);
+        if (st.active && !st.timedOut) return badAdopt(409, "Candidate is no longer available.");
+        if (!st.result || st.result.status !== "provisional") return badAdopt(409, "Candidate is no longer available.");
+        if (st.result.meetingId !== view0.selectedMeetingId) return badAdopt(409, "Candidate is no longer available.");
+        const p = st.preview;
+        if (!p || !p.preview || p.preview.status !== "released") return badAdopt(409, "Candidate is no longer available.");
+        if (p.candidateId !== st.result.candidateId || st.result.candidateId !== id) return badAdopt(409, "Candidate is no longer available.");
+        const curOwnerId = view0.ownerId;
+        const curMeetingId = view0.selectedMeetingId;
+        const curConv = conversationByRoom.get(entry.room)?.get(curMeetingId);
+        const curRevision = curConv?.contextRevision ?? 0;
+        const curGen = getPolicyGeneration(curOwnerId, curMeetingId);
+        if (p.ownerId !== curOwnerId || p.meetingId !== curMeetingId || p.contextRevision !== curRevision || p.epoch !== st.epoch || p.generation !== curGen) return badAdopt(409, "Candidate is no longer available.");
+        if (cr !== curRevision || pg !== curGen) return badAdopt(409, "Candidate is no longer available.");
+        if (p.contextRevision !== cr || p.generation !== pg) return badAdopt(409, "Candidate is no longer available.");
+        if (view0.draft.sendState !== "unsent") return badAdopt(409, "Candidate is no longer available.");
+        const evaluatedSubject = p.preview.evaluatedSubject;
+        const evaluatedBody = p.preview.evaluatedBody;
+        const draftText = evaluatedSubject + "\n\n" + evaluatedBody;
+        if (draftText.length > MEETING_ROOM_MAX_DRAFT_CHARS) return badAdopt(413, "Draft edits are limited to 20,000 characters.");
+        try {
+          entry.room.editDraft(draftText);
+        } catch {
+          return badAdopt(409, "Candidate is no longer available.");
+        }
+        const after = entry.room.view();
+        if (entry.demo === null && ACTING_ACTIONS.has(action as string)) acted.add(entry.storeKey);
+        return { status: 200, body: { snapshot: snap(roomId as string, entry, after), announcements: [] } };
+      }
       if (action === "approve" || action === "send") {
         // Bind Approve and Send to the package this browser displayed. No
         // await runs between this check and the room action in act().
@@ -1342,6 +1444,60 @@ export function createMeetingRoomService(opts?: {
       return service.act(body, headers);
     },
 
+    finishConversationAs(callerKey: string | null, roomId: unknown): { status: number; body: MeetingRoomActionResult } {
+      const entry = boundEntry(callerKey, roomId);
+      if(entry === null || typeof roomId !== 'string' || entry.demo !== null) return notFound();
+      if(!isCandidateActive()) return { status: 403, body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: ['Candidate unavailable.'] } };
+      const view = entry.room.view();
+      if(view.twinStatus !== 'active' || view.draft.sendState !== 'unsent') return { status: 409, body: { snapshot: snap(roomId, entry, view), announcements: ['Conversation not ready to finish.'] } };
+      const conv = conversationByRoom.get(entry.room)?.get(view.selectedMeetingId);
+      if(!conv || conv.utterances.size === 0) return { status: 422, body: { snapshot: snap(roomId, entry, view), announcements: ['Conversation not prepared.'] } };
+      if(candidateByRoom.get(entry.room)?.active) return { status: 409, body: { snapshot: snap(roomId, entry, view), announcements: ['Candidate already running.'] } };
+      if((candidateAttemptsByRoom.get(entry.room)?.get(view.selectedMeetingId) ?? 0) >= candidateMaxAttempts) return { status: 429, body: { snapshot: snap(roomId, entry, view), announcements: ['Too many attempts.'] } };
+      dispatchCandidate(entry, roomId, true);
+      return { status: 202, body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: ['Preparing redacted meeting context for review.'] } };
+    },
+  candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null {
+      if (!isCandidateActive()) return null;
+      const entry = boundEntry(callerKey, roomId);
+      if (entry === null) return null;
+      if (entry.demo !== null) return null;
+      if (typeof roomId !== "string") return null;
+      const st = candidateByRoom.get(entry.room);
+      if (st === undefined) return null;
+      if (!st.active) return null;
+      if (st.timedOut) return null;
+      const revoke = st.revoke;
+      if (revoke === null) return null;
+      if (revoke.roomId !== roomId) return null;
+      if (revoke.attempt !== st.attempt) return null;
+      if (revoke.epoch !== st.epoch) return null;
+      const view = entry.room.view();
+      const ownerId = view.ownerId;
+      const meetingId = view.selectedMeetingId;
+      const contextRevision = conversationByRoom.get(entry.room)?.get(meetingId)?.contextRevision ?? 0;
+      const policyGeneration = getPolicyGeneration(ownerId, meetingId);
+      const epoch = st.epoch;
+      const binding: CandidateCurrentBinding & { readonly epoch: number } = { roomId, ownerId, meetingId, contextRevision, policyGeneration, epoch };
+      if (!service.candidateIsCurrent(binding)) return null;
+      return Object.freeze(binding);
+    },
+
+    candidateIsCurrent(binding: CandidateCurrentBinding): boolean {
+      if (!isCandidateActive()) return false;
+      if (binding.epoch === undefined) return false;
+      if (!Number.isSafeInteger(binding.epoch)) return false;
+      if (binding.epoch < 0) return false;
+      const entry = rooms.get(binding.roomId);
+      if (entry === undefined) return false;
+      const st = candidateByRoom.get(entry.room);
+      if (st === undefined) return false;
+      if (!st.active) return false;
+      if (st.timedOut) return false;
+      const view = entry.room.view();
+      const curRev = conversationByRoom.get(entry.room)?.get(binding.meetingId)?.contextRevision ?? 0;
+      return view.ownerId === binding.ownerId && view.selectedMeetingId === binding.meetingId && view.twinStatus === "active" && curRev === binding.contextRevision && getPolicyGeneration(binding.ownerId, binding.meetingId) === binding.policyGeneration && st.epoch === binding.epoch;
+    },
     sentBodies(): readonly string[] {
       return [...sent];
     },

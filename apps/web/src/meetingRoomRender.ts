@@ -15,6 +15,8 @@ import {
 } from "@second-seat/bot/dist/src/t2-room.js";
 import { THEME_CSS, twinStageHtml } from "./theme.js";
 import type { MeetingRoomSnapshot } from "./meetingRoom.js";
+import { CANDIDATE_CONTEXT_CLIENT_JS } from "./candidateContextClient.js";
+import { MEETING_INPUT_CLIENT_JS } from "./meetingInputClient.js";
 
 /** Escape dynamic text and attribute values for HTML. */
 function esc(s: string): string {
@@ -232,6 +234,8 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
   const sendText = snap.fakeSend ? "Send (test fake transport)" : "Send (refused on this host)";
   const sendDescribedBy = snap.fakeSend ? "" : ` aria-describedby="send-refused-note"`;
   const sendAriaLabel = snap.fakeSend ? A11Y_LABELS.send : "Send (refused on this host)";
+  const copyEnabled = view.draft.approved === true && view.draft.sendState === "unsent" && view.twinStatus === "active";
+  const copyDis = copyEnabled ? "" : " disabled";
   return (
     `${sectionOpen("approval")}${esc(headingFor("approval", snap))}</h2>` +
     `<p id="mr-approval-state">Approved: ${approved} · Send: ${esc(view.draft.sendState)}</p>` +
@@ -241,6 +245,7 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
     sendNote +
     `<div><button type="button" id="approve" aria-label="${esc(A11Y_LABELS.approve)}" data-mr-action="approve" data-mr-package="${esc(snap.packageId)}"${dis}>Approve</button> ` +
     `<button type="button" id="send" aria-label="${esc(sendAriaLabel)}" data-mr-action="send" data-mr-package="${esc(snap.packageId)}"${sendDescribedBy}>${esc(sendText)}</button></div>` +
+    `<div><button type="button" id="mr-copy-email" data-mr-package="${esc(snap.packageId)}" aria-label="${esc(MEETING_ROOM_EXTRA_LABELS["mr-copy-email"] ?? "")}"${copyDis}>Copy approved email</button></div>` +
     (snap.sendNotice
       ? `<p id="send-notice" role="alert" class="mr-send-notice">${esc(snap.sendNotice)}</p>`
       : "") +
@@ -288,6 +293,43 @@ function evidenceSection(snap: MeetingRoomSnapshot): string {
   );
 }
 
+function canAdopt(snap: MeetingRoomSnapshot): boolean {
+  const c = snap.candidate;
+  const p = snap.candidatePreview;
+  if (!c || !p) return false;
+  if (snap.demo !== null) return false;
+  if (snap.view.twinStatus !== "active") return false;
+  if (snap.view.draft.sendState !== "unsent") return false;
+  if (c.status !== "provisional") return false;
+  if (p.status !== "released") return false;
+  if (c.candidateId === null || p.candidateId !== c.candidateId) return false;
+  if (c.contextRevision === null) return false;
+  if (!snap.conversation || c.contextRevision !== snap.conversation.contextRevision) return false;
+  if (!snap.sessionPolicy || p.generation !== snap.sessionPolicy.generation) return false;
+  return true;
+}
+function previewHtml(snap: MeetingRoomSnapshot): string {
+  const p = snap.candidatePreview;
+  if (!p) return "";
+  const hasEval = typeof p.evaluatedSubject === "string" || typeof p.evaluatedBody === "string";
+  if (!hasEval) return "";
+  const subj = typeof p.evaluatedSubject === "string" ? p.evaluatedSubject : "";
+  const body = typeof p.evaluatedBody === "string" ? p.evaluatedBody : "";
+  const reason = p.reason ? `<p>${esc(p.reason)}</p>` : "";
+  const changed = (p.subjectChanged ? " · subject updated" : "") + (p.bodyChanged ? " · body updated" : "");
+  const header = `<p>Evaluated suggestion — not approved, not sent${esc(changed)}</p>`;
+  const subjLine = subj ? `<p>Subject: ${esc(subj)}</p>` : "";
+  const bodyLine = body ? `<pre>${esc(body)}</pre>` : "";
+  const statusNote = p.status !== "released" ? `<p>Status: ${esc(p.status)}</p>` : "";
+  let btn = "";
+  if (canAdopt(snap)) {
+    const cid = esc(p.candidateId);
+    const cr = String(snap.candidate!.contextRevision);
+    const pg = String(p.generation);
+    btn = `<button type="button" id="mr-adopt-candidate" aria-label="${esc(MEETING_ROOM_EXTRA_LABELS["mr-adopt-candidate"] ?? "")}" data-mr-action="adopt-candidate" data-mr-candidate-id="${cid}" data-mr-context-revision="${esc(cr)}" data-mr-policy-generation="${esc(pg)}">Use this email</button>`;
+  }
+  return header + statusNote + reason + subjLine + bodyLine + btn;
+}
 function candidateSection(snap: MeetingRoomSnapshot): string {
   const c = snap.candidate;
   if (!c) return "";
@@ -304,7 +346,8 @@ function candidateSection(snap: MeetingRoomSnapshot): string {
   } else if (c.status === "failed") {
     body = "";
   }
-  return `<section id="mr-candidate-panel" aria-labelledby="mr-candidate-heading"><h2 id="mr-candidate-heading">Proposed email (private provisional)</h2>` + meta + statusLine + body + `</section>`;
+  const preview = previewHtml(snap);
+  return `<section id="mr-candidate-panel" aria-labelledby="mr-candidate-heading"><h2 id="mr-candidate-heading">Proposed email (private provisional)</h2>` + meta + statusLine + body + preview + `</section>`;
 }
 
 function sectionFor(region: string, snap: MeetingRoomSnapshot): string {
@@ -350,6 +393,8 @@ export function renderMeetingRoomBody(snap: MeetingRoomSnapshot): string {
   return parts.join("\n");
 }
 
+export const MEETING_ROOM_EXTRA_LABELS: Readonly<Record<string, string>> = { "mr-adopt-candidate": "Use this email", "mr-copy-email": "Copy approved email" };
+
 const CLIENT_JS = `(function(){
 "use strict";
 var root=document.getElementById("mr-root");
@@ -370,9 +415,10 @@ function fieldValue(id){
 }
 var seq=0;
 var dirty=false;
-var OUTGOING={"approve":true,"send":true,"evidence-export":true};
+var copyBusy=false;
+var OUTGOING={"approve":true,"send":true,"evidence-export":true,"adopt-candidate":true};
 function lockOutgoing(){
-  var ids=["approve","send","evidence-export"];
+  var ids=["approve","send","evidence-export","mr-adopt-candidate","mr-copy-email"];
   for(var i=0;i<ids.length;i+=1){
     var b=document.getElementById(ids[i]);
     if(b){b.disabled=true;}
@@ -457,18 +503,50 @@ function isValidSnapshot(snap){
 }
 function stopPolling(){ pollActive=false; pollGen+=1; if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } }
 function schedulePoll(){ if(!pollActive) return; if(isExpired()){ handleExpiry(); return; } if(pollTimer) clearTimeout(pollTimer); pollTimer=setTimeout(doPoll,POLL_INTERVAL); }
+function canAdoptClient(snap){
+  var c=snap.candidate; var p=snap.candidatePreview;
+  if(!c||!p) return false;
+  if(snap.demo!==null) return false;
+  if(!snap.view || snap.view.twinStatus!=="active") return false;
+  if(snap.view.draft.sendState!=="unsent") return false;
+  if(c.status!=="provisional") return false;
+  if(p.status!=="released") return false;
+  if(!c.candidateId || p.candidateId!==c.candidateId) return false;
+  if(c.contextRevision===null||c.contextRevision===undefined) return false;
+  if(!snap.conversation || c.contextRevision!==snap.conversation.contextRevision) return false;
+  if(!snap.sessionPolicy || p.generation!==snap.sessionPolicy.generation) return false;
+  return true;
+}
+function previewClientHtml(snap){
+  var p=snap.candidatePreview; if(!p) return "";
+  var hasEval=typeof p.evaluatedSubject==="string"||typeof p.evaluatedBody==="string"; if(!hasEval) return "";
+  var subj=typeof p.evaluatedSubject==="string"?p.evaluatedSubject:"";
+  var body=typeof p.evaluatedBody==="string"?p.evaluatedBody:"";
+  var changed=(p.subjectChanged?" · subject updated":"")+(p.bodyChanged?" · body updated":"");
+  var h='<p>Evaluated suggestion — not approved, not sent'+escHtml(changed)+'</p>';
+  if(p.status!=="released") h+='<p>Status: '+escHtml(p.status)+'</p>';
+  if(p.reason) h+='<p>'+escHtml(p.reason)+'</p>';
+  if(subj) h+='<p>Subject: '+escHtml(subj)+'</p>';
+  if(body) h+='<pre>'+escHtml(body)+'</pre>';
+  if(canAdoptClient(snap)){
+    var dis=dirty?" disabled":"";
+    h+='<button type="button" id="mr-adopt-candidate" aria-label="${esc(MEETING_ROOM_EXTRA_LABELS["mr-adopt-candidate"] ?? "")}" data-mr-action="adopt-candidate" data-mr-candidate-id="'+escHtml(p.candidateId)+'" data-mr-context-revision="'+escHtml(String(snap.candidate.contextRevision))+'" data-mr-policy-generation="'+escHtml(String(p.generation))+'"'+dis+'>Use this email</button>';
+  }
+  return h;
+}
 function renderCandidatePanel(candidate){
   var panel=document.getElementById("mr-candidate-panel");
   if(!panel) return;
   if(!candidate){ panel.innerHTML='<h2 id="mr-candidate-heading">Proposed email (private provisional)</h2><p>Private provisional candidate — not policy-checked, not approved, not sent.</p>'; return; }
   var html='<h2 id="mr-candidate-heading">Proposed email (private provisional)</h2>';
   html+='<p>Private provisional candidate — not policy-checked, not approved, not sent.</p>';
-  html+='<p>Status: '+escHtml(candidate.status)+'</p><p>'+escHtml(candidate.note||"")+'</p>';
+  html+='<p>Status: '+escHtml(candidate.status)+"</p><p>"+escHtml(candidate.note||"")+"</p>";
   if(candidate.status==="provisional" && candidate.subject!==null && candidate.body!==null){
     if(candidate.contextRevision!==null && candidate.contextRevision!==undefined) html+='<p>contextRevision: '+escHtml(String(candidate.contextRevision))+'</p>';
     if(candidate.sourceRefs && candidate.sourceRefs.length) html+='<p>Sources: '+escHtml(candidate.sourceRefs.map(function(s){return s.utteranceId+" rev "+String(s.revision);}).join(", "))+'</p>';
     html+='<p>Subject: '+escHtml(candidate.subject)+'</p><pre>'+escHtml(candidate.body)+'</pre>';
   } else if(candidate.status==="pending"){ html+='<p>Drafting a private provisional candidate.</p>'; }
+  if(window.__mrSnap) html+=previewClientHtml(window.__mrSnap);
   panel.innerHTML=html;
 }
 function doPoll(){
@@ -494,10 +572,12 @@ function doPoll(){
     var snap=res.body.snapshot;
     if(!isValidSnapshot(snap)){ ensureUnavailableNotice(); if(pollActive&&!isExpired()) schedulePoll(); return; }
     removeUnavailableNotice();
+    window.__mrSnap=snap;
     pollEligible=!!(snap.candidate && snap.view && snap.view.twinStatus==="active");
     if(!snap.candidate){ stopPolling(); return; }
     if(snap.view && snap.view.twinStatus!=="active"){ stopPolling(); return; }
     renderCandidatePanel(snap.candidate);
+    if(dirty) lockOutgoing();
     if(pollExpired) ensureExpiredNotice();
     if(!isExpired()) schedulePoll();
   }).catch(function(){ pollInFlight=false; if(myGen!==pollGen){ if(pollActive&&!isExpired()) schedulePoll(); return; } if(curRoom!==roomId) return; if(isExpired()||pollExpired) return; if(!pollActive) return; ensureUnavailableNotice(); if(!isExpired()) schedulePoll(); });
@@ -563,7 +643,7 @@ function applyResult(action,res){
     }else{
       dirty=false;
     }
-  if(b && b.snapshot) syncPollingFromSnapshot(b.snapshot);
+  if(b && b.snapshot) { window.__mrSnap=b.snapshot; syncPollingFromSnapshot(b.snapshot); }
   if(pollExpired) ensureExpiredNotice();
   }
   if(Array.isArray(b.announcements)){say(b.announcements);}
@@ -591,7 +671,73 @@ function applyResult(action,res){
     if(box){showComparison(box,b.comparison,b.comparisonReason);if(b.comparisonApproved===false){var n=document.createElement("p");n.textContent="Not yet approved: compared against the current draft package. Approve it before sending.";box.appendChild(n);}}
   }
 }
-document.addEventListener("click",function(e){
+document.addEventListener("click",async function(e){
+  var ct=e.target;
+  while(ct&&ct!==document){
+    if(ct.id==="mr-copy-email"&&ct.getAttribute&&ct.getAttribute("data-mr-package")){break;}
+    ct=ct.parentNode;
+  }
+  if(ct&&ct!==document&&ct.id==="mr-copy-email"){
+    if(copyBusy){return;}
+    var capRoomId=roomId;
+    var capPackageId=ct.getAttribute("data-mr-package");
+    if(dirty){return;}
+    if(!navigator.clipboard||!navigator.clipboard.writeText){say(["Copy failed: clipboard unavailable."]);return;}
+    if(ct.disabled){return;}
+    copyBusy=true;
+    var capturedRequestSeq;
+    var postPromise;
+    try{
+      postPromise=post("state",{});
+      capturedRequestSeq=seq;
+    }catch(err2){
+      copyBusy=false;
+      say(["Copy failed: could not copy approved email."]);
+      return;
+    }
+    try{
+      var res=await postPromise;
+      if(!res||!res.ok){say(["Copy failed: could not load approved email."]);return;}
+      if(!res.body||!res.body.snapshot){say(["Copy failed: could not load approved email."]);return;}
+      if(res.body.snapshot.roomId!==capRoomId){say(["Copy failed: room changed."]);return;}
+      if(capRoomId!==roomId){say(["Copy failed: room changed."]);return;}
+      if(res.body.snapshot.packageId!==capPackageId){say(["Copy failed: package changed."]);return;}
+      if(!res.body.snapshot.view||!res.body.snapshot.view.draft||res.body.snapshot.view.draft.approved!==true){say(["Copy failed: package not approved."]);return;}
+      if(res.body.snapshot.view.draft.sendState!=="unsent"){say(["Copy failed: package not approved."]);return;}
+      if(res.body.snapshot.view.twinStatus!=="active"){say(["Copy failed: package not approved."]);return;}
+      var freshBody=res.body.snapshot.view.draft.body;
+      if(typeof freshBody!=="string"){say(["Copy failed: could not load approved email."]);return;}
+      var freshSha=res.body.snapshot.view.draft.sha256;
+      if(typeof freshSha!=="string"){say(["Copy failed: could not load approved email."]);return;}
+      var bodyBytes=new TextEncoder().encode(freshBody);
+      var digest=await crypto.subtle.digest("SHA-256",bodyBytes);
+      var hashArr=Array.from(new Uint8Array(digest));
+      var computedSha=hashArr.map(function(b){return b.toString(16).padStart(2,"0");}).join("");
+      if(computedSha!==freshSha){say(["Copy failed: SHA mismatch."]);return;}
+      if(capturedRequestSeq!==seq){return;}
+      if(capRoomId!==roomId){return;}
+      if(dirty){return;}
+      if(res.body.snapshot.packageId!==capPackageId){say(["Copy failed: package changed."]);return;}
+      var curBtn=document.getElementById("mr-copy-email");
+      if(!curBtn){say(["Copy failed: button changed."]);return;}
+      if(curBtn.disabled){say(["Copy failed: button changed."]);return;}
+      if(curBtn.getAttribute("data-mr-package")!==capPackageId){say(["Copy failed: package changed."]);return;}
+      if(dirty){say(["Copy failed: unsaved changes."]);return;}
+      await navigator.clipboard.writeText(freshBody);
+      if(capturedRequestSeq!==seq){return;}
+      if(capRoomId!==roomId){return;}
+      say(["Approved email copied."]);
+    }catch(err){
+      if(typeof capturedRequestSeq!=="undefined"){
+        if(capturedRequestSeq!==seq){return;}
+        if(capRoomId!==roomId){return;}
+      }
+      say(["Copy failed: could not copy approved email."]);
+    }finally{
+      copyBusy=false;
+    }
+    return;
+  }
   var t=e.target;
   while(t&&t!==document){
     if(t.hasAttribute&&t.hasAttribute("data-mr-action")){break;}
@@ -609,9 +755,16 @@ document.addEventListener("click",function(e){
   if(action==="guide"){extra.text=fieldValue("guidance-input");}
   else if(action==="edit-draft"){extra.text=fieldValue("package-editor");}
   else if(action==="compare"){extra.text=fieldValue("compare-input");}
-  else if(action==="plugin-include"||action==="plugin-exclude"||action==="plugin-refresh"){
+    if(action==="plugin-include"||action==="plugin-exclude"||action==="plugin-refresh"){
     var pid=t.getAttribute("data-mr-id");
     if(pid){extra.id=pid;}
+  } else if(action==="adopt-candidate"){
+    var cid=t.getAttribute("data-mr-candidate-id");
+    var cr=t.getAttribute("data-mr-context-revision");
+    var pg=t.getAttribute("data-mr-policy-generation");
+    if(cid) extra.id=cid;
+    if(cr) extra.contextRevision=Number(cr);
+    if(pg) extra.policyGeneration=Number(pg);
   }
   post(action,extra).then(function(res){applyResult(action,res);});
 });
@@ -671,8 +824,8 @@ document.addEventListener("keydown",function(e){
 })();`;
 
 /** Full `<!DOCTYPE html>` meeting room document with one main landmark. */
-export function renderMeetingRoomPage(snap: MeetingRoomSnapshot, aiSelfSrc?: string | null): string {
-  const twinStage = twinStageHtml({ imageSrc: aiSelfSrc ?? null, modeLabel: "Offline demo", narrowPlacement: "before", caption: "Offline meeting room with made-up meetings. The twin drafts; you approve every step before anything moves." });
+export function renderMeetingRoomPage(snap: MeetingRoomSnapshot, aiSelfSrc?: string | null, aiConfigured = false): string {
+  const twinStage = twinStageHtml({ imageSrc: aiSelfSrc ?? null, modeLabel: aiConfigured ? "AI drafting configured" : "Offline demo", narrowPlacement: "before", caption: aiConfigured ? "Review the redacted meeting context before AI drafting, then review the reply before using it." : "Offline meeting room with made-up meetings. The twin drafts; you approve every step before anything moves." });
   const body = renderMeetingRoomBody(snap);
   return `<!DOCTYPE html>
 <html lang="en">
@@ -693,7 +846,7 @@ button{margin:.25rem;padding:.45rem 1rem;font:inherit;border-radius:.5rem;border
 button:disabled{opacity:.45;cursor:not-allowed}
 ${THEME_CSS}</style>
 </head>
-<body>
+<body data-ai-drafting="${aiConfigured && snap.demo === null ? "1" : "0"}">
 <main>
 <div class="ss-shell">
 <div class="ss-main">
@@ -706,6 +859,8 @@ ${twinStage}
 </main>
 <script>
 ${CLIENT_JS}
+${CANDIDATE_CONTEXT_CLIENT_JS}
+${MEETING_INPUT_CLIENT_JS}
 </script>
 </body>
 </html>`;

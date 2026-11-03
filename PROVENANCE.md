@@ -442,3 +442,25 @@ Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 
 
 ### Evidence export redaction counts, core (Nov 1, 2026)
 Muse Code on Baseten (model `meta-models/muse-spark-open-1026`, Muse Spark Open 1026) made the exported evidence redactions match the placeholders in the approved package (counted with each occurrence's own position after plugin changes and edits, with stale saved drafts corrected on load) by one new helper in `redaction.ts`, leaving the package text, hash, preview and export shape unchanged, with one new regression test file, in a source-only, no-tools session from a requirements-only task written by Grok Bot for Bridgett Sanders; Grok Bot applied the output verbatim. No review, deploy or production result is claimed.
+
+## Nov 3, 2026 — Authorship and commit attribution for PRs 186–188
+
+On Nov 3, 2026, Bridgett authorized Codex to execute commits while Muse Code alone authors project code, tests, and docs in small bounded sessions. Muse Code 1.4.14 using the supplied existing Baseten `meta-models/muse-spark-open-1026` generated the code and tests for PR 186 (approval broker), PR 187 (preview corrections), and PR 188 (browser/page authority). Codex recovered and applied the exact proposals, reviewed them, ran focused synthetic checks, and mechanically created the local and GitHub API commits; Muse did not execute Git.
+
+Published GitHub API commits show `Bridgett50` as both Git author and committer by account default — 186 `98b5f72e87168d2960a83cc06c8e29c476bfce9c`, 187 `ac8a7c896480ed605d5671c65c3471ea096c7505`, 188 `faa6dc613eac45bcdba661b17b45399a225ce877` — which does not identify the source-code author. Local commits `e5471d7`, `1fe6202`, `4d50ce3` record Muse Code as author and Codex as committer and have identical verified trees to the published commits. Earlier public records `d19bbaf` and `e43d824` also record Muse Code as author / Codex as committer; metadata alone does not establish actual command execution.
+
+PRs 186 through 188 were closed and then restored as drafts, preserving their history. The current source is reviewed foundations, not a completed model/meeting/email runtime. Focused checks without live inference do not prove full product or production quality, and review was focused — not a guarantee of ownership eligibility or universal coverage.
+
+Native coding sessions used explicit effort, first-error stop, one step per turn, and a 180-second cap; rejected or truncated test proposals were not applied. Coding token artifacts exist; remaining grant balance and dollar billing are not verified. This prose itself is Muse-authored; Codex reviews, applies, commits, and publishes it mechanically. No Grok or provider switch occurred in this local repair.
+
+## Nov3,2026—Meeting-to-email prototype
+
+This correction applies only to this local repair, not to universal historical authors of the prototype.
+
+All new source, tests, and docs added in this repair were authored by Muse Code 1.4.14 via the existing Baseten model `meta-models/muse-spark-open-1026`, under explicit medium/low bounded one-step coding. Codex handled requirements, review, and mechanical apply/test/Git steps.
+
+Local Git records Muse as author and Codex as committer; published API identity defaults to the connected account and is not proof of source authorship. No claim is made that Muse executed Git.
+
+This repair builds on PR 189–196 foundations plus the current import, including approved email copy, background-refresh race protection, and verification via a fake provider with real browser and Windows clipboard proof. Invalid or truncated proposals were rejected, with no automatic retry loop.
+
+Coding billing and balance remain unverified. There was no Grok involvement, no paid application demo, eval, or frozen/sealed access, and no claim of live AI quality, Google connection, or real sending.
