@@ -176,11 +176,13 @@ export type CandidateReasonerInput = {
   readonly meetingId: string;
   readonly contextRevision: number;
   readonly policyGeneration: number;
+  readonly epoch?: number;
   readonly utterances: ConversationSnapshot["utterances"];
   readonly guidance: readonly string[];
   readonly notes: readonly string[];
 };
 export type CandidateReasoner = (input: CandidateReasonerInput) => Promise<unknown>;
+export type CandidateCurrentBinding = { readonly roomId: string; readonly ownerId: string; readonly meetingId: string; readonly contextRevision: number; readonly policyGeneration: number; readonly epoch?: number };
 export type MeetingRoomCandidateSnapshot = {
   readonly meetingId: string;
   readonly status: "none" | "pending" | "provisional" | "failed";
@@ -280,6 +282,7 @@ export type MeetingRoomService = {
     roomId: unknown,
     event: unknown,
   ): { status: number; body: MeetingRoomActionResult };
+  candidateIsCurrent(binding: CandidateCurrentBinding): boolean;
   sentBodies(): readonly string[];
   /** Test-visible counts: pages, stores, activity entries and demo pages held. */
   sizes(): { pages: number; stores: number; activity: number; demoPages: number };
@@ -625,6 +628,7 @@ export function createMeetingRoomService(opts?: {
       meetingId,
       contextRevision,
       policyGeneration,
+      epoch,
       utterances: snapConv.utterances,
       guidance: Object.freeze([...view.guidance]),
       notes: Object.freeze([...view.notes]),
@@ -1384,6 +1388,21 @@ export function createMeetingRoomService(opts?: {
       return service.act(body, headers);
     },
 
+    candidateIsCurrent(binding: CandidateCurrentBinding): boolean {
+      if (!isCandidateActive()) return false;
+      if (binding.epoch === undefined) return false;
+      if (!Number.isSafeInteger(binding.epoch)) return false;
+      if (binding.epoch < 0) return false;
+      const entry = rooms.get(binding.roomId);
+      if (entry === undefined) return false;
+      const st = candidateByRoom.get(entry.room);
+      if (st === undefined) return false;
+      if (!st.active) return false;
+      if (st.timedOut) return false;
+      const view = entry.room.view();
+      const curRev = conversationByRoom.get(entry.room)?.get(binding.meetingId)?.contextRevision ?? 0;
+      return view.ownerId === binding.ownerId && view.selectedMeetingId === binding.meetingId && view.twinStatus === "active" && curRev === binding.contextRevision && getPolicyGeneration(binding.ownerId, binding.meetingId) === binding.policyGeneration && st.epoch === binding.epoch;
+    },
     sentBodies(): readonly string[] {
       return [...sent];
     },

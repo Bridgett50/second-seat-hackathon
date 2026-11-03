@@ -7,6 +7,7 @@ export type CandidateBinding = Readonly<{
   meetingId: string;
   contextRevision: number;
   policyGeneration: number;
+  epoch?: number;
 }>;
 
 export type CandidateReasonerDeps = {
@@ -31,6 +32,7 @@ export function createCandidateReasoner(
       meetingId: input.meetingId,
       contextRevision: input.contextRevision,
       policyGeneration: input.policyGeneration,
+      ...(input.epoch !== undefined ? { epoch: input.epoch } : {}),
     });
     if (!isCurrent(binding)) throw new Error("stale context");
     const serialized = input.utterances.map((u) => `${u.utteranceId} ${u.revision} ${u.speaker} ${u.text}`).join("\n");
