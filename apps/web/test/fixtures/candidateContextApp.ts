@@ -29,7 +29,14 @@ export function makeContextApp() {
   const captured = { text: "" };
   const callModel = vi.fn(async (gated: { readonly text: string }) => {
     captured.text = gated.text;
-    return { subject: "Meeting follow-up", body: "I will confirm the date myself.", sourceRefs: [{ utteranceId: knownUid, revision: 1 }] };
+    const lines = gated.text.split("\n");
+    let matched: RegExpMatchArray | null = null;
+    for (const line of lines) {
+      const m = line.match(/([0-9a-f-]{36})\s+(\d+)\s+\S.*\s+.*/);
+      if (m && Number(m[2]) > 0) { matched = m; break; }
+    }
+    if (!matched) throw new Error("no transcript line with uuid and positive revision found in gated.text");
+    return { subject: "Meeting follow-up", body: "I will confirm the date myself.", sourceRefs: [{ utteranceId: matched[1], revision: Number(matched[2]) }] };
   });
   const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, {
     gate,
@@ -38,7 +45,7 @@ export function makeContextApp() {
     callModel,
   });
   if (!reasoner) throw new Error("reasoner undefined");
-  service = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "1" }, conversationInput: true, sessionPolicy: true, candidateReasoner: reasoner, candidateDeadlineMs: 120000, candidateAutoDispatch: false });
+  service = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "0" }, conversationInput: true, sessionPolicy: true, candidateReasoner: reasoner, candidateDeadlineMs: 120000, candidateAutoDispatch: false });
   const api = createCandidateApprovalApi(service, broker);
   const server = createWebServer({ meetingRoom: service, candidateApprovalApi: api });
   return { service, gate, broker, server, callModel, knownUid, captured };

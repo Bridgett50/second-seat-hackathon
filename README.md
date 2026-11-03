@@ -20,6 +20,8 @@ The meeting room twin is a scripted demonstration on synthetic data: it calls no
 
 Before the approved text is sent, a redaction check has to pass. After the brief is written, a second check has to pass. If a recorded support verdict is available, that is checked too. A hard failure stops the step and the page says "Needs owner review" without quoting the provider. Noisy warnings are sent to you for review and do not block the brief. Offline and Demo Mode run the same checks on the local brief. You still approve the redacted text and the draft yourself.
 
+The web app now includes an experimental candidate drafting flow that works from a single pasted or uploaded text excerpt of up to 6000 characters. After private redaction and owner approval of the exact context, a candidate draft is produced under local policy and can be adopted, edited, saved as part of an approval package, and copied for use. This model-backed path requires existing live Glimmer and Spark configuration with candidate reasoning enabled, and it is not enabled through the public offline wrapper. Google Meet, Gmail, Calendar and Docs are not connected and real sending remains refused, and in this cycle only the gating, browser handling and clipboard behavior were tested with fake providers without live model validation.
+
 ## Why this matters to me
 
 In the meeting assistants I tried, I hit two problems. They summarized the whole call and missed the specific financial details I actually needed to act on. And to get those summaries, I had to send private client data, vendor names, and proprietary numbers to someone else's cloud. As a business owner, that was a privacy risk I couldn't take.

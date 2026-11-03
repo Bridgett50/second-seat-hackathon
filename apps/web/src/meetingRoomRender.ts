@@ -16,6 +16,7 @@ import {
 import { THEME_CSS, twinStageHtml } from "./theme.js";
 import type { MeetingRoomSnapshot } from "./meetingRoom.js";
 import { CANDIDATE_CONTEXT_CLIENT_JS } from "./candidateContextClient.js";
+import { MEETING_INPUT_CLIENT_JS } from "./meetingInputClient.js";
 
 /** Escape dynamic text and attribute values for HTML. */
 function esc(s: string): string {
@@ -233,6 +234,8 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
   const sendText = snap.fakeSend ? "Send (test fake transport)" : "Send (refused on this host)";
   const sendDescribedBy = snap.fakeSend ? "" : ` aria-describedby="send-refused-note"`;
   const sendAriaLabel = snap.fakeSend ? A11Y_LABELS.send : "Send (refused on this host)";
+  const copyEnabled = view.draft.approved === true && view.draft.sendState === "unsent" && view.twinStatus === "active";
+  const copyDis = copyEnabled ? "" : " disabled";
   return (
     `${sectionOpen("approval")}${esc(headingFor("approval", snap))}</h2>` +
     `<p id="mr-approval-state">Approved: ${approved} · Send: ${esc(view.draft.sendState)}</p>` +
@@ -242,6 +245,7 @@ function approvalSection(snap: MeetingRoomSnapshot): string {
     sendNote +
     `<div><button type="button" id="approve" aria-label="${esc(A11Y_LABELS.approve)}" data-mr-action="approve" data-mr-package="${esc(snap.packageId)}"${dis}>Approve</button> ` +
     `<button type="button" id="send" aria-label="${esc(sendAriaLabel)}" data-mr-action="send" data-mr-package="${esc(snap.packageId)}"${sendDescribedBy}>${esc(sendText)}</button></div>` +
+    `<div><button type="button" id="mr-copy-email" data-mr-package="${esc(snap.packageId)}" aria-label="${esc(MEETING_ROOM_EXTRA_LABELS["mr-copy-email"] ?? "")}"${copyDis}>Copy approved email</button></div>` +
     (snap.sendNotice
       ? `<p id="send-notice" role="alert" class="mr-send-notice">${esc(snap.sendNotice)}</p>`
       : "") +
@@ -389,7 +393,7 @@ export function renderMeetingRoomBody(snap: MeetingRoomSnapshot): string {
   return parts.join("\n");
 }
 
-export const MEETING_ROOM_EXTRA_LABELS: Readonly<Record<string, string>> = { "mr-adopt-candidate": "Use this email" };
+export const MEETING_ROOM_EXTRA_LABELS: Readonly<Record<string, string>> = { "mr-adopt-candidate": "Use this email", "mr-copy-email": "Copy approved email" };
 
 const CLIENT_JS = `(function(){
 "use strict";
@@ -411,9 +415,10 @@ function fieldValue(id){
 }
 var seq=0;
 var dirty=false;
+var copyBusy=false;
 var OUTGOING={"approve":true,"send":true,"evidence-export":true,"adopt-candidate":true};
 function lockOutgoing(){
-  var ids=["approve","send","evidence-export","mr-adopt-candidate"];
+  var ids=["approve","send","evidence-export","mr-adopt-candidate","mr-copy-email"];
   for(var i=0;i<ids.length;i+=1){
     var b=document.getElementById(ids[i]);
     if(b){b.disabled=true;}
@@ -666,7 +671,73 @@ function applyResult(action,res){
     if(box){showComparison(box,b.comparison,b.comparisonReason);if(b.comparisonApproved===false){var n=document.createElement("p");n.textContent="Not yet approved: compared against the current draft package. Approve it before sending.";box.appendChild(n);}}
   }
 }
-document.addEventListener("click",function(e){
+document.addEventListener("click",async function(e){
+  var ct=e.target;
+  while(ct&&ct!==document){
+    if(ct.id==="mr-copy-email"&&ct.getAttribute&&ct.getAttribute("data-mr-package")){break;}
+    ct=ct.parentNode;
+  }
+  if(ct&&ct!==document&&ct.id==="mr-copy-email"){
+    if(copyBusy){return;}
+    var capRoomId=roomId;
+    var capPackageId=ct.getAttribute("data-mr-package");
+    if(dirty){return;}
+    if(!navigator.clipboard||!navigator.clipboard.writeText){say(["Copy failed: clipboard unavailable."]);return;}
+    if(ct.disabled){return;}
+    copyBusy=true;
+    var capturedRequestSeq;
+    var postPromise;
+    try{
+      postPromise=post("state",{});
+      capturedRequestSeq=seq;
+    }catch(err2){
+      copyBusy=false;
+      say(["Copy failed: could not copy approved email."]);
+      return;
+    }
+    try{
+      var res=await postPromise;
+      if(!res||!res.ok){say(["Copy failed: could not load approved email."]);return;}
+      if(!res.body||!res.body.snapshot){say(["Copy failed: could not load approved email."]);return;}
+      if(res.body.snapshot.roomId!==capRoomId){say(["Copy failed: room changed."]);return;}
+      if(capRoomId!==roomId){say(["Copy failed: room changed."]);return;}
+      if(res.body.snapshot.packageId!==capPackageId){say(["Copy failed: package changed."]);return;}
+      if(!res.body.snapshot.view||!res.body.snapshot.view.draft||res.body.snapshot.view.draft.approved!==true){say(["Copy failed: package not approved."]);return;}
+      if(res.body.snapshot.view.draft.sendState!=="unsent"){say(["Copy failed: package not approved."]);return;}
+      if(res.body.snapshot.view.twinStatus!=="active"){say(["Copy failed: package not approved."]);return;}
+      var freshBody=res.body.snapshot.view.draft.body;
+      if(typeof freshBody!=="string"){say(["Copy failed: could not load approved email."]);return;}
+      var freshSha=res.body.snapshot.view.draft.sha256;
+      if(typeof freshSha!=="string"){say(["Copy failed: could not load approved email."]);return;}
+      var bodyBytes=new TextEncoder().encode(freshBody);
+      var digest=await crypto.subtle.digest("SHA-256",bodyBytes);
+      var hashArr=Array.from(new Uint8Array(digest));
+      var computedSha=hashArr.map(function(b){return b.toString(16).padStart(2,"0");}).join("");
+      if(computedSha!==freshSha){say(["Copy failed: SHA mismatch."]);return;}
+      if(capturedRequestSeq!==seq){return;}
+      if(capRoomId!==roomId){return;}
+      if(dirty){return;}
+      if(res.body.snapshot.packageId!==capPackageId){say(["Copy failed: package changed."]);return;}
+      var curBtn=document.getElementById("mr-copy-email");
+      if(!curBtn){say(["Copy failed: button changed."]);return;}
+      if(curBtn.disabled){say(["Copy failed: button changed."]);return;}
+      if(curBtn.getAttribute("data-mr-package")!==capPackageId){say(["Copy failed: package changed."]);return;}
+      if(dirty){say(["Copy failed: unsaved changes."]);return;}
+      await navigator.clipboard.writeText(freshBody);
+      if(capturedRequestSeq!==seq){return;}
+      if(capRoomId!==roomId){return;}
+      say(["Approved email copied."]);
+    }catch(err){
+      if(typeof capturedRequestSeq!=="undefined"){
+        if(capturedRequestSeq!==seq){return;}
+        if(capRoomId!==roomId){return;}
+      }
+      say(["Copy failed: could not copy approved email."]);
+    }finally{
+      copyBusy=false;
+    }
+    return;
+  }
   var t=e.target;
   while(t&&t!==document){
     if(t.hasAttribute&&t.hasAttribute("data-mr-action")){break;}
@@ -775,7 +846,7 @@ button{margin:.25rem;padding:.45rem 1rem;font:inherit;border-radius:.5rem;border
 button:disabled{opacity:.45;cursor:not-allowed}
 ${THEME_CSS}</style>
 </head>
-<body>
+<body data-ai-drafting="${aiConfigured && snap.demo === null ? "1" : "0"}">
 <main>
 <div class="ss-shell">
 <div class="ss-main">
@@ -789,6 +860,7 @@ ${twinStage}
 <script>
 ${CLIENT_JS}
 ${CANDIDATE_CONTEXT_CLIENT_JS}
+${MEETING_INPUT_CLIENT_JS}
 </script>
 </body>
 </html>`;
