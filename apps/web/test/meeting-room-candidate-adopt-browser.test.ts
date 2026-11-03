@@ -166,6 +166,46 @@ describe("meeting-room candidate adopt browser", () => {
       expect(afterAdopt.body.snapshot.copyText).toBeNull();
       const editor = page.locator("#package-editor");
       await pwExpect(editor).toHaveValue(preview.evaluatedSubject + "\n\n" + preview.evaluatedBody, { timeout: 2000 });
+      let heldAdoptCount = 0;
+      let serverAnsweredResolve: () => void = () => {};
+      const serverAnswered = new Promise<void>((r) => { serverAnsweredResolve = r; });
+      let releaseResolve: () => void = () => {};
+      const release = new Promise<void>((r) => { releaseResolve = r; });
+      const apiRoute = (url: URL) => url.pathname === API;
+      await page.route(apiRoute, async (route: Route) => {
+          const d = route.request().postDataJSON();
+          if (d !== null && d !== undefined && d.action === "adopt-candidate") {
+            heldAdoptCount += 1;
+            const response = await route.fetch();
+            serverAnsweredResolve();
+            await release;
+            await route.fulfill({ response });
+            return;
+          }
+          await route.fallback();
+      });
+      const lateEdit = "LATE-EDIT-" + String(Date.now());
+      const heldAdoptRespPromise = page.waitForResponse((r) => {
+        if (!r.url().includes(API) || r.request().method() !== "POST") return false;
+        try { const data = r.request().postDataJSON(); return data !== null && data !== undefined && data.action === "adopt-candidate"; } catch { return false; }
+      });
+      await page.locator('[data-mr-action="adopt-candidate"]').click();
+      await serverAnswered;
+      await page.locator("#package-editor").fill(lateEdit);
+      releaseResolve();
+      const heldAdoptResp = await heldAdoptRespPromise;
+      expect(heldAdoptResp.status()).toBe(200);
+      const heldStateRespPromise = page.waitForResponse((r) => {
+        if (!r.url().includes(API) || r.request().method() !== "POST") return false;
+        try { const data = r.request().postDataJSON(); return data !== null && data !== undefined && data.action === "state"; } catch { return false; }
+      });
+      await heldStateRespPromise;
+      await pwExpect(page.locator("#package-editor")).toHaveValue(lateEdit, { timeout: 2000 });
+      await pwExpect(page.locator("#approve")).toBeDisabled({ timeout: 2000 });
+      await pwExpect(page.locator("#send")).toBeDisabled({ timeout: 2000 });
+      expect(heldAdoptCount).toBe(1);
+      expect(adoptCount).toBe(2);
+      await page.unroute(apiRoute);
       expect(reasonerCalls.length).toBe(1);
       expect(svc.sentBodies().length).toBe(0);
       expect(nonLoopback.length).toBe(0);
