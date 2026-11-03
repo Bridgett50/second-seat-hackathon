@@ -464,3 +464,7 @@ Local Git records Muse as author and Codex as committer; published API identity 
 This repair builds on PR 189–196 foundations plus the current import, including approved email copy, background-refresh race protection, and verification via a fake provider with real browser and Windows clipboard proof. Invalid or truncated proposals were rejected, with no automatic retry loop.
 
 Coding billing and balance remain unverified. There was no Grok involvement, no paid application demo, eval, or frozen/sealed access, and no claim of live AI quality, Google connection, or real sending.
+
+## Nov 3, 2026 — Google OAuth state foundation
+
+Muse Code 1.4.14 on existing supplied Baseten meta-models/muse-spark-open-1026 authored `apps/web/src/googleOAuthState.ts` and `test/google-oauth-state.test.ts` in bounded one-step medium/low sessions. Codex reviewed and applied the output mechanically and ran two deterministic offline tests and TypeScript checks; all passed. Verified properties include state isolation, one-use consumption, PKCE, expiry, cap, and cancel checks. An invalid-purpose test proposal was rejected; a clock-boundary proposal was corrected by Muse before application. The module is unwired — these checks do not prove Google connection, token storage, live model, meeting/email calls, merge, or deploy. Coding billing/balance not verified. Codex may execute Git; Muse did not commit. No Grok involvement.
