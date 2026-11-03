@@ -377,4 +377,39 @@ describe("candidateReasoner", () => {
     expect(revokedId).toBe(firstRunId);
     expect(gate.receipts(firstRunId).length).toBe(0);
   });
+  it("follow-up email task via approved gate", async () => {
+    const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+    const model = vi.fn(async (gated: GatedText) => gated.text);
+    let captured: string | undefined;
+    const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, { gate, requestOwnerApproval: async (runId, redactedPreview, binding) => { captured = redactedPreview; return gate.approve(runId, redactedPreview); }, isCurrent: () => true, callModel: model });
+    if (reasoner === undefined) throw new Error("reasoner off");
+    const result = await reasoner(baseInput());
+    expect(result).toBe(captured);
+    expect(result).toMatch(/follow-up email/i);
+    expect(result).toContain("u1");
+    expect(result).toContain("[REDACTED_email]");
+    expect(result).not.toContain("alice@example.com");
+    expect(result).not.toContain("SECRET_GUIDANCE_XYZ");
+    expect(result).not.toContain("SECRET_NOTES_ABC");
+  });
+
+it("rejects over 20k aggregate context before gate.prepare", async () => {
+  const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+  const prepareSpy = vi.spyOn(gate, "prepare");
+  const model = vi.fn(async (_g: GatedText) => null);
+  const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, { gate, requestOwnerApproval: async () => null, isCurrent: () => true, callModel: model });
+  if (reasoner === undefined) throw new Error("reasoner off");
+  const base = baseInput();
+  const first = base.utterances[0];
+  if (first === undefined) throw new Error("no utterance");
+  const utterances = Array.from({ length: 11 }, (_, i) => ({ ...first, utteranceId: "u" + (i + 1), sequence: i + 1, text: "x".repeat(2000) }));
+  try {
+    await expect(reasoner({ ...base, utterances })).rejects.toThrow();
+    expect(prepareSpy).toHaveBeenCalledTimes(0);
+    expect(model).toHaveBeenCalledTimes(0);
+  } finally {
+    prepareSpy.mockRestore();
+  }
+});
+
 });
