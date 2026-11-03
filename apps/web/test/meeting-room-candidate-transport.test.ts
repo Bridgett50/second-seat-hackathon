@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createPrivacyGate, GatedText, type PrivacyGate } from "@second-seat/bot/dist/src/private/gate.js";
 import type { Redactor } from "@second-seat/bot/dist/src/private/redact.js";
 import { BRIEF_API_URL, BRIEF_MODEL } from "@second-seat/bot/dist/src/brief/muse.js";
-import { createCandidateTransport, CANDIDATE_EMAIL_SCHEMA } from "../src/candidateTransport.js";
+import { createCandidateTransport, CANDIDATE_EMAIL_SCHEMA, CandidateOutputError } from "../src/candidateTransport.js";
 import type { CandidateSourceRef } from "../src/meetingRoom.js";
 
 const needle = "alice@example.com";
@@ -158,6 +158,44 @@ describe("meeting-room-candidate-transport", () => {
       await expect(gate.send(runId, token, (g) => transport(g))).rejects.toThrow(`candidate transport http ${status}`);
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(gate.receipts(runId)[0]).toMatchObject({ transport: "muse", attempt: 1, outcome: "http_error", httpStatus: status });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    }
+  });
+  it("malformed output rejects with CandidateOutputError", async () => {
+    const e = { subject: "Hello", body: "World", sourceRefs: [{ utteranceId: "u1", revision: 1 }] };
+    const u = { prompt_tokens: 10, prompt_tokens_details: { cached_tokens: 2 }, completion_tokens: 5, completion_tokens_details: { reasoning_tokens: 1 } };
+    const cases: Array<{ name: string; body: string; hasValidUsage: boolean }> = [
+      { name: "length", body: JSON.stringify({ usage: u, choices: [{ finish_reason: "length", message: { content: JSON.stringify(e) } }] }), hasValidUsage: true },
+      { name: "empty content", body: JSON.stringify({ usage: u, choices: [{ finish_reason: "stop", message: { content: "", reasoning_content: "x" } }] }), hasValidUsage: true },
+      { name: "invalid content json", body: JSON.stringify({ usage: u, choices: [{ finish_reason: "stop", message: { content: "not json{" } }] }), hasValidUsage: true },
+      { name: "extra email key", body: JSON.stringify({ usage: u, choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ ...e, extra: 1 }) } }] }), hasValidUsage: true },
+      { name: "sourceRefs strings", body: JSON.stringify({ usage: u, choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ subject: "Hello", body: "World", sourceRefs: ["u1"] }) } }] }), hasValidUsage: true },
+      { name: "invalid revision", body: JSON.stringify({ usage: u, choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ subject: "Hello", body: "World", sourceRefs: [{ utteranceId: "u1", revision: 0 }] }) } }] }), hasValidUsage: true },
+      { name: "missing usage", body: JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(e) } }] }), hasValidUsage: false },
+      { name: "invalid usage", body: JSON.stringify({ usage: { prompt_tokens: -1, completion_tokens: 5 }, choices: [{ finish_reason: "stop", message: { content: JSON.stringify(e) } }] }), hasValidUsage: false },
+      { name: "envelope null", body: "null", hasValidUsage: false },
+      { name: "envelope not json", body: "not json", hasValidUsage: false },
+    ];
+    for (const c of cases) {
+      const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], _init?: RequestInit) => new Response(c.body, { status: 200 }));
+      const cost = fakeCost();
+      const gate = createPrivacyGate({ mode: "live", redactor: makeRedactor() });
+      const { runId, token } = await prepareGated(gate);
+      const transport = createCandidateTransport({ apiKey: "k", fetchImpl, ...cost });
+      const p = gate.send(runId, token, (g) => transport(g));
+      const err = await p.then(() => undefined, (e: unknown) => e);
+      if (!(err instanceof CandidateOutputError)) throw new Error("wrong error: " + c.name);
+      if (c.hasValidUsage) {
+        expect(err.usage).toEqual({ inputTokens: 10, cachedTokens: 2, outputTokens: 5, reasoningTokens: 1 });
+        expect(cost.recordCall).toHaveBeenCalledTimes(1);
+        expect(cost.recordCall).toHaveBeenCalledWith({ inputTokens: 10, cachedTokens: 2, outputTokens: 5, reasoningTokens: 1 }, { model: BRIEF_MODEL, promptVersion: "candidate-none" });
+      } else {
+        expect(err.usage).toBeNull();
+        expect(cost.recordCall).toHaveBeenCalledTimes(0);
+      }
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(gate.receipts(runId)).toHaveLength(1);
+      expect(gate.receipts(runId)[0]).toMatchObject({ transport: "muse", attempt: 1, outcome: "provider_confirmed" });
       expect(globalThis.fetch).not.toHaveBeenCalled();
     }
   });
