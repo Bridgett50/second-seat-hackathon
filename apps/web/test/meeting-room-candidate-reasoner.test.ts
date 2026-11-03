@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createPrivacyGate, GatedText } from "@second-seat/bot/dist/src/private/gate.js";
 import { createCandidateReasoner } from "../src/candidateReasoner.js";
+import { createCandidateTransport } from "../src/candidateTransport.js";
 import type { CandidateReasonerInput } from "../src/meetingRoom.js";
 
 function fakeRedactor() {
@@ -82,5 +83,186 @@ describe("candidateReasoner", () => {
     const fn = vi.fn(async (_g: GatedText) => "x");
     await expect(gate.send(capturedRunId, realToken, fn)).rejects.toThrow();
     expect(fn).not.toHaveBeenCalled();
+  });
+  it("registered revoke during held transport preflight => 0 fetch/receipts", async () => {
+    const prev = process.env.GLIMMER_BASE_URL;
+    process.env.GLIMMER_BASE_URL = "http://127.0.0.1:9";
+    try {
+      const gate = createPrivacyGate({ mode: "live", redactor: fakeRedactor() });
+      const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+      let enteredResolve: (v: void) => void = () => {};
+      const enteredP = new Promise<void>((res) => { enteredResolve = res; });
+      let releaseResolve: (v: void) => void = () => {};
+      const releaseP = new Promise<void>((res) => { releaseResolve = res; });
+      const entered = () => { enteredResolve(undefined); };
+      const release = () => { releaseResolve(undefined); };
+      let capturedRunId = "";
+      const transport = createCandidateTransport({
+        apiKey: "k",
+        fetchImpl,
+        checkCapsPreCall: async () => undefined,
+        checkPerCallTokenCap: () => undefined,
+        recordCall: async () => undefined,
+        preflight: async () => { entered(); await releaseP; },
+      });
+      const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, {
+        gate,
+        requestOwnerApproval: async (runId, preview) => {
+          capturedRunId = runId;
+          return Promise.resolve(gate.approve(runId, preview));
+        },
+        isCurrent: () => true,
+        callModel: transport,
+      });
+      if (reasoner === undefined) throw new Error("reasoner off");
+      const regs: Array<() => void> = [];
+      const input = baseInput();
+      const inputWithReg = {
+        roomId: input.roomId,
+        ownerId: input.ownerId,
+        meetingId: input.meetingId,
+        contextRevision: input.contextRevision,
+        policyGeneration: input.policyGeneration,
+        utterances: input.utterances,
+        guidance: input.guidance,
+        notes: input.notes,
+        registerRevoke: (fn: () => void) => { regs.push(fn); },
+      };
+      const p = reasoner(inputWithReg);
+      await enteredP;
+      const r = regs[0];
+      if (r === undefined) throw new Error("no revoke registered");
+      r();
+      release();
+      await expect(p).rejects.toThrow();
+      expect(fetchImpl).toHaveBeenCalledTimes(0);
+      expect(gate.receipts(capturedRunId).length).toBe(0);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.GLIMMER_BASE_URL;
+      } else {
+        process.env.GLIMMER_BASE_URL = prev;
+      }
+    }
+  });
+  it("isCurrent false during held prepare => no registration/approval/model, run revoked", async () => {
+    let enteredResolve: (v: void) => void = () => {};
+    const enteredP = new Promise<void>((res) => { enteredResolve = res; });
+    let releaseResolve: (v: void) => void = () => {};
+    const releaseP = new Promise<void>((res) => { releaseResolve = res; });
+    const baseGate = createPrivacyGate({ mode: "fixture", redactor: {
+      label: "test-fake-held",
+      redactText: async (text: string) => {
+        enteredResolve(undefined);
+        await releaseP;
+        const needle = "alice@example.com";
+        const idx = text.indexOf(needle);
+        if (idx !== -1) {
+          return { maskedText: text.slice(0, idx) + "[REDACTED_email]" + text.slice(idx + needle.length), spans: [{ start: idx, end: idx + needle.length, label: "email" }] };
+        }
+        return { maskedText: text, spans: [] };
+      },
+      redactImage: async () => { throw new Error("no images"); },
+      health: async () => ({ ok: true, label: "test-fake-held" }),
+    }});
+    const runIds: string[] = [];
+    const revokeSpy = vi.spyOn(baseGate, "revoke");
+    const g = {
+      prepare: async (t: string) => {
+        const r = await baseGate.prepare(t);
+        runIds.push(r.runId);
+        return r;
+      },
+      preview: baseGate.preview.bind(baseGate),
+      correct: baseGate.correct.bind(baseGate),
+      approve: baseGate.approve.bind(baseGate),
+      send: baseGate.send.bind(baseGate),
+      revoke: baseGate.revoke.bind(baseGate),
+      receipts: baseGate.receipts.bind(baseGate),
+    };
+    let registerCalled = false;
+    let approvalCalled = false;
+    const model = vi.fn(async (_g: GatedText) => "ok");
+    let current = true;
+    const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, {
+      gate: g,
+      requestOwnerApproval: async () => { approvalCalled = true; return "tok"; },
+      isCurrent: () => current,
+      callModel: model,
+    });
+    if (reasoner === undefined) throw new Error("reasoner off");
+    const input = baseInput();
+    const inputWithReg = {
+      roomId: input.roomId,
+      ownerId: input.ownerId,
+      meetingId: input.meetingId,
+      contextRevision: input.contextRevision,
+      policyGeneration: input.policyGeneration,
+      utterances: input.utterances,
+      guidance: input.guidance,
+      notes: input.notes,
+      registerRevoke: () => { registerCalled = true; },
+    };
+    const p = reasoner(inputWithReg);
+    await enteredP;
+    current = false;
+    releaseResolve(undefined);
+    await expect(p).rejects.toThrow();
+    expect(registerCalled).toBe(false);
+    expect(approvalCalled).toBe(false);
+    expect(model).toHaveBeenCalledTimes(0);
+    expect(revokeSpy).toHaveBeenCalledTimes(1);
+    const firstRunId = runIds[0];
+    if (firstRunId === undefined) throw new Error("no runId");
+      const first = revokeSpy.mock.calls[0]; if (first === undefined) throw new Error("no revoke call");
+      expect(first[0]).toBe(firstRunId);
+  });
+  it("registrar throws => no approval/model, run revoked", async () => {
+    const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+    const runIds: string[] = [];
+    const baseRevoke = gate.revoke.bind(gate);
+    let revokedId = "";
+    let revokeCount = 0;
+    const g = {
+      prepare: async (t: string) => {
+        const r = await gate.prepare(t);
+        runIds.push(r.runId);
+        return r;
+      },
+      preview: gate.preview.bind(gate),
+      correct: gate.correct.bind(gate),
+      approve: gate.approve.bind(gate),
+      send: gate.send.bind(gate),
+      revoke: (id: string) => { revokeCount += 1; revokedId = id; return baseRevoke(id); },
+      receipts: gate.receipts.bind(gate),
+    };
+    let approvalCalled = false;
+    const model = vi.fn(async (_g: GatedText) => "ok");
+    const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, {
+      gate: g,
+      requestOwnerApproval: async () => { approvalCalled = true; return "tok"; },
+      isCurrent: () => true,
+      callModel: model,
+    });
+    if (reasoner === undefined) throw new Error("reasoner off");
+    const input = baseInput();
+    const inputWithReg = {
+      roomId: input.roomId,
+      ownerId: input.ownerId,
+      meetingId: input.meetingId,
+      contextRevision: input.contextRevision,
+      policyGeneration: input.policyGeneration,
+      utterances: input.utterances,
+      guidance: input.guidance,
+      notes: input.notes,
+      registerRevoke: () => { throw new Error("registrar boom"); },
+    };
+    await expect(reasoner(inputWithReg)).rejects.toThrow("registrar boom");
+    expect(approvalCalled).toBe(false);
+    expect(model).toHaveBeenCalledTimes(0);
+    expect(revokeCount).toBe(1);
+    const firstRunId = runIds[0];
+    if (firstRunId === undefined) throw new Error("no runId");
+    expect(revokedId).toBe(firstRunId);
   });
 });

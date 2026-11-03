@@ -180,6 +180,7 @@ export type CandidateReasonerInput = {
   readonly utterances: ConversationSnapshot["utterances"];
   readonly guidance: readonly string[];
   readonly notes: readonly string[];
+  readonly registerRevoke?: (revoke: () => void) => void;
 };
 export type CandidateReasoner = (input: CandidateReasonerInput) => Promise<unknown>;
 export type CandidateCurrentBinding = { readonly roomId: string; readonly ownerId: string; readonly meetingId: string; readonly contextRevision: number; readonly policyGeneration: number; readonly epoch?: number };

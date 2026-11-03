@@ -39,6 +39,7 @@ export function createCandidateReasoner(
     const prepared = await gate.prepare(serialized);
     try {
       if (!isCurrent(binding)) throw new Error("stale context");
+      input.registerRevoke?.(() => gate.revoke(prepared.runId));
       const token = await requestOwnerApproval(prepared.runId, prepared.redactedText, binding);
       if (!isCurrent(binding)) throw new Error("stale context");
       if (token === null) throw new Error("approval denied");
