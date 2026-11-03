@@ -265,4 +265,116 @@ describe("candidateReasoner", () => {
     if (firstRunId === undefined) throw new Error("no runId");
     expect(revokedId).toBe(firstRunId);
   });
+
+  it("registered revoke during held approval settles before token release; old token refused", async () => {
+    const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+    const model = vi.fn(async (_g: GatedText) => "ok");
+    let capturedRunId = "";
+    let approvalCalls = 0;
+    let seenSignal: AbortSignal | undefined;
+    let mintedToken = "";
+    let releaseToken: (v: string | null) => void = () => {};
+    const held = new Promise<string | null>((res) => { releaseToken = res; });
+    let resolveEntered: () => void = () => {};
+    const entered = new Promise<void>((res) => { resolveEntered = res; });
+    const regs: Array<() => void> = [];
+    const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, {
+      gate,
+      requestOwnerApproval: async (runId, preview, _binding, signal?: AbortSignal) => {
+        approvalCalls += 1;
+        capturedRunId = runId;
+        seenSignal = signal;
+        mintedToken = gate.approve(runId, preview);
+        resolveEntered();
+        return held;
+      },
+      isCurrent: () => true,
+      callModel: model,
+    });
+    if (reasoner === undefined) throw new Error("reasoner off");
+    const input = baseInput();
+    const inputWithRevoke: CandidateReasonerInput = {
+      roomId: input.roomId,
+      ownerId: input.ownerId,
+      meetingId: input.meetingId,
+      contextRevision: input.contextRevision,
+      policyGeneration: input.policyGeneration,
+      utterances: input.utterances,
+      guidance: input.guidance,
+      notes: input.notes,
+      registerRevoke: (fn: () => void) => { regs.push(fn); },
+    };
+    let outcome = "pending";
+    const done = reasoner(inputWithRevoke).then(() => { outcome = "resolved"; }, () => { outcome = "rejected"; });
+    try {
+      await entered;
+      const r = regs[0];
+      if (r === undefined) throw new Error("no revoke registered");
+      r();
+      await new Promise<void>((res) => setImmediate(res));
+      expect(outcome).toBe("rejected");
+      expect(seenSignal?.aborted).toBe(true);
+    } finally {
+      releaseToken(mintedToken);
+      await done;
+    }
+    await new Promise<void>((res) => setImmediate(res));
+    expect(approvalCalls).toBe(1);
+    expect(model).toHaveBeenCalledTimes(0);
+    expect(gate.receipts(capturedRunId).length).toBe(0);
+    const fn = vi.fn(async (_g: GatedText) => "x");
+    await expect(gate.send(capturedRunId, mintedToken, fn)).rejects.toThrow();
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("registrar revokes synchronously => no approval/model, run revoked", async () => {
+    const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+    const runIds: string[] = [];
+    const baseRevoke = gate.revoke.bind(gate);
+    let revokedId = "";
+    let revokeCount = 0;
+    const g = {
+      prepare: async (t: string) => {
+        const r = await gate.prepare(t);
+        runIds.push(r.runId);
+        return r;
+      },
+      preview: gate.preview.bind(gate),
+      correct: gate.correct.bind(gate),
+      approve: gate.approve.bind(gate),
+      send: gate.send.bind(gate),
+      revoke: (id: string) => { revokeCount += 1; revokedId = id; return baseRevoke(id); },
+      receipts: gate.receipts.bind(gate),
+    };
+    let approvalCalled = false;
+    const model = vi.fn(async (_g: GatedText) => "ok");
+    const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, {
+      gate: g,
+      requestOwnerApproval: async () => { approvalCalled = true; return "tok"; },
+      isCurrent: () => true,
+      callModel: model,
+    });
+    if (reasoner === undefined) throw new Error("reasoner off");
+    const input = baseInput();
+    const inputWithReg = {
+      roomId: input.roomId,
+      ownerId: input.ownerId,
+      meetingId: input.meetingId,
+      contextRevision: input.contextRevision,
+      policyGeneration: input.policyGeneration,
+      utterances: input.utterances,
+      guidance: input.guidance,
+      notes: input.notes,
+      registerRevoke: (fn: () => void) => { fn(); },
+    };
+    await expect(reasoner(inputWithReg)).rejects.toThrow();
+    expect(approvalCalled).toBe(false);
+    expect(model).toHaveBeenCalledTimes(0);
+    expect(revokeCount).toBeGreaterThanOrEqual(1);
+    const firstRunId = runIds[0];
+    if (firstRunId === undefined) throw new Error("no runId");
+    for (const id of runIds) expect(id).toBe(firstRunId);
+    expect(revokedId).toBe(firstRunId);
+    expect(gate.receipts(firstRunId).length).toBe(0);
+  });
 });
