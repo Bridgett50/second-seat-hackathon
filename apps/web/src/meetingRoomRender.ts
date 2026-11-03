@@ -753,8 +753,8 @@ document.addEventListener("keydown",function(e){
 })();`;
 
 /** Full `<!DOCTYPE html>` meeting room document with one main landmark. */
-export function renderMeetingRoomPage(snap: MeetingRoomSnapshot, aiSelfSrc?: string | null): string {
-  const twinStage = twinStageHtml({ imageSrc: aiSelfSrc ?? null, modeLabel: "Offline demo", narrowPlacement: "before", caption: "Offline meeting room with made-up meetings. The twin drafts; you approve every step before anything moves." });
+export function renderMeetingRoomPage(snap: MeetingRoomSnapshot, aiSelfSrc?: string | null, aiConfigured = false): string {
+  const twinStage = twinStageHtml({ imageSrc: aiSelfSrc ?? null, modeLabel: aiConfigured ? "AI drafting configured" : "Offline demo", narrowPlacement: "before", caption: aiConfigured ? "Review the redacted meeting context before AI drafting, then review the reply before using it." : "Offline meeting room with made-up meetings. The twin drafts; you approve every step before anything moves." });
   const body = renderMeetingRoomBody(snap);
   return `<!DOCTYPE html>
 <html lang="en">
