@@ -199,4 +199,52 @@ describe("meeting-room-candidate-transport", () => {
       expect(globalThis.fetch).not.toHaveBeenCalled();
     }
   });
+  it("timeout aborts pending fetch => transport_failed", async () => {
+    let sig: AbortSignal | undefined;
+    const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      if (init?.signal == null) throw new Error("missing signal");
+      sig = init.signal;
+      return new Promise<Response>((_res, rej) => {
+        sig?.addEventListener("abort", () => rej(new Error("aborted")), { once: true });
+      });
+    });
+    const cost = fakeCost();
+    const gate = createPrivacyGate({ mode: "live", redactor: makeRedactor() });
+    const { runId, token } = await prepareGated(gate);
+    const transport = createCandidateTransport({ apiKey: "k", fetchImpl, timeoutMs: 20, ...cost });
+    const p = gate.send(runId, token, (g) => transport(g));
+    await expect(p).rejects.toThrow();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    if (sig === undefined) throw new Error("no signal");
+    expect(sig.aborted).toBe(true);
+    expect(gate.receipts(runId)).toHaveLength(1);
+    expect(gate.receipts(runId)[0]).toMatchObject({ transport: "muse", attempt: 1, outcome: "transport_failed" });
+    expect(cost.recordCall).toHaveBeenCalledTimes(0);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+  it("timeout during held 200 body => provider_confirmed retained, usage not fabricated", async () => {
+    let sig: AbortSignal | undefined;
+    const fetchImpl = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      if (init?.signal == null) throw new Error("missing signal");
+      sig = init.signal;
+      const stream = new ReadableStream<Uint8Array>({ start(c) { sig?.addEventListener("abort", () => c.error(new Error("aborted")), { once: true }); } });
+      return new Response(stream, { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const cost = fakeCost();
+    const gate = createPrivacyGate({ mode: "live", redactor: makeRedactor() });
+    const { runId, token } = await prepareGated(gate);
+    const transport = createCandidateTransport({ apiKey: "k", fetchImpl, timeoutMs: 20, ...cost });
+    const p = gate.send(runId, token, (g) => transport(g));
+    await expect(p).rejects.toThrow();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    if (sig === undefined) throw new Error("no signal");
+    expect(sig.aborted).toBe(true);
+    expect(gate.receipts(runId)).toHaveLength(1);
+    expect(gate.receipts(runId)[0]).toMatchObject({ transport: "muse", attempt: 1, outcome: "provider_confirmed" });
+    expect(cost.recordCall).toHaveBeenCalledTimes(0);
+    const err = await p.then(() => undefined, (e: unknown) => e);
+    if (err instanceof CandidateOutputError) expect(err.usage).toBeNull();
+    if (!(err instanceof Error)) throw new Error("not error");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
 });
