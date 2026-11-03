@@ -288,6 +288,25 @@ function evidenceSection(snap: MeetingRoomSnapshot): string {
   );
 }
 
+function candidateSection(snap: MeetingRoomSnapshot): string {
+  const c = snap.candidate;
+  if (!c) return "";
+  const note = esc(c.note);
+  const statusLine = `<p>Status: ${esc(c.status)}</p><p>${note}</p>`;
+  const meta = `<p>Private provisional candidate — not policy-checked, not approved, not sent.</p>`;
+  let body = "";
+  if (c.status === "provisional" && c.subject !== null && c.body !== null) {
+    const ctx = c.contextRevision !== null ? `<p>contextRevision: ${esc(String(c.contextRevision))}</p>` : "";
+    const src = c.sourceRefs.length ? `<p>Sources: ${esc(c.sourceRefs.map(s=> s.utteranceId + " rev " + String(s.revision)).join(", "))}</p>` : "";
+    body = ctx + src + `<p>Subject: ${esc(c.subject)}</p><pre>${esc(c.body)}</pre>`;
+  } else if (c.status === "pending") {
+    body = `<p>Drafting a private provisional candidate.</p>`;
+  } else if (c.status === "failed") {
+    body = "";
+  }
+  return `<section id="mr-candidate-panel" aria-labelledby="mr-candidate-heading"><h2 id="mr-candidate-heading">Proposed email (private provisional)</h2>` + meta + statusLine + body + `</section>`;
+}
+
 function sectionFor(region: string, snap: MeetingRoomSnapshot): string {
   switch (region) {
     case "meeting":
@@ -326,6 +345,8 @@ export function renderMeetingRoomBody(snap: MeetingRoomSnapshot): string {
     if (html !== "") parts.push(html);
     if (region === "approval") parts.push(compareSection(snap));
   }
+  const cand = candidateSection(snap);
+  if (cand) parts.push(cand);
   return parts.join("\n");
 }
 
@@ -366,8 +387,141 @@ function lockOutgoing(){
   var note=document.getElementById("package-dirty");
   if(note){note.hidden=false;}
 }
+var pollSeq=0;
+var pollGen=0;
+var pollTimer=null;
+var pollInFlight=false;
+var POLL_INTERVAL=1500;
+var pollActive=false;
+var pollEligible=root.getAttribute("data-poll-eligible")==="1";
+var pollDeadline=0;
+var pollExpired=false;
+var pollExpiryTimer=null;
+function escHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+function hasCandidatePanel(){ return !!document.getElementById("mr-candidate-panel"); }
+function isExpired(){ return pollExpired || (pollDeadline!==0 && Date.now()>=pollDeadline); }
+function ensureExpiredNotice(){
+  var panel=document.getElementById("mr-candidate-panel");
+  if(!panel) return;
+  if(document.getElementById("mr-candidate-expired")) return;
+  var p=document.createElement("p");
+  p.id="mr-candidate-expired";
+  p.setAttribute("role","status");
+  p.textContent="Automatic updates paused after 10 minutes; this proposed email may be stale. Refresh the page to resume automatic updates.";
+  panel.appendChild(p);
+}
+function handleExpiry(){
+  if(pollExpired) return;
+  pollExpired=true;
+  pollActive=false;
+  pollGen+=1;
+  if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
+  if(pollExpiryTimer){ clearTimeout(pollExpiryTimer); pollExpiryTimer=null; }
+  ensureExpiredNotice();
+}
+function ensureExpiryTimer(){
+  if(pollExpiryTimer) return;
+  if(!pollDeadline) return;
+  var d=pollDeadline - Date.now();
+  if(d<=0){ handleExpiry(); return; }
+  pollExpiryTimer=setTimeout(handleExpiry,d);
+}
+function ensureUnavailableNotice(){
+  var panel=document.getElementById("mr-candidate-panel");
+  if(!panel) return;
+  if(document.getElementById("mr-candidate-unavailable")) return;
+  var p=document.createElement("p");
+  p.id="mr-candidate-unavailable";
+  p.setAttribute("role","status");
+  p.textContent="Automatic updates are unavailable right now; this proposed email may be stale. Retrying automatically.";
+  panel.appendChild(p);
+}
+function removeUnavailableNotice(){
+  var n=document.getElementById("mr-candidate-unavailable");
+  if(n) n.remove();
+}
+function isValidSnapshot(snap){
+  if(!snap||typeof snap!=="object") return false;
+  var cand=snap.candidate;
+  var view=snap.view;
+  if(cand!==null){
+    if(!cand||typeof cand!=="object") return false;
+    var st=cand.status;
+    if(st!=="none"&&st!=="pending"&&st!=="provisional"&&st!=="failed") return false;
+    if(st==="provisional"){
+      if(typeof cand.subject!=="string"||typeof cand.body!=="string") return false;
+    }
+  }
+  if(!view||typeof view!=="object") return false;
+  return true;
+}
+function stopPolling(){ pollActive=false; pollGen+=1; if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } }
+function schedulePoll(){ if(!pollActive) return; if(isExpired()){ handleExpiry(); return; } if(pollTimer) clearTimeout(pollTimer); pollTimer=setTimeout(doPoll,POLL_INTERVAL); }
+function renderCandidatePanel(candidate){
+  var panel=document.getElementById("mr-candidate-panel");
+  if(!panel) return;
+  if(!candidate){ panel.innerHTML='<h2 id="mr-candidate-heading">Proposed email (private provisional)</h2><p>Private provisional candidate — not policy-checked, not approved, not sent.</p>'; return; }
+  var html='<h2 id="mr-candidate-heading">Proposed email (private provisional)</h2>';
+  html+='<p>Private provisional candidate — not policy-checked, not approved, not sent.</p>';
+  html+='<p>Status: '+escHtml(candidate.status)+'</p><p>'+escHtml(candidate.note||"")+'</p>';
+  if(candidate.status==="provisional" && candidate.subject!==null && candidate.body!==null){
+    if(candidate.contextRevision!==null && candidate.contextRevision!==undefined) html+='<p>contextRevision: '+escHtml(String(candidate.contextRevision))+'</p>';
+    if(candidate.sourceRefs && candidate.sourceRefs.length) html+='<p>Sources: '+escHtml(candidate.sourceRefs.map(function(s){return s.utteranceId+" rev "+String(s.revision);}).join(", "))+'</p>';
+    html+='<p>Subject: '+escHtml(candidate.subject)+'</p><pre>'+escHtml(candidate.body)+'</pre>';
+  } else if(candidate.status==="pending"){ html+='<p>Drafting a private provisional candidate.</p>'; }
+  panel.innerHTML=html;
+}
+function doPoll(){
+  if(pollInFlight) return;
+  if(isExpired()){ handleExpiry(); return; }
+  if(!pollEligible){ stopPolling(); return; }
+  if(document.visibilityState==="hidden"){ stopPolling(); return; }
+  var panel=document.getElementById("mr-candidate-panel");
+  if(!panel){ stopPolling(); return; }
+  var curRoom=roomId;
+  pollInFlight=true;
+  var myGen=pollGen;
+  var mySeq=++pollSeq;
+  fetch("/api/meeting-room",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({roomId:curRoom,action:"state"})}).then(function(r){
+    if(!r.ok) throw new Error("bad status");
+    return r.json().then(function(b){ return {ok:r.ok,status:r.status,body:b};});
+  }).then(function(res){
+    pollInFlight=false;
+    if(myGen!==pollGen){ if(pollActive&&!isExpired()) schedulePoll(); return; }
+    if(curRoom!==roomId){ if(pollActive&&!isExpired()) schedulePoll(); return; }
+    if(isExpired()||pollExpired) return;
+    if(!res || !res.body || !res.body.snapshot){ ensureUnavailableNotice(); if(pollActive&&!isExpired()) schedulePoll(); return; }
+    var snap=res.body.snapshot;
+    if(!isValidSnapshot(snap)){ ensureUnavailableNotice(); if(pollActive&&!isExpired()) schedulePoll(); return; }
+    removeUnavailableNotice();
+    pollEligible=!!(snap.candidate && snap.view && snap.view.twinStatus==="active");
+    if(!snap.candidate){ stopPolling(); return; }
+    if(snap.view && snap.view.twinStatus!=="active"){ stopPolling(); return; }
+    renderCandidatePanel(snap.candidate);
+    if(pollExpired) ensureExpiredNotice();
+    if(!isExpired()) schedulePoll();
+  }).catch(function(){ pollInFlight=false; if(myGen!==pollGen){ if(pollActive&&!isExpired()) schedulePoll(); return; } if(curRoom!==roomId) return; if(isExpired()||pollExpired) return; if(!pollActive) return; ensureUnavailableNotice(); if(!isExpired()) schedulePoll(); });
+}
+function startPolling(){
+  if(isExpired()){ handleExpiry(); return; }
+  if(pollActive) return;
+  if(!pollEligible) return;
+  if(!hasCandidatePanel()) return;
+  if(document.visibilityState==="hidden") return;
+  if(pollDeadline===0){ pollDeadline=Date.now()+600000; ensureExpiryTimer(); }
+  pollActive=true;
+  schedulePoll();
+}
+function syncPollingFromSnapshot(snap){
+  pollEligible=!!(snap && snap.candidate && snap.view && snap.view.twinStatus==="active");
+  if(!snap || !snap.candidate){ stopPolling(); return; }
+  if(snap.view && snap.view.twinStatus!=="active"){ stopPolling(); return; }
+  if(document.visibilityState==="hidden"){ stopPolling(); return; }
+  startPolling();
+}
 function post(action,extra){
   seq+=1;
+  pollGen+=1;
   var mine=seq;
   var body={roomId:roomId,action:action};
   if(extra){for(var k in extra){if(Object.prototype.hasOwnProperty.call(extra,k)){body[k]=extra[k];}}}
@@ -409,6 +563,8 @@ function applyResult(action,res){
     }else{
       dirty=false;
     }
+  if(b && b.snapshot) syncPollingFromSnapshot(b.snapshot);
+  if(pollExpired) ensureExpiredNotice();
   }
   if(Array.isArray(b.announcements)){say(b.announcements);}
   if(action==="guide"&&res&&res.ok){
@@ -464,9 +620,20 @@ document.addEventListener("input",function(e){
   if(t&&t.id==="package-editor"){
     dirty=true;
     seq+=1;
+    pollGen+=1;
     lockOutgoing();
   }
 });
+document.addEventListener("visibilitychange",function(){
+  if(document.visibilityState==="hidden"){ stopPolling(); }
+  else {
+    if(pollExpired){ ensureExpiredNotice(); return; }
+    var panel=document.getElementById("mr-candidate-panel");
+    if(panel && roomId) startPolling();
+  }
+});
+window.addEventListener("pagehide",function(){ stopPolling(); });
+if(pollEligible && hasCandidatePanel()) startPolling();
 document.addEventListener("change",function(e){
   var t=e.target;
   if(!t||!t.id){return;}
@@ -535,7 +702,7 @@ ${THEME_CSS}</style>
 </div>
 ${twinStage}
 </div>
-<div id="mr-root" data-room-id="${esc(snap.roomId)}">${body}</div>
+<div id="mr-root" data-room-id="${esc(snap.roomId)}" data-poll-eligible="${snap.candidate !== null && snap.view.twinStatus === "active" ? "1" : "0"}">${body}</div>
 </main>
 <script>
 ${CLIENT_JS}

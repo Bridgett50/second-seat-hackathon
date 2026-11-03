@@ -16,14 +16,17 @@ import {
   COMPARE_SENT_REASON,
   COMPARE_UNCONFIRMED_REASON,
   DEMO_STEPS,
+  evaluateOutgoing,
   SEND_DISABLED_REASON,
   compareUnavailableReason,
   createDemoController,
   createInMemoryRoomStore,
+  createMeetingPolicyRecorder,
   createTwinRoom,
   demoStepAnnouncement,
   diffAnnouncements,
   fakeSendAllowed,
+  getPolicyGeneration,
   isDemoMode,
   type DemoController,
   type RoomStore,
@@ -165,8 +168,58 @@ export function meetingRoomSetCookie(key: string, headers: IncomingHttpHeaders):
   return cookieHostIsLoopback(host) ? base : `${base}; Secure`;
 }
 
+export type CandidateSourceRef = { readonly utteranceId: string; readonly revision: number };
+export type CandidateReasonerInput = {
+  readonly roomId: string;
+  readonly ownerId: string;
+  readonly meetingId: string;
+  readonly contextRevision: number;
+  readonly policyGeneration: number;
+  readonly utterances: ConversationSnapshot["utterances"];
+  readonly guidance: readonly string[];
+  readonly notes: readonly string[];
+};
+export type CandidateReasoner = (input: CandidateReasonerInput) => Promise<unknown>;
+export type MeetingRoomCandidateSnapshot = {
+  readonly meetingId: string;
+  readonly status: "none" | "pending" | "provisional" | "failed";
+  readonly candidateId: string | null;
+  readonly provisional: true;
+  readonly policyChecked: false;
+  readonly approved: false;
+  readonly contextRevision: number | null;
+  readonly subject: string | null;
+  readonly body: string | null;
+  readonly sourceRefs: readonly CandidateSourceRef[];
+  readonly note: string;
+};
+
+export type ConversationSnapshot = {
+  readonly version: 1;
+  readonly meetingId: string;
+  readonly contextRevision: number;
+  readonly utterances: ReadonlyArray<{
+    readonly utteranceId: string;
+    readonly sequence: number;
+    readonly revision: number;
+    readonly speaker: string;
+    readonly text: string;
+  }>;
+  readonly latestCorrection: null | { readonly utteranceId: string; readonly revision: number };
+};
+
 export type MeetingRoomSnapshot = {
   readonly roomId: string;
+  readonly candidatePreview?: {
+    readonly status: "released" | "held" | "unavailable" | "stale";
+    readonly candidateId: string;
+    readonly evaluatedSubject?: string;
+    readonly evaluatedBody?: string;
+    readonly subjectChanged?: boolean;
+    readonly bodyChanged?: boolean;
+    readonly reason?: string;
+    readonly generation: number;
+  };
   readonly demo: null | {
     readonly stepLabel: string | null;
     readonly completed: number;
@@ -191,6 +244,9 @@ export type MeetingRoomSnapshot = {
   /** Visible notice for a refused Send; null otherwise. */
   readonly sendNotice: string | null;
   readonly evidencePreviewJson: string;
+  readonly sessionPolicy?: { readonly meetingId: string; readonly generation: number; readonly status: "none" | "applied" | "needs-clarification" | "not-applied"; readonly note: string };
+  readonly conversation?: ConversationSnapshot;
+  readonly candidate?: MeetingRoomCandidateSnapshot;
 };
 
 export type MeetingRoomActionResult = {
@@ -218,6 +274,11 @@ export type MeetingRoomService = {
     body: Readonly<Record<string, unknown>>,
     headers: IncomingHttpHeaders,
   ): Promise<{ status: number; body: MeetingRoomActionResult }>;
+  ingestConversationAs(
+    callerKey: string | null,
+    roomId: unknown,
+    event: unknown,
+  ): { status: number; body: MeetingRoomActionResult };
   sentBodies(): readonly string[];
   /** Test-visible counts: pages, stores, activity entries and demo pages held. */
   sizes(): { pages: number; stores: number; activity: number; demoPages: number };
@@ -260,6 +321,11 @@ export function createMeetingRoomService(opts?: {
   maxDemoPages?: number;
   idleMs?: number;
   now?: () => number;
+  conversationInput?: boolean;
+  sessionPolicy?: boolean;
+  candidateReasoner?: CandidateReasoner;
+  candidateDeadlineMs?: number;
+  candidateMaxAttempts?: number;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxStores = opts?.maxStores ?? 200;
@@ -267,6 +333,16 @@ export function createMeetingRoomService(opts?: {
   const maxDemoPages = opts?.maxDemoPages ?? 200;
   const idleMs = opts?.idleMs ?? 30 * 60_000;
   const now = opts?.now ?? Date.now;
+  const candidateDeadlineMs = opts?.candidateDeadlineMs ?? 10000;
+  if(opts?.candidateDeadlineMs !== undefined){
+    const v = opts.candidateDeadlineMs;
+    if(!Number.isSafeInteger(v) || v <= 0) throw new RangeError("candidateDeadlineMs must be a positive safe integer");
+  }
+  const candidateMaxAttempts = opts?.candidateMaxAttempts ?? 8;
+  if(opts?.candidateMaxAttempts !== undefined){
+    const v = opts.candidateMaxAttempts;
+    if(!Number.isSafeInteger(v) || v <= 0) throw new RangeError("candidateMaxAttempts must be a positive safe integer");
+  }
   const stores = new Map<string, RoomStore>();
   const sent: string[] = [];
   const rooms = new Map<string, RoomEntry>();
@@ -340,9 +416,379 @@ export function createMeetingRoomService(opts?: {
     return openOnly ?? idle;
   }
 
+  type ConversationEntry = { sequence: number; revision: number; speaker: string; text: string };
+  type ConversationState = {
+    meetingId: string;
+    contextRevision: number;
+    utterances: Map<string, ConversationEntry>;
+    latestCorrection: null | { utteranceId: string; revision: number };
+  };
+  const conversationByRoom = new WeakMap<TwinRoom, Map<string, ConversationState>>();
+
+  function getConversationState(room: TwinRoom, meetingId: string): ConversationState {
+    let byMeeting = conversationByRoom.get(room);
+    if (byMeeting === undefined) {
+      byMeeting = new Map<string, ConversationState>();
+      conversationByRoom.set(room, byMeeting);
+    }
+    let conv = byMeeting.get(meetingId);
+    if (conv === undefined) {
+      conv = { meetingId, contextRevision: 0, utterances: new Map(), latestCorrection: null };
+      byMeeting.set(meetingId, conv);
+    }
+    return conv;
+  }
+
+  function conversationSnapshotFor(entry: RoomEntry, view: TwinRoomView): ConversationSnapshot {
+    const meetingId = view.selectedMeetingId;
+    const byMeeting = conversationByRoom.get(entry.room);
+    const conv = byMeeting?.get(meetingId);
+    if (conv === undefined) {
+      return {
+        version: 1 as const,
+        meetingId,
+        contextRevision: 0,
+        utterances: Object.freeze([] as unknown as ConversationSnapshot["utterances"]) as ConversationSnapshot["utterances"],
+        latestCorrection: null,
+      };
+    }
+    const list = [...conv.utterances.entries()]
+      .map(([utteranceId, e]) => ({ utteranceId, sequence: e.sequence, revision: e.revision, speaker: e.speaker, text: e.text }))
+      .sort((a, b) => a.sequence - b.sequence);
+    const frozen = Object.freeze(list.map((u) => Object.freeze({ ...u })));
+    return {
+      version: 1 as const,
+      meetingId: conv.meetingId,
+      contextRevision: conv.contextRevision,
+      utterances: frozen as unknown as ConversationSnapshot["utterances"],
+      latestCorrection: conv.latestCorrection === null ? null : Object.freeze({ ...conv.latestCorrection }),
+    };
+  }
+
+  type CandidateResult = { candidateId: string; meetingId: string; status: "provisional" | "failed"; contextRevision: number; subject: string; body: string; sourceRefs: readonly CandidateSourceRef[]; note: string };
+  type CandidatePreview =
+    | { status: "released"; candidateId: string; evaluatedSubject: string; evaluatedBody: string; subjectChanged: boolean; bodyChanged: boolean; generation: number }
+    | { status: "held"; candidateId: string; reason: string; generation: number }
+    | { status: "unavailable"; candidateId: string; reason: string; generation: number };
+  type CandidatePreviewState = {
+    preview: CandidatePreview | null;
+    ownerId: string;
+    meetingId: string;
+    contextRevision: number;
+    epoch: number;
+    generation: number;
+    candidateId: string;
+  };
+  type CandidateState = { epoch: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult; preview: CandidatePreviewState | null };
+  const candidateByRoom = new WeakMap<TwinRoom, CandidateState>();
+  const candidateAttemptsByRoom = new WeakMap<TwinRoom, Map<string, number>>();
+  function isValidReleasedResult(v: unknown): v is { outcome: string; text: string; generation: number } {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+    const o = v as Record<string, unknown>;
+    if (o["outcome"] !== "released") return false;
+    if (typeof o["text"] !== "string") return false;
+    if (o["text"].trim().length === 0) return false;
+    if (typeof o["version"] !== "string" || o["version"].trim().length === 0) return false;
+    if (typeof o["generation"] !== "number") return false;
+    return true;
+  }
+  function isValidHeldResult(v: unknown): v is { outcome: string; reason: string; generation: number } {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+    const o = v as Record<string, unknown>;
+    if (o["outcome"] !== "held") return false;
+    if (typeof o["reason"] !== "string" || o["reason"].trim().length === 0) return false;
+    if (typeof o["version"] !== "string" || o["version"].trim().length === 0) return false;
+    if (typeof o["generation"] !== "number") return false;
+    return true;
+  }
+  function buildPreviewForResult(
+    ownerId: string,
+    meetingId: string,
+    contextRevision: number,
+    epoch: number,
+    generation: number,
+    candidateId: string,
+    subject: string,
+    body: string,
+  ): CandidatePreview {
+    const safeReason = "preview unavailable";
+    if (typeof subject !== "string" || typeof body !== "string" || subject.length > 200 || body.length > 20000) {
+      return { status: "unavailable", candidateId, reason: safeReason, generation };
+    }
+    let sRes: unknown;
+    let bRes: unknown;
+    try {
+      sRes = evaluateOutgoing(ownerId, meetingId, subject, "follow-up-draft");
+      bRes = evaluateOutgoing(ownerId, meetingId, body, "follow-up-draft");
+    } catch {
+      return { status: "unavailable", candidateId, reason: safeReason, generation };
+    }
+    const sReleased = isValidReleasedResult(sRes);
+    const bReleased = isValidReleasedResult(bRes);
+    const sHeld = isValidHeldResult(sRes);
+    const bHeld = isValidHeldResult(sHeld ? sRes : sRes) && sHeld;
+    const bHeld2 = isValidHeldResult(bRes);
+    const sValid = sReleased || sHeld;
+    const bValid = bReleased || bHeld2;
+    if (!sValid || !bValid) {
+      return { status: "unavailable", candidateId, reason: safeReason, generation };
+    }
+    if (sReleased && bReleased && (sRes as { generation: number }).generation === generation && (bRes as { generation: number }).generation === generation) {
+      const sText = (sRes as { text: string }).text;
+      const bText = (bRes as { text: string }).text;
+      if (sText.trim().length === 0 || bText.trim().length === 0) {
+        return { status: "unavailable", candidateId, reason: safeReason, generation };
+      }
+      if (sText.length > 200 || bText.length > 20000) {
+        return { status: "unavailable", candidateId, reason: safeReason, generation };
+      }
+      return { status: "released", candidateId, evaluatedSubject: sText, evaluatedBody: bText, subjectChanged: sText !== subject, bodyChanged: bText !== body, generation };
+    }
+    if (sHeld && (sRes as { generation: number }).generation === generation && bValid && (bRes as { generation: number }).generation === generation) return { status: "held", candidateId, reason: (sRes as { reason: string }).reason, generation };
+    if (bHeld2 && (bRes as { generation: number }).generation === generation && sValid && (sRes as { generation: number }).generation === generation) return { status: "held", candidateId, reason: (bRes as { reason: string }).reason, generation };
+    return { status: "unavailable", candidateId, reason: safeReason, generation };
+  }
+  function getCandidateState(room: TwinRoom){
+    let s = candidateByRoom.get(room);
+    if(!s){ s = { epoch:0, active:false, timedOut:false, timer:null, pending:null, result:null, preview: null }; candidateByRoom.set(room,s); }
+    return s;
+  }
+  function isCandidateActive(): boolean{
+    return opts?.conversationInput === true && opts?.sessionPolicy === true && typeof opts?.candidateReasoner === "function";
+  }
+  function buildCandidateSnapshot(entry: RoomEntry, view: TwinRoomView): MeetingRoomCandidateSnapshot | undefined{
+    if(!isCandidateActive()) return undefined;
+    const st = candidateByRoom.get(entry.room);
+    const mid = view.selectedMeetingId;
+    if(st?.active && !st.timedOut){
+      return { meetingId: mid, status:"pending", candidateId: null, provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Drafting a private provisional candidate." };
+    }
+    if(st?.result && st.result.meetingId === mid){
+      const r = st.result;
+      if(r.status === "provisional"){
+        return { meetingId: mid, status:"provisional", candidateId: r.candidateId, provisional:true, policyChecked:false, approved:false, contextRevision: r.contextRevision, subject: r.subject, body: r.body, sourceRefs: r.sourceRefs, note: r.note };
+      } else {
+        return { meetingId: mid, status:"failed", candidateId: r.candidateId, provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: r.note };
+      }
+    }
+    return { meetingId: mid, status:"none", candidateId: null, provisional:true, policyChecked:false, approved:false, contextRevision:null, subject:null, body:null, sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"No candidate yet." };
+  }
+  function buildCandidatePreviewSnapshot(entry: RoomEntry, view: TwinRoomView): CandidatePreview | { status: "stale"; candidateId: string; generation: number } | undefined {
+    if (!isCandidateActive()) return undefined;
+    const st = candidateByRoom.get(entry.room);
+    if (!st || !st.preview) return undefined;
+    if (st.active && !st.timedOut) return undefined;
+    if (!st.result || st.result.status !== "provisional") return undefined;
+    const r = st.result;
+    if (r.meetingId !== view.selectedMeetingId) return undefined;
+    const p = st.preview;
+    if (p.candidateId !== r.candidateId) return { status: "stale", candidateId: p.candidateId, generation: p.generation };
+    const curOwnerId = view.ownerId;
+    const curMeetingId = view.selectedMeetingId;
+    const curConv = conversationByRoom.get(entry.room)?.get(curMeetingId);
+    const curRevision = curConv?.contextRevision ?? 0;
+    const curGen = getPolicyGeneration(curOwnerId, curMeetingId);
+    if (p.ownerId !== curOwnerId || p.meetingId !== curMeetingId || p.contextRevision !== curRevision || p.epoch !== st.epoch || p.generation !== curGen) {
+      return { status: "stale", candidateId: p.candidateId, generation: p.generation };
+    }
+    if (p.preview === null) return undefined;
+    return p.preview;
+  }
+  function invalidateCandidate(entry: RoomEntry){
+    const s = getCandidateState(entry.room);
+    s.epoch += 1;
+    s.pending = null;
+    s.result = null;
+    s.preview = null;
+  }
+  function dispatchCandidate(entry: RoomEntry, roomId: string){
+    if(!isCandidateActive()) return;
+    const st = getCandidateState(entry.room);
+    if(st.active) return;
+    if(rooms.get(roomId) !== entry) return;
+    const view = entry.room.view();
+    if(view.twinStatus !== "active") return;
+    const reasoner = opts?.candidateReasoner;
+    if(reasoner === undefined) return;
+    const ownerId = view.ownerId;
+    const meetingId = view.selectedMeetingId;
+    const convMap = conversationByRoom.get(entry.room);
+    const conv = convMap?.get(meetingId);
+    const contextRevision = conv?.contextRevision ?? 0;
+    const policyGeneration = getPolicyGeneration(ownerId, meetingId);
+    const epoch = st.epoch;
+    const snapConv = conversationSnapshotFor(entry, view);
+    const input: CandidateReasonerInput = Object.freeze({
+      roomId,
+      ownerId,
+      meetingId,
+      contextRevision,
+      policyGeneration,
+      utterances: snapConv.utterances,
+      guidance: Object.freeze([...view.guidance]),
+      notes: Object.freeze([...view.notes]),
+    });
+    let attemptsMap = candidateAttemptsByRoom.get(entry.room);
+    if(!attemptsMap){ attemptsMap = new Map<string, number>(); candidateAttemptsByRoom.set(entry.room, attemptsMap); }
+    const attempts = attemptsMap.get(meetingId) ?? 0;
+    if(attempts >= candidateMaxAttempts){
+      st.pending = null;
+      st.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: attempt limit reached. It was not retried." };
+      return;
+    }
+    st.active = true;
+    st.timedOut = false;
+    st.pending = null;
+    st.result = null;
+    st.preview = null;
+    const capturedEntry = entry;
+    const capturedRoomId = roomId;
+    const capturedOwnerId = ownerId;
+    const capturedMeetingId = meetingId;
+    const capturedContextRevision = contextRevision;
+    const capturedPolicyGeneration = policyGeneration;
+    const capturedEpoch = epoch;
+    const capturedState = st;
+    const deadlineTimer = setTimeout(()=>{
+      const curSt = candidateByRoom.get(capturedEntry.room);
+      if(!curSt) return;
+      if(curSt !== capturedState) return;
+      if(!curSt.active) return;
+      if(curSt.timedOut) return;
+      const freshView = capturedEntry.room.view();
+      const curConv = conversationByRoom.get(capturedEntry.room)?.get(capturedMeetingId);
+      const curRevision = curConv?.contextRevision ?? 0;
+      const freshOk =
+        rooms.get(capturedRoomId) === capturedEntry &&
+        freshView.ownerId === capturedOwnerId &&
+        freshView.selectedMeetingId === capturedMeetingId &&
+        freshView.twinStatus === "active" &&
+        curRevision === capturedContextRevision &&
+        getPolicyGeneration(capturedOwnerId, capturedMeetingId) === capturedPolicyGeneration &&
+        curSt.epoch === capturedEpoch;
+      curSt.timedOut = true;
+      curSt.timer = null;
+      if(freshOk){
+        curSt.result = { candidateId: randomUUID(), meetingId: capturedMeetingId, status:"failed", contextRevision: capturedContextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: reasoner timed out. It was not retried." };
+      }
+    }, candidateDeadlineMs);
+    st.timer = deadlineTimer;
+    let attemptsInc = candidateAttemptsByRoom.get(entry.room);
+    if(!attemptsInc){ attemptsInc = new Map<string, number>(); candidateAttemptsByRoom.set(entry.room, attemptsInc); }
+    attemptsInc.set(meetingId, (attemptsInc.get(meetingId) ?? 0) + 1);
+    let p: Promise<unknown>;
+    try{ p = reasoner(input); } catch(e){ p = Promise.reject(e); }
+    p.then((val)=>{
+      const curSt = candidateByRoom.get(entry.room);
+      if(!curSt) return;
+      if(curSt.timedOut){
+        if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
+        // late settlement discarded, free slot and drain
+        curSt.active = false;
+        curSt.timedOut = false;
+        const next = curSt.pending;
+        curSt.pending = null;
+        if(next !== null){
+          dispatchCandidate(next.entry, next.roomId);
+        }
+        return;
+      }
+      if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
+      curSt.active = false;
+      const freshView = entry.room.view();
+      const curConv = conversationByRoom.get(entry.room)?.get(meetingId);
+      const curRevision = curConv?.contextRevision ?? 0;
+      const freshOk =
+        rooms.get(roomId) === entry &&
+        freshView.ownerId === ownerId &&
+        freshView.selectedMeetingId === meetingId &&
+        freshView.twinStatus === "active" &&
+        curRevision === contextRevision &&
+        getPolicyGeneration(ownerId, meetingId) === policyGeneration &&
+        curSt.epoch === epoch;
+      if(freshOk){
+        let ok = false;
+        let subject = "";
+        let body = "";
+        let refs: readonly CandidateSourceRef[] = [];
+        let reason = "invalid output";
+        if(val !== null && typeof val === "object" && !Array.isArray(val)){
+          const o = val as Record<string,unknown>;
+          const s = o["subject"];
+          const b = o["body"];
+          const sr = o["sourceRefs"];
+          if(typeof s === "string" && s.trim().length>0 && s.trim().length<=200 && s.length<=200 && typeof b === "string" && b.trim().length>0 && b.length<=20000 && Array.isArray(sr) && sr.length>0){
+            let allOk = true;
+            const tmp: CandidateSourceRef[] = [];
+            for(const e of sr){
+              if(e===null||typeof e!=="object"||Array.isArray(e)){ allOk=false; break; }
+              const eo = e as Record<string,unknown>;
+              if(typeof eo["utteranceId"]!=="string" || typeof eo["revision"]!=="number" || !Number.isSafeInteger(eo["revision"] as number)){ allOk=false; break; }
+              const uid = eo["utteranceId"] as string;
+              const rev = eo["revision"] as number;
+              const match = (input.utterances as readonly { readonly utteranceId: string; readonly revision: number }[]).find((u) => u.utteranceId===uid && u.revision===rev);
+              if(!match){ allOk=false; reason="unknown source reference"; break; }
+              tmp.push(Object.freeze({ utteranceId:uid, revision:rev }) as CandidateSourceRef);
+            }
+            if(allOk){ ok=true; subject=s; body=b; refs=Object.freeze(tmp); }
+          }
+        }
+        if(ok){
+          const newId = randomUUID();
+          curSt.result = { candidateId: newId, meetingId, status:"provisional", contextRevision, subject, body, sourceRefs: refs, note:"Private provisional candidate: not policy-checked, not approved, and it cannot be sent." };
+          const preview = buildPreviewForResult(ownerId, meetingId, contextRevision, epoch, policyGeneration, newId, subject, body);
+          curSt.preview = { preview, ownerId, meetingId, contextRevision, epoch, generation: policyGeneration, candidateId: newId };
+        } else {
+          curSt.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note: `Candidate rejected: ${reason}. It was not retried.` };
+        }
+      }
+      const next = curSt.pending;
+      curSt.pending = null;
+      if(next !== null){
+        dispatchCandidate(next.entry, next.roomId);
+      }
+    }, (err)=>{
+      const curSt = candidateByRoom.get(entry.room);
+      if(!curSt) return;
+      if(curSt.timedOut){
+        if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
+        curSt.active = false;
+        curSt.timedOut = false;
+        const next = curSt.pending;
+        curSt.pending = null;
+        if(next !== null){
+          dispatchCandidate(next.entry, next.roomId);
+        }
+        return;
+      }
+      if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
+      curSt.active = false;
+      const freshView = entry.room.view();
+      const curConv = conversationByRoom.get(entry.room)?.get(meetingId);
+      const curRevision = curConv?.contextRevision ?? 0;
+      const freshOk =
+        rooms.get(roomId) === entry &&
+        freshView.ownerId === ownerId &&
+        freshView.selectedMeetingId === meetingId &&
+        freshView.twinStatus === "active" &&
+        curRevision === contextRevision &&
+        getPolicyGeneration(ownerId, meetingId) === policyGeneration &&
+        curSt.epoch === epoch;
+      if(freshOk){
+        curSt.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate rejected: request failed. It was not retried." };
+      }
+      const next = curSt.pending;
+      curSt.pending = null;
+      if(next !== null){
+        dispatchCandidate(next.entry, next.roomId);
+      }
+    });
+  }
+
+  const policyStatusByScope = new Map<string, "applied" | "needs-clarification" | "not-applied">();
   function snap(roomId: string, entry: RoomEntry, view: TwinRoomView, sendNotice: string | null = null): MeetingRoomSnapshot {
     const current = entry.demo?.current() ?? null;
-    return {
+    const base: MeetingRoomSnapshot = {
       roomId,
       demo:
         entry.demo === null
@@ -374,6 +820,32 @@ export function createMeetingRoomService(opts?: {
       sendNotice,
       evidencePreviewJson: entry.room.evidencePreviewJson(),
     };
+    let out: MeetingRoomSnapshot = base as MeetingRoomSnapshot;
+    if (opts?.sessionPolicy === true) {
+      const gen = getPolicyGeneration(view.ownerId, view.selectedMeetingId);
+      const st = policyStatusByScope.get(`${view.ownerId}\0${view.selectedMeetingId}`) ?? "none";
+      const note =
+        st === "applied"
+          ? "Policy recorded; output enforcement is not active."
+          : st === "needs-clarification"
+            ? "Policy needs clarification."
+            : st === "not-applied"
+              ? "Policy not applied."
+              : "No policy recorded.";
+      (out as unknown as Record<string, unknown>).sessionPolicy = { meetingId: view.selectedMeetingId, generation: gen, status: st, note };
+    }
+    if (opts?.conversationInput === true) {
+      out = { ...out, conversation: conversationSnapshotFor(entry, view) } as MeetingRoomSnapshot;
+    }
+    if(isCandidateActive()){
+      const cand = buildCandidateSnapshot(entry, view);
+      if(cand) out = { ...out, candidate: cand } as MeetingRoomSnapshot;
+      const preview = buildCandidatePreviewSnapshot(entry, view);
+      if (preview !== undefined) {
+        out = { ...out, candidatePreview: preview } as MeetingRoomSnapshot;
+      }
+    }
+    return out;
   }
 
   function notFound(): { status: number; body: MeetingRoomActionResult } {
@@ -382,6 +854,17 @@ export function createMeetingRoomService(opts?: {
       body: { snapshot: null, announcements: ["This room expired. Reload to start again."] },
     };
   }
+
+  function boundEntry(callerKey: string | null, roomId: unknown): RoomEntry | null {
+    if (callerKey === null) return null;
+    if (typeof roomId !== "string") return null;
+    const e = rooms.get(roomId);
+    if (e === undefined) return null;
+    if (e.storeKey !== callerKey) return null;
+    return e;
+  }
+
+
 
   const service: MeetingRoomService = {
     open(search: string, headers: IncomingHttpHeaders, storeKey = "default"): MeetingRoomSnapshot {
@@ -442,7 +925,8 @@ export function createMeetingRoomService(opts?: {
       const entry: RoomEntry = { room, demo, testMode, reused, storeKey };
       rooms.set(roomId, entry);
       if (demoMode) demoPages.add(roomId);
-      return snap(roomId, entry, room.view());
+      const v0 = room.view();
+      return snap(roomId, entry, v0);
     },
 
     async act(
@@ -552,6 +1036,7 @@ export function createMeetingRoomService(opts?: {
           },
         };
       }
+      let policyAnnouncementStatus: "applied" | "needs-clarification" | "not-applied" | null = null;
       const before = entry.room.view();
       switch (action) {
         case "state":
@@ -568,22 +1053,35 @@ export function createMeetingRoomService(opts?: {
               },
             };
           }
+          invalidateCandidate(entry);
           break;
         }
         case "stream-next":
           entry.room.streamNextLine();
           break;
-        case "guide":
-          entry.room.guide(text as string);
+        case "guide": {
+          const guideResult = entry.room.guide(text as string);
+          const recorded = (guideResult as { recorded: boolean }).recorded;
+          if (opts?.sessionPolicy === true && recorded === true && entry.demo === null) {
+            const v = entry.room.view();
+            const rec = createMeetingPolicyRecorder(v.ownerId, v.selectedMeetingId).record(text as string);
+            policyStatusByScope.set(`${v.ownerId}\0${v.selectedMeetingId}`, rec.status);
+            policyAnnouncementStatus = rec.status;
+            invalidateCandidate(entry);
+          }
           break;
+        }
         case "takeover":
           entry.room.takeOver();
+          invalidateCandidate(entry);
           break;
         case "resume":
           entry.room.resume();
+          invalidateCandidate(entry);
           break;
         case "edit-draft":
           entry.room.editDraft(text as string);
+          invalidateCandidate(entry);
           break;
         case "approve":
           entry.room.approve();
@@ -700,6 +1198,9 @@ export function createMeetingRoomService(opts?: {
         snapshot: snap(roomId, entry, after),
         announcements: diffAnnouncements(before, after),
       };
+      if (policyAnnouncementStatus === "applied") result.announcements.push("Meeting policy recorded for this meeting.");
+      else if (policyAnnouncementStatus === "needs-clarification") result.announcements.push("Meeting policy needs clarification: Please clarify the date restriction.");
+      else if (policyAnnouncementStatus === "not-applied") result.announcements.push("Meeting policy not applied.");
       if (action === "compare") {
         const visible = entry.room.compareVisible(text as string);
         if (visible !== null) {
@@ -721,16 +1222,94 @@ export function createMeetingRoomService(opts?: {
       return { status: 200, body: result };
     },
 
+    ingestConversationAs(
+      callerKey: string | null,
+      roomId: unknown,
+      event: unknown,
+    ): { status: number; body: MeetingRoomActionResult } {
+      const entry = boundEntry(callerKey, roomId);
+      if (entry === null) return notFound();
+      const rid = roomId as string;
+      const view = entry.room.view();
+      if (opts?.conversationInput !== true) {
+        return {
+          status: 403,
+          body: { snapshot: snap(rid, entry, view), announcements: ["Conversation input is not enabled."] },
+        };
+      }
+      // strict v1 validation
+      if (event === null || typeof event !== "object" || Array.isArray(event)) {
+        return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      const ev = event as Record<string, unknown>;
+      if (ev["version"] !== 1) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      const meetingId = ev["meetingId"];
+      const utteranceId = ev["utteranceId"];
+      const sequence = ev["sequence"];
+      const revision = ev["revision"];
+      const speaker = ev["speaker"];
+      const text = ev["text"];
+      if (typeof meetingId !== "string") return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof utteranceId !== "string" || utteranceId.length === 0) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof speaker !== "string" || speaker.length === 0) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof text !== "string") return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision <= 0) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      // only allowed keys
+      const allowed = new Set(["version", "meetingId", "utteranceId", "sequence", "revision", "speaker", "text", "ownerId"]);
+      for (const k of Object.keys(ev)) if (!allowed.has(k)) return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      if ("ownerId" in ev && ev["ownerId"] !== undefined) {
+        if (typeof ev["ownerId"] !== "string") return { status: 400, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      if (text.length > 2000 || speaker.length > 200) {
+        return { status: 413, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      // never trust supplied ownerId
+      if (typeof ev["ownerId"] === "string" && ev["ownerId"] !== view.ownerId) {
+        return { status: 403, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      if (meetingId !== view.selectedMeetingId) {
+        return { status: 409, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      const conv = getConversationState(entry.room, meetingId);
+      const existing = conv.utterances.get(utteranceId);
+      if (existing !== undefined) {
+        if (revision <= existing.revision) {
+          return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+        }
+        // correction: keep original sequence
+        conv.utterances.set(utteranceId, { sequence: existing.sequence, revision, speaker, text });
+        conv.contextRevision += 1;
+        conv.latestCorrection = { utteranceId, revision };
+        if(isCandidateActive()){
+          const v = entry.room.view();
+          if(v.twinStatus==="active"){
+            const st=getCandidateState(entry.room);
+            if(st.active) st.pending={ roomId: rid, entry }; else dispatchCandidate(entry, rid);
+          }
+        }
+        return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+      }
+      conv.utterances.set(utteranceId, { sequence, revision, speaker, text });
+      conv.contextRevision += 1;
+      if(isCandidateActive()){
+        const v = entry.room.view();
+        if(v.twinStatus==="active"){
+          const st=getCandidateState(entry.room);
+          if(st.active) st.pending={ roomId: rid, entry }; else dispatchCandidate(entry, rid);
+        }
+      }
+      return { status: 200, body: { snapshot: snap(rid, entry, view), announcements: [] } };
+    },
+
     async actAs(
       callerKey: string | null,
       body: Readonly<Record<string, unknown>>,
       headers: IncomingHttpHeaders,
     ): Promise<{ status: number; body: MeetingRoomActionResult }> {
       const roomId = body["roomId"];
-      const entry = typeof roomId === "string" ? rooms.get(roomId) : undefined;
-      if (callerKey === null || entry === undefined || entry.storeKey !== callerKey) {
-        return notFound();
-      }
+      const entry = boundEntry(callerKey, roomId);
+      if (entry === null) return notFound();
       const action = body["action"];
       if (action === "approve" || action === "send") {
         // Bind Approve and Send to the package this browser displayed. No
