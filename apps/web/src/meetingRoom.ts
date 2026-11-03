@@ -283,6 +283,7 @@ export type MeetingRoomService = {
     roomId: unknown,
     event: unknown,
   ): { status: number; body: MeetingRoomActionResult };
+  finishConversationAs(callerKey: string | null, roomId: unknown): { status: number; body: MeetingRoomActionResult };
   candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null;
   candidateIsCurrent(binding: CandidateCurrentBinding): boolean;
   sentBodies(): readonly string[];
@@ -332,6 +333,7 @@ export function createMeetingRoomService(opts?: {
   candidateReasoner?: CandidateReasoner;
   candidateDeadlineMs?: number;
   candidateMaxAttempts?: number;
+  candidateAutoDispatch?: boolean;
 }): MeetingRoomService {
   const env = opts?.env ?? process.env;
   const maxStores = opts?.maxStores ?? 200;
@@ -624,8 +626,9 @@ export function createMeetingRoomService(opts?: {
     s.revoke = null;
     rev.fn();
   }
-  function dispatchCandidate(entry: RoomEntry, roomId: string){
+  function dispatchCandidate(entry: RoomEntry, roomId: string, force = false){
     if(!isCandidateActive()) return;
+    if(opts?.candidateAutoDispatch === false && !force) return;
     if(entry.demo !== null) return;
     const st = getCandidateState(entry.room);
     if(st.active) return;
@@ -1441,7 +1444,20 @@ export function createMeetingRoomService(opts?: {
       return service.act(body, headers);
     },
 
-    candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null {
+    finishConversationAs(callerKey: string | null, roomId: unknown): { status: number; body: MeetingRoomActionResult } {
+      const entry = boundEntry(callerKey, roomId);
+      if(entry === null || typeof roomId !== 'string' || entry.demo !== null) return notFound();
+      if(!isCandidateActive()) return { status: 403, body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: ['Candidate unavailable.'] } };
+      const view = entry.room.view();
+      if(view.twinStatus !== 'active' || view.draft.sendState !== 'unsent') return { status: 409, body: { snapshot: snap(roomId, entry, view), announcements: ['Conversation not ready to finish.'] } };
+      const conv = conversationByRoom.get(entry.room)?.get(view.selectedMeetingId);
+      if(!conv || conv.utterances.size === 0) return { status: 422, body: { snapshot: snap(roomId, entry, view), announcements: ['Conversation not prepared.'] } };
+      if(candidateByRoom.get(entry.room)?.active) return { status: 409, body: { snapshot: snap(roomId, entry, view), announcements: ['Candidate already running.'] } };
+      if((candidateAttemptsByRoom.get(entry.room)?.get(view.selectedMeetingId) ?? 0) >= candidateMaxAttempts) return { status: 429, body: { snapshot: snap(roomId, entry, view), announcements: ['Too many attempts.'] } };
+      dispatchCandidate(entry, roomId, true);
+      return { status: 202, body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: ['Preparing redacted meeting context for review.'] } };
+    },
+  candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null {
       if (!isCandidateActive()) return null;
       const entry = boundEntry(callerKey, roomId);
       if (entry === null) return null;

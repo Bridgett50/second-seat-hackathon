@@ -16,7 +16,7 @@ export function createCandidateRuntime(env: Readonly<Record<string, string | und
   const broker = createCandidateApprovalBroker({ isCurrent: (binding) => service.candidateIsCurrent(binding) });
   const reasoner = createCandidateReasoner(env, { gate: analysis.gate, requestOwnerApproval: (runId, redactedPreview, binding, signal) => broker.request({ gate: analysis.gate, runId, redactedPreview, binding, signal }), isCurrent: (binding) => service.candidateIsCurrent(binding), callModel: transport });
   if (!reasoner) throw new Error("reasoner undefined");
-  service = createMeetingRoomService({ env, conversationInput: true, sessionPolicy: true, candidateReasoner: reasoner, candidateDeadlineMs: 400000, candidateMaxAttempts: 2 });
+  service = createMeetingRoomService({ env, conversationInput: true, sessionPolicy: true, candidateReasoner: reasoner, candidateDeadlineMs: 400000, candidateMaxAttempts: 2, candidateAutoDispatch: false });
   const api = createCandidateApprovalApi(service, broker);
   return { meetingRoom: service, candidateApprovalApi: api };
 }
