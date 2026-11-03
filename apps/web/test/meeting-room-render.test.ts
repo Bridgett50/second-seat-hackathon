@@ -12,6 +12,7 @@ import {
   type MeetingRoomSnapshot,
 } from "../src/meetingRoom.js";
 import {
+  MEETING_ROOM_EXTRA_LABELS,
   renderMeetingRoomBody,
   renderMeetingRoomPage,
 } from "../src/meetingRoomRender.js";
@@ -104,6 +105,8 @@ describe("meeting room page", () => {
         const staticLabel = (A11Y_LABELS as Record<string, string>)[id];
         if (staticLabel !== undefined) {
           expect(c.label, `wrong aria-label for #${id}`).toBe(staticLabel);
+        } else if ((MEETING_ROOM_EXTRA_LABELS as Record<string, string>)[id] !== undefined) {
+          expect(c.label, `wrong aria-label for #${id}`).toBe((MEETING_ROOM_EXTRA_LABELS as Record<string, string>)[id]);
         } else {
           const expected = expectedPluginLabel(id);
           expect(expected, `unexpected control id #${id}`).not.toBeNull();

@@ -118,6 +118,35 @@ describe("meeting-room candidate adopt browser", () => {
       await pwExpect(panel).toContainText(preview.evaluatedBody, { timeout: 2000 });
       const adoptBtn = page.locator('[data-mr-action="adopt-candidate"]');
       await pwExpect(adoptBtn).toContainText("Use this email", { timeout: 2000 });
+      let adoptCount = 0;
+      page.on("request", (req) => {
+        if (!req.url().includes(API) || req.method() !== "POST") return;
+        try {
+          const data = req.postDataJSON();
+          if (data !== null && data !== undefined && data.action === "adopt-candidate") adoptCount++;
+        } catch {
+        }
+      });
+      const editorPre = page.locator("#package-editor");
+      const unsavedText = "UNSAVED-TEST-DRAFT-" + String(Date.now());
+      await editorPre.fill(unsavedText);
+      await pwExpect(adoptBtn).toBeDisabled({ timeout: 2000 });
+      const stateRespPromise = page.waitForResponse((r) => {
+        if (!r.url().includes(API) || r.request().method() !== "POST") return false;
+        try {
+          const data = r.request().postDataJSON();
+          return data !== null && data !== undefined && data.action === "state";
+        } catch {
+          return false;
+        }
+      });
+      await adoptBtn.dispatchEvent("click");
+      await stateRespPromise;
+      await pwExpect(editorPre).toHaveValue(unsavedText, { timeout: 2000 });
+      await pwExpect(adoptBtn).toBeDisabled({ timeout: 2000 });
+      expect(adoptCount).toBe(0);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await pwExpect(adoptBtn).toBeEnabled({ timeout: 2000 });
       const adoptRespPromise = page.waitForResponse((r) => {
         if (!r.url().includes(API) || r.request().method() !== "POST") return false;
         try {
@@ -130,6 +159,7 @@ describe("meeting-room candidate adopt browser", () => {
       await adoptBtn.click();
       const adoptResp = await adoptRespPromise;
       expect(adoptResp.ok()).toBe(true);
+      expect(adoptCount).toBe(1);
       const afterAdopt = await svc.actAs(mrCookie.value, { roomId, action: "state" }, headers);
       if (afterAdopt.body.snapshot === null || afterAdopt.body.snapshot === undefined) throw new Error("missing adopt snapshot");
       expect(afterAdopt.body.snapshot.view.draft.approved).toBe(false);

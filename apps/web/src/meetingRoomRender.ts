@@ -321,7 +321,7 @@ function previewHtml(snap: MeetingRoomSnapshot): string {
     const cid = esc(p.candidateId);
     const cr = String(snap.candidate!.contextRevision);
     const pg = String(p.generation);
-    btn = `<button type="button" id="mr-adopt-candidate" data-mr-action="adopt-candidate" data-mr-candidate-id="${cid}" data-mr-context-revision="${esc(cr)}" data-mr-policy-generation="${esc(pg)}">Use this email</button>`;
+    btn = `<button type="button" id="mr-adopt-candidate" aria-label="${esc(MEETING_ROOM_EXTRA_LABELS["mr-adopt-candidate"] ?? "")}" data-mr-action="adopt-candidate" data-mr-candidate-id="${cid}" data-mr-context-revision="${esc(cr)}" data-mr-policy-generation="${esc(pg)}">Use this email</button>`;
   }
   return header + statusNote + reason + subjLine + bodyLine + btn;
 }
@@ -387,6 +387,8 @@ export function renderMeetingRoomBody(snap: MeetingRoomSnapshot): string {
   if (cand) parts.push(cand);
   return parts.join("\n");
 }
+
+export const MEETING_ROOM_EXTRA_LABELS: Readonly<Record<string, string>> = { "mr-adopt-candidate": "Use this email" };
 
 const CLIENT_JS = `(function(){
 "use strict";
@@ -522,7 +524,7 @@ function previewClientHtml(snap){
   if(body) h+='<pre>'+escHtml(body)+'</pre>';
   if(canAdoptClient(snap)){
     var dis=dirty?" disabled":"";
-    h+='<button type="button" id="mr-adopt-candidate" data-mr-action="adopt-candidate" data-mr-candidate-id="'+escHtml(p.candidateId)+'" data-mr-context-revision="'+escHtml(String(snap.candidate.contextRevision))+'" data-mr-policy-generation="'+escHtml(String(p.generation))+'"'+dis+'>Use this email</button>';
+    h+='<button type="button" id="mr-adopt-candidate" aria-label="${esc(MEETING_ROOM_EXTRA_LABELS["mr-adopt-candidate"] ?? "")}" data-mr-action="adopt-candidate" data-mr-candidate-id="'+escHtml(p.candidateId)+'" data-mr-context-revision="'+escHtml(String(snap.candidate.contextRevision))+'" data-mr-policy-generation="'+escHtml(String(p.generation))+'"'+dis+'>Use this email</button>';
   }
   return h;
 }
