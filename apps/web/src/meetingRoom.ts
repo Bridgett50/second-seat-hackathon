@@ -484,7 +484,7 @@ export function createMeetingRoomService(opts?: {
     generation: number;
     candidateId: string;
   };
-  type CandidateState = { epoch: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult; preview: CandidatePreviewState | null };
+  type CandidateState = { epoch: number; attempt: number; active: boolean; timedOut: boolean; timer: ReturnType<typeof setTimeout> | null; pending: null | { roomId: string; entry: RoomEntry }; result: null | CandidateResult; preview: CandidatePreviewState | null; revoke: null | { attempt: number; epoch: number; fn: () => void } };
   const candidateByRoom = new WeakMap<TwinRoom, CandidateState>();
   const candidateAttemptsByRoom = new WeakMap<TwinRoom, Map<string, number>>();
   function isValidReleasedResult(v: unknown): v is { outcome: string; text: string; generation: number } {
@@ -555,7 +555,7 @@ export function createMeetingRoomService(opts?: {
   }
   function getCandidateState(room: TwinRoom){
     let s = candidateByRoom.get(room);
-    if(!s){ s = { epoch:0, active:false, timedOut:false, timer:null, pending:null, result:null, preview: null }; candidateByRoom.set(room,s); }
+    if(!s){ s = { epoch:0, attempt:0, active:false, timedOut:false, timer:null, pending:null, result:null, preview: null, revoke: null }; candidateByRoom.set(room,s); }
     return s;
   }
   function isCandidateActive(): boolean{
@@ -605,6 +605,9 @@ export function createMeetingRoomService(opts?: {
     s.pending = null;
     s.result = null;
     s.preview = null;
+    const rev = s.revoke;
+    s.revoke = null;
+    if(rev !== null) rev.fn();
   }
   function dispatchCandidate(entry: RoomEntry, roomId: string){
     if(!isCandidateActive()) return;
@@ -623,6 +626,26 @@ export function createMeetingRoomService(opts?: {
     const policyGeneration = getPolicyGeneration(ownerId, meetingId);
     const epoch = st.epoch;
     const snapConv = conversationSnapshotFor(entry, view);
+    const dispatchAttempt = st.attempt + 1;
+    st.attempt = dispatchAttempt;
+    const capturedAttempt = dispatchAttempt;
+    const registerRevoke = (revoke: () => void): void => {
+      const curSt = candidateByRoom.get(capturedEntry.room);
+      if(curSt !== st) { revoke(); return; }
+      if(curSt !== capturedState) { revoke(); return; }
+      if(!curSt.active || curSt.timedOut) { revoke(); return; }
+      if(curSt.attempt !== capturedAttempt) { revoke(); return; }
+      if(curSt.epoch !== capturedEpoch) { revoke(); return; }
+      if(rooms.get(capturedRoomId) !== capturedEntry) { revoke(); return; }
+      const freshView = capturedEntry.room.view();
+      if(freshView.ownerId !== capturedOwnerId || freshView.selectedMeetingId !== capturedMeetingId) { revoke(); return; }
+      if(freshView.twinStatus !== "active") { revoke(); return; }
+      const curConv = conversationByRoom.get(capturedEntry.room)?.get(capturedMeetingId);
+      const curRevision = curConv?.contextRevision ?? 0;
+      if(curRevision !== capturedContextRevision) { revoke(); return; }
+      if(getPolicyGeneration(capturedOwnerId, capturedMeetingId) !== capturedPolicyGeneration) { revoke(); return; }
+      curSt.revoke = { attempt: capturedAttempt, epoch: capturedEpoch, fn: revoke };
+    };
     const input: CandidateReasonerInput = Object.freeze({
       roomId,
       ownerId,
@@ -633,6 +656,7 @@ export function createMeetingRoomService(opts?: {
       utterances: snapConv.utterances,
       guidance: Object.freeze([...view.guidance]),
       notes: Object.freeze([...view.notes]),
+      registerRevoke,
     });
     let attemptsMap = candidateAttemptsByRoom.get(entry.room);
     if(!attemptsMap){ attemptsMap = new Map<string, number>(); candidateAttemptsByRoom.set(entry.room, attemptsMap); }
@@ -642,11 +666,6 @@ export function createMeetingRoomService(opts?: {
       st.result = { candidateId: randomUUID(), meetingId, status:"failed", contextRevision, subject:"", body:"", sourceRefs: Object.freeze([] as CandidateSourceRef[]), note:"Candidate unavailable: attempt limit reached. It was not retried." };
       return;
     }
-    st.active = true;
-    st.timedOut = false;
-    st.pending = null;
-    st.result = null;
-    st.preview = null;
     const capturedEntry = entry;
     const capturedRoomId = roomId;
     const capturedOwnerId = ownerId;
@@ -655,6 +674,11 @@ export function createMeetingRoomService(opts?: {
     const capturedPolicyGeneration = policyGeneration;
     const capturedEpoch = epoch;
     const capturedState = st;
+    st.active = true;
+    st.timedOut = false;
+    st.pending = null;
+    st.result = null;
+    st.preview = null;
     const deadlineTimer = setTimeout(()=>{
       const curSt = candidateByRoom.get(capturedEntry.room);
       if(!curSt) return;
@@ -687,6 +711,7 @@ export function createMeetingRoomService(opts?: {
     p.then((val)=>{
       const curSt = candidateByRoom.get(entry.room);
       if(!curSt) return;
+      if(curSt.revoke !== null && curSt.revoke.attempt === capturedAttempt) curSt.revoke = null;
       if(curSt.timedOut){
         if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
         // late settlement discarded, free slot and drain
@@ -756,6 +781,7 @@ export function createMeetingRoomService(opts?: {
     }, (err)=>{
       const curSt = candidateByRoom.get(entry.room);
       if(!curSt) return;
+      if(curSt.revoke !== null && curSt.revoke.attempt === capturedAttempt) curSt.revoke = null;
       if(curSt.timedOut){
         if(curSt.timer){ clearTimeout(curSt.timer); curSt.timer = null; }
         curSt.active = false;
@@ -1073,8 +1099,8 @@ export function createMeetingRoomService(opts?: {
             const rec = createMeetingPolicyRecorder(v.ownerId, v.selectedMeetingId).record(text as string);
             policyStatusByScope.set(`${v.ownerId}\0${v.selectedMeetingId}`, rec.status);
             policyAnnouncementStatus = rec.status;
-            invalidateCandidate(entry);
           }
+          invalidateCandidate(entry);
           break;
         }
         case "takeover":
