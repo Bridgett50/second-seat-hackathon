@@ -36,7 +36,7 @@ import {
 
 export const MEETING_ROOM_PATH = "/meeting-room";
 export const MEETING_ROOM_API = "/api/meeting-room";
-export const MEETING_ROOM_POST_FIELDS = ["roomId", "action", "text", "id", "packageId"] as const;
+export const MEETING_ROOM_POST_FIELDS = ["roomId", "action", "text", "id", "packageId", "contextRevision", "policyGeneration"] as const;
 
 /** Largest accepted `packageId` for Approve and Send, in characters. */
 export const MEETING_ROOM_MAX_PACKAGE_ID_CHARS = 400;
@@ -140,6 +140,7 @@ const ACTING_ACTIONS = new Set([
   "send",
   "demo-next",
   "demo-restart",
+  "adopt-candidate",
 ]);
 
 const COOKIE_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -1311,6 +1312,47 @@ export function createMeetingRoomService(opts?: {
       const entry = boundEntry(callerKey, roomId);
       if (entry === null) return notFound();
       const action = body["action"];
+      if (action === "adopt-candidate") {
+        const id = body["id"];
+        const cr = body["contextRevision"];
+        const pg = body["policyGeneration"];
+        const view0 = entry.room.view();
+        const badAdopt = (status: number, msg: string): { status: number; body: MeetingRoomActionResult } => ({
+          status,
+          body: { snapshot: snap(roomId as string, entry, view0), announcements: [msg] },
+        });
+        if (typeof id !== "string" || id.length === 0) return badAdopt(400, "Invalid adopt-candidate request.");
+        if (typeof cr !== "number" || !Number.isSafeInteger(cr) || cr < 0 || typeof pg !== "number" || !Number.isSafeInteger(pg) || pg < 0) return badAdopt(400, "Invalid adopt-candidate request.");
+        if (!isCandidateActive() || entry.demo !== null) return badAdopt(409, "Candidate is no longer available.");
+        const st = getCandidateState(entry.room);
+        if (st.active && !st.timedOut) return badAdopt(409, "Candidate is no longer available.");
+        if (!st.result || st.result.status !== "provisional") return badAdopt(409, "Candidate is no longer available.");
+        if (st.result.meetingId !== view0.selectedMeetingId) return badAdopt(409, "Candidate is no longer available.");
+        const p = st.preview;
+        if (!p || !p.preview || p.preview.status !== "released") return badAdopt(409, "Candidate is no longer available.");
+        if (p.candidateId !== st.result.candidateId || st.result.candidateId !== id) return badAdopt(409, "Candidate is no longer available.");
+        const curOwnerId = view0.ownerId;
+        const curMeetingId = view0.selectedMeetingId;
+        const curConv = conversationByRoom.get(entry.room)?.get(curMeetingId);
+        const curRevision = curConv?.contextRevision ?? 0;
+        const curGen = getPolicyGeneration(curOwnerId, curMeetingId);
+        if (p.ownerId !== curOwnerId || p.meetingId !== curMeetingId || p.contextRevision !== curRevision || p.epoch !== st.epoch || p.generation !== curGen) return badAdopt(409, "Candidate is no longer available.");
+        if (cr !== curRevision || pg !== curGen) return badAdopt(409, "Candidate is no longer available.");
+        if (p.contextRevision !== cr || p.generation !== pg) return badAdopt(409, "Candidate is no longer available.");
+        if (view0.draft.sendState !== "unsent") return badAdopt(409, "Candidate is no longer available.");
+        const evaluatedSubject = p.preview.evaluatedSubject;
+        const evaluatedBody = p.preview.evaluatedBody;
+        const draftText = evaluatedSubject + "\n\n" + evaluatedBody;
+        if (draftText.length > MEETING_ROOM_MAX_DRAFT_CHARS) return badAdopt(413, "Draft edits are limited to 20,000 characters.");
+        try {
+          entry.room.editDraft(draftText);
+        } catch {
+          return badAdopt(409, "Candidate is no longer available.");
+        }
+        const after = entry.room.view();
+        if (entry.demo === null && ACTING_ACTIONS.has(action as string)) acted.add(entry.storeKey);
+        return { status: 200, body: { snapshot: snap(roomId as string, entry, after), announcements: [] } };
+      }
       if (action === "approve" || action === "send") {
         // Bind Approve and Send to the package this browser displayed. No
         // await runs between this check and the room action in act().
