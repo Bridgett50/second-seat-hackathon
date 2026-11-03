@@ -39,6 +39,127 @@ function binding(overrides: Partial<CandidateBinding> = {}): CandidateBinding {
 function must<T>(v: T | null | undefined): T { if (v === null || v === undefined) throw new Error("expected value"); return v; }
 
 describe("candidateApproval", () => {
+it.each([
+  ["requestId"],
+  ["version"],
+  ["previewHash"],
+])("%s mismatch rejects correction", async (label) => {
+  const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+  const prepared = await gate.prepare("initial safe text");
+  const broker = createCandidateApprovalBroker({ isCurrent: () => true });
+  const correctSpy = vi.spyOn(gate, "correct");
+  const approveSpy = vi.spyOn(gate, "approve");
+  const controller = new AbortController();
+  try {
+    const pending = broker.request({ gate, runId: prepared.runId, redactedPreview: "initial safe text", binding: binding(), signal: controller.signal });
+    const snap = must(broker.snapshot(binding()));
+    const decision = { requestId: snap.requestId, version: snap.version, previewHash: snap.previewHash };
+    const badDecision = label === "version" ? { ...decision, version: snap.version + 1 } : label === "requestId" ? { ...decision, requestId: "wrong-requestId" } : { ...decision, previewHash: "0".repeat(64) };
+    expect(broker.correct(binding(), badDecision, "safe edited text")).toBeNull();
+    expect(broker.snapshot(binding())).toEqual(snap);
+    expect(gate.preview(prepared.runId)).toBe("initial safe text");
+    expect(correctSpy).toHaveBeenCalledTimes(0);
+    expect(approveSpy).toHaveBeenCalledTimes(0);
+    const ok = must(broker.correct(binding(), decision, "safe edited text"));
+    expect(ok.requestId).toBe(snap.requestId);
+    expect(gate.preview(prepared.runId)).toBe("safe edited text");
+    controller.abort();
+    await pending;
+  } finally {
+    controller.abort();
+    correctSpy.mockRestore();
+    approveSpy.mockRestore();
+  }
+});
+
+it.each([
+  ["blank", " \n "],
+  ["oversized", "x".repeat(33)],
+] as const)("%s edited text is rejected", async (_label, editedText) => {
+  const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+  const prepared = await gate.prepare("initial safe text");
+  const broker = createCandidateApprovalBroker({ isCurrent: () => true, maxTextLength: 32 });
+  const correctSpy = vi.spyOn(gate, "correct");
+  const approveSpy = vi.spyOn(gate, "approve");
+  const controller = new AbortController();
+  try {
+    const pending = broker.request({ gate, runId: prepared.runId, redactedPreview: "initial safe text", binding: binding(), signal: controller.signal });
+    const snap = must(broker.snapshot(binding()));
+    expect(broker.correct(binding(), { requestId: snap.requestId, version: snap.version, previewHash: snap.previewHash }, editedText)).toBeNull();
+    expect(broker.snapshot(binding())).toEqual(snap);
+    expect(gate.preview(prepared.runId)).toBe("initial safe text");
+    expect(correctSpy).toHaveBeenCalledTimes(0);
+    expect(approveSpy).toHaveBeenCalledTimes(0);
+    const boundary = "x".repeat(32);
+    const ok = must(broker.correct(binding(), { requestId: snap.requestId, version: snap.version, previewHash: snap.previewHash }, boundary));
+    expect(ok.version).not.toBe(snap.version);
+    expect(gate.preview(prepared.runId)).toBe(boundary);
+    controller.abort();
+    await pending;
+  } finally {
+    controller.abort();
+    correctSpy.mockRestore();
+    approveSpy.mockRestore();
+  }
+});
+
+  it("correct preserves identity and enforces single approval of edited text", async () => {
+    const controller = new AbortController();
+    const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+    const prepared = await gate.prepare("initial safe text");
+    const broker = createCandidateApprovalBroker({ isCurrent: () => true });
+    const approveSpy = vi.spyOn(gate, "approve");
+    try {
+      const pending = broker.request({ gate, runId: prepared.runId, redactedPreview: "initial safe text", binding: binding(), signal: controller.signal });
+      const snap = must(broker.snapshot(binding()));
+      const expiryBefore = snap.expiresAt;
+      const editedText = " edited exact new safe text\n ";
+      const corrected = broker.correct(binding(), { requestId: snap.requestId, version: snap.version, previewHash: snap.previewHash }, editedText);
+      expect(corrected).not.toBeNull();
+      expect(approveSpy).not.toHaveBeenCalled();
+      expect(must(corrected).requestId).toBe(snap.requestId);
+      expect(must(corrected).expiresAt).toBe(expiryBefore);
+      expect(must(corrected).version).not.toBe(snap.version);
+      expect(must(corrected).previewHash).toBe(sha256Hex(editedText));
+      expect(must(corrected).redactedText).toBe(editedText);
+      const forged = broker.correct(binding({ ownerId: "evil" }), { requestId: must(corrected).requestId, version: must(corrected).version, previewHash: must(corrected).previewHash }, "evil");
+      expect(forged).toBeNull();
+      expect(broker.snapshot(binding())).toEqual(corrected);
+      const preApprove = broker.approve(binding(), { requestId: snap.requestId, version: snap.version, previewHash: snap.previewHash });
+      expect(preApprove).toBe(false);
+      expect(approveSpy).toHaveBeenCalledTimes(0);
+      const ok = broker.approve(binding(), { requestId: must(corrected).requestId, version: must(corrected).version, previewHash: must(corrected).previewHash });
+      expect(ok).toBe(true);
+      expect(approveSpy).toHaveBeenCalledTimes(1);
+      const token = await pending;
+      expect(typeof token).toBe("string");
+      let delivered = "";
+      await gate.send(prepared.runId, must(token), async (gated) => { delivered += gated.text; });
+      expect(delivered).toBe(editedText);
+      expect(broker.correct(binding(), { requestId: must(corrected).requestId, version: must(corrected).version, previewHash: must(corrected).previewHash }, "again")).toBeNull();
+    } finally { controller.abort(); approveSpy.mockRestore(); }
+  });
+  it("corrected PII is still blocked by gate send", async () => {
+    const controller = new AbortController();
+    const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
+    const prepared = await gate.prepare("safe start");
+    const broker = createCandidateApprovalBroker({ isCurrent: () => true });
+    try {
+      const pending = broker.request({ gate, runId: prepared.runId, redactedPreview: "safe start", binding: binding(), signal: controller.signal });
+      const snap = must(broker.snapshot(binding()));
+      const piiText = "hello alice@example.com world";
+      const corrected = must(broker.correct(binding(), { requestId: snap.requestId, version: snap.version, previewHash: snap.previewHash }, piiText));
+      expect(corrected.redactedText).toBe(piiText);
+      const ok = broker.approve(binding(), { requestId: corrected.requestId, version: corrected.version, previewHash: corrected.previewHash });
+      expect(ok).toBe(true);
+      const token = await pending;
+      let count = 0;
+      await expect(gate.send(prepared.runId, must(token), async (gated) => { count++; })).rejects.toThrow(/residual PII/);
+      expect(count).toBe(0);
+      expect(gate.receipts(prepared.runId)).toEqual([]);
+    } finally { controller.abort(); }
+  });
+
   it("snapshot has exactly six keys and correct values", async () => {
     const gate = createPrivacyGate({ mode: "fixture", redactor: fakeRedactor() });
     const prepared = await gate.prepare("hi alice@example.com");

@@ -71,6 +71,7 @@ export function createCandidateApprovalBroker(deps: {
 }): {
   request(args: { gate: PrivacyGate; runId: string; redactedPreview: string; binding: CandidateBinding; signal: AbortSignal }): Promise<string | null>;
   snapshot(binding: CandidateBinding): CandidateApprovalSnapshot | null;
+  correct(binding: CandidateBinding, decision: CandidateApprovalDecision, editedText: string): CandidateApprovalSnapshot | null;
   approve(binding: CandidateBinding, decision: CandidateApprovalDecision): boolean;
   deny(binding: CandidateBinding, requestId: string): boolean;
   pendingCount(): number;
@@ -217,6 +218,53 @@ export function createCandidateApprovalBroker(deps: {
         settleNull(entry);
         return null;
       }
+      return {
+        requestId: entry.requestId,
+        redactedText: entry.text,
+        version: entry.version,
+        previewHash: entry.previewHash,
+        expiresAt: entry.expiresAt,
+        status: "pending",
+      };
+    },
+
+    correct(binding: CandidateBinding, decision: CandidateApprovalDecision, editedText: string): CandidateApprovalSnapshot | null {
+      const entry = entries.get(binding.roomId);
+      if (entry === undefined) return null;
+      if (!bindingEquals(binding, entry.binding)) return null;
+      if (decision.requestId !== entry.requestId) return null;
+      if (decision.version !== entry.version) return null;
+      if (decision.previewHash !== entry.previewHash) return null;
+      if (editedText.trim().length === 0) return null;
+      if (editedText.length > maxTextLength) return null;
+      if (entry.signal.aborted || now() >= entry.expiresAt || !deps.isCurrent(entry.binding)) {
+        settleNull(entry);
+        return null;
+      }
+      let currentText: string;
+      try {
+        currentText = entry.gate.preview(entry.runId);
+      } catch {
+        settleNull(entry);
+        return null;
+      }
+      if (currentText !== entry.text) {
+        settleNull(entry);
+        return null;
+      }
+      if (sha256Hex(currentText) !== entry.previewHash) {
+        settleNull(entry);
+        return null;
+      }
+      try {
+        entry.gate.correct(entry.runId, editedText);
+      } catch {
+        settleNull(entry);
+        return null;
+      }
+      entry.text = editedText;
+      entry.previewHash = sha256Hex(editedText);
+      entry.version = nextVersion++;
       return {
         requestId: entry.requestId,
         redactedText: entry.text,
