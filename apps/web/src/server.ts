@@ -25,6 +25,7 @@ import {
   renderMeetingRoomBody,
   renderMeetingRoomPage,
 } from "./meetingRoomRender.js";
+import type { createCandidateApprovalApi } from "./candidateApprovalApi.js";
 
 const PORT = Number(process.env.PORT ?? 4173);
 /** Loopback only. The demo process does not listen on other interfaces. */
@@ -71,6 +72,7 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/session/invalidate": new Set(["sessionId", "scope", "expectedRevision"]),
   "/api/session/pressure-review": new Set(["sessionId", "itemId", "expectedRevision", "assessmentId", "reviewed"]),
   [MEETING_ROOM_API]: new Set(MEETING_ROOM_POST_FIELDS),
+  "/api/meeting-room/candidate-context": new Set(["roomId", "action", "requestId", "version", "previewHash", "text"]),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -140,6 +142,7 @@ export interface WebServerDeps {
   lastSent?: { text: string };
   /** Meeting room service; defaults to a new one (tests inject a fake-transport service). */
   meetingRoom?: MeetingRoomService;
+  candidateApprovalApi?: ReturnType<typeof createCandidateApprovalApi>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -400,6 +403,19 @@ export function createWebServer(deps?: WebServerDeps) {
       res.end("not found");
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/meeting-room/candidate-context") {
+      res.setHeader("Cache-Control", "no-store");
+      const candidateApprovalApi = deps?.candidateApprovalApi;
+      if (!candidateApprovalApi) {
+        json(res, 404, { error: "Not found" });
+        return;
+      }
+      const caller = meetingRoomStoreKey(req.headers.cookie);
+      const roomId = url.searchParams.get("roomId");
+      const result = candidateApprovalApi.read(caller, roomId);
+      json(res, result.status, result.body);
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/session/state") {
       const sessionId = url.searchParams.get("sessionId");
       if (!sessionId) {
@@ -435,6 +451,18 @@ export function createWebServer(deps?: WebServerDeps) {
             return;
           }
           const body = asRecord(parsed);
+          if (req.method === "POST" && url.pathname === "/api/meeting-room/candidate-context") {
+            res.setHeader("Cache-Control", "no-store");
+            const candidateApprovalApi = deps?.candidateApprovalApi;
+            if (!candidateApprovalApi) {
+              json(res, 404, { error: "Not found" });
+              return;
+            }
+            const caller = meetingRoomStoreKey(req.headers.cookie);
+            const result = candidateApprovalApi.act(caller, parsed);
+            json(res, result.status, result.body);
+            return;
+          }
           if (url.pathname === MEETING_ROOM_API) {
             // Bind every action to its browser: only the store key in this
             // request's own mr_store cookie may read or act on a room.
