@@ -15,6 +15,7 @@ import {
 } from "@second-seat/bot/dist/src/t2-room.js";
 import { THEME_CSS, twinStageHtml } from "./theme.js";
 import type { MeetingRoomSnapshot } from "./meetingRoom.js";
+import { CANDIDATE_CONTEXT_CLIENT_JS } from "./candidateContextClient.js";
 
 /** Escape dynamic text and attribute values for HTML. */
 function esc(s: string): string {
@@ -787,6 +788,7 @@ ${twinStage}
 </main>
 <script>
 ${CLIENT_JS}
+${CANDIDATE_CONTEXT_CLIENT_JS}
 </script>
 </body>
 </html>`;
