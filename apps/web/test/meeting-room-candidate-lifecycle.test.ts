@@ -407,4 +407,72 @@ describe("candidate lifecycle revoke", () => {
       await flush();
     }
   });
+it("candidateAutoDispatch:false buffers conversation and finishConversationAs triggers one reasoner call", async () => {
+  const fake = createFake();
+  const svc = createMeetingRoomService({
+    env: TEST_ENV,
+    conversationInput: true,
+    sessionPolicy: true,
+    candidateReasoner: fake.reasoner,
+    candidateAutoDispatch: false,
+    candidateMaxAttempts: 2,
+  });
+  const ctx = makeRoom(svc);
+  try {
+    const r1 = ingest(svc, ctx.key, ctx.roomId, { meetingId: ctx.meetingId, utteranceId: "u1", sequence: 1, revision: 1, speaker: "Synthetic", text: "First part" });
+    expect(r1.status).toBe(200);
+    const r2 = ingest(svc, ctx.key, ctx.roomId, { meetingId: ctx.meetingId, utteranceId: "u2", sequence: 2, revision: 1, speaker: "Synthetic", text: "Second part" });
+    expect(r2.status).toBe(200);
+    expect(fake.calls.length).toBe(0);
+    const bad = svc.finishConversationAs(randomUUID(), ctx.roomId);
+    expect(bad.status).toBe(404);
+    expect(fake.calls.length).toBe(0);
+    const ok = svc.finishConversationAs(ctx.key, ctx.roomId);
+    expect(ok.status).toBe(202);
+    expect(fake.calls.length).toBe(1);
+    expect(must(fake.calls[0]).utterances.map((u) => u.utteranceId)).toEqual(["u1", "u2"]);
+    const again = svc.finishConversationAs(ctx.key, ctx.roomId);
+    expect(again.status).toBe(409);
+    expect(fake.calls.length).toBe(1);
+  } finally {
+    await svc.actAs(ctx.key, { roomId: ctx.roomId, action: "takeover" }, HEADERS);
+    for (const p of fake.pending) p.resolve(null);
+    await flush();
+  }
+});
+
+it("finishConversationAs caps at candidateMaxAttempts", async () => {
+  const fake = createFake();
+  const svc = createMeetingRoomService({
+    env: TEST_ENV,
+    conversationInput: true,
+    sessionPolicy: true,
+    candidateReasoner: fake.reasoner,
+    candidateAutoDispatch: false,
+    candidateMaxAttempts: 2,
+  });
+  const ctx = makeRoom(svc);
+  try {
+    const r1 = ingest(svc, ctx.key, ctx.roomId, { meetingId: ctx.meetingId, utteranceId: "u1", sequence: 1, revision: 1, speaker: "Synthetic", text: "First part" });
+    expect(r1.status).toBe(200);
+    const a = svc.finishConversationAs(ctx.key, ctx.roomId);
+    expect(a.status).toBe(202);
+    expect(fake.calls.length).toBe(1);
+    must(fake.pending[0]).resolve(null);
+    await flush();
+    const b = svc.finishConversationAs(ctx.key, ctx.roomId);
+    expect(b.status).toBe(202);
+    expect(fake.calls.length).toBe(2);
+    must(fake.pending[1]).resolve(null);
+    await flush();
+    const c = svc.finishConversationAs(ctx.key, ctx.roomId);
+    expect(c.status).toBe(429);
+    expect(fake.calls.length).toBe(2);
+  } finally {
+    await svc.actAs(ctx.key, { roomId: ctx.roomId, action: "takeover" }, HEADERS);
+    for (const p of fake.pending) p.resolve(null);
+    await flush();
+  }
+});
+
 });

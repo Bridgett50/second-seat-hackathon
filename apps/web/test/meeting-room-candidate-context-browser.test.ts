@@ -47,6 +47,8 @@ describe("chrome privacy-gate", () => {
       if (!meetingId) throw new Error("missing meetingId");
       const ing = await app.service.ingestConversationAs(key, roomId, { version: 1, meetingId, utteranceId: app.knownUid, sequence: 1, revision: 1, speaker: "Synthetic owner", text: "Contact alice@example.com after this meeting." });
       expect(ing.status).toBe(200);
+      const fin = await app.service.finishConversationAs(key, roomId);
+      expect(fin.status).toBe(202);
       const ctxArea = page.locator("#mr-context-text");
       await pwExpect(ctxArea).toBeVisible();
       await pwExpect(ctxArea).toHaveValue(/\[REDACTED_email\]/);

@@ -38,7 +38,7 @@ export function makeContextApp() {
     callModel,
   });
   if (!reasoner) throw new Error("reasoner undefined");
-  service = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "1" }, conversationInput: true, sessionPolicy: true, candidateReasoner: reasoner, candidateDeadlineMs: 120000 });
+  service = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "1" }, conversationInput: true, sessionPolicy: true, candidateReasoner: reasoner, candidateDeadlineMs: 120000, candidateAutoDispatch: false });
   const api = createCandidateApprovalApi(service, broker);
   const server = createWebServer({ meetingRoom: service, candidateApprovalApi: api });
   return { service, gate, broker, server, callModel, knownUid, captured };
