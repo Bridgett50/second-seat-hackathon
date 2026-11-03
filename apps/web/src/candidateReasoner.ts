@@ -12,7 +12,7 @@ export type CandidateBinding = Readonly<{
 
 export type CandidateReasonerDeps = {
   gate: PrivacyGate;
-  requestOwnerApproval: (runId: string, redactedPreview: string, binding: CandidateBinding) => Promise<string | null>;
+  requestOwnerApproval: (runId: string, redactedPreview: string, binding: CandidateBinding, signal: AbortSignal) => Promise<string | null>;
   isCurrent: (binding: CandidateBinding) => boolean;
   callModel: (gated: GatedText) => Promise<unknown>;
 };
@@ -37,10 +37,27 @@ export function createCandidateReasoner(
     if (!isCurrent(binding)) throw new Error("stale context");
     const serialized = input.utterances.map((u) => `${u.utteranceId} ${u.revision} ${u.speaker} ${u.text}`).join("\n");
     const prepared = await gate.prepare(serialized);
+    const controller = new AbortController();
+    let rejectCancel: (e: Error) => void = () => {};
+    const cancelled = new Promise<never>((_, rej) => {
+      rejectCancel = rej;
+    });
+    cancelled.catch(() => undefined);
+    const onAbort = (): void => {
+      rejectCancel(new Error("approval cancelled"));
+    };
+    controller.signal.addEventListener("abort", onAbort, { once: true });
     try {
       if (!isCurrent(binding)) throw new Error("stale context");
-      input.registerRevoke?.(() => gate.revoke(prepared.runId));
-      const token = await requestOwnerApproval(prepared.runId, prepared.redactedText, binding);
+      input.registerRevoke?.(() => {
+        gate.revoke(prepared.runId);
+        controller.abort();
+      });
+      if (controller.signal.aborted) throw new Error("approval cancelled");
+      const approvalPromise = requestOwnerApproval(prepared.runId, prepared.redactedText, binding, controller.signal);
+      approvalPromise.catch(() => undefined);
+      const token = await Promise.race([approvalPromise, cancelled]);
+      if (controller.signal.aborted) throw new Error("approval cancelled");
       if (!isCurrent(binding)) throw new Error("stale context");
       if (token === null) throw new Error("approval denied");
       return await gate.send(prepared.runId, token, async (gated) => {
@@ -48,6 +65,7 @@ export function createCandidateReasoner(
         return callModel(gated);
       });
     } finally {
+      controller.signal.removeEventListener("abort", onAbort);
       gate.revoke(prepared.runId);
     }
   };

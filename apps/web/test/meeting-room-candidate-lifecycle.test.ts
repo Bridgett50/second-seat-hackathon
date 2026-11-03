@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMeetingRoomService } from "../src/meetingRoom.js";
 import type { CandidateReasonerInput, CandidateCurrentBinding } from "../src/meetingRoom.js";
+import { createCandidateReasoner } from "../src/candidateReasoner.js";
+import type { PrivacyGate } from "@second-seat/bot/dist/src/private/gate.js";
 const HEADERS = { host: "127.0.0.1:4174" };
 const TEST_ENV: Readonly<Record<string, string>> = { SECOND_SEAT_TEST_MODE: "1" };
 type Service = ReturnType<typeof createMeetingRoomService>;
@@ -317,5 +319,53 @@ describe("candidate lifecycle revoke", () => {
     expect(fake.calls.length).toBe(0);
     for (const d2 of fake.pending) d2.resolve(null);
     await flush();
+  });
+
+  it("T12 real reasoner: new context cancels held approval, settles, and dispatches pending", async () => {
+    let n = 0;
+    const revoked: string[] = [];
+    const gate: PrivacyGate = {
+      prepare: async (rawText: string) => {
+        n += 1;
+        return { runId: `run-${n}`, redactedText: rawText, spans: [], needsReview: true, piiFree: false };
+      },
+      preview: () => "",
+      correct: () => "",
+      approve: () => "",
+      send: async () => { throw new Error("fake gate send refused"); },
+      revoke: (runId: string) => { revoked.push(runId); },
+      receipts: () => [],
+    };
+    const approvals: Array<{ runId: string; release: (v: string | null) => void; signal: AbortSignal | undefined }> = [];
+    let modelCalls = 0;
+    const reasoner = createCandidateReasoner({ SECOND_SEAT_CANDIDATE_REASONER: "1" }, {
+      gate,
+      requestOwnerApproval: (runId, _preview, _binding, signal?: AbortSignal) => new Promise<string | null>((resolve) => {
+        approvals.push({ runId, release: resolve, signal });
+      }),
+      isCurrent: () => true,
+      callModel: async () => { modelCalls += 1; return null; },
+    });
+    if (reasoner === undefined) throw new Error("reasoner off");
+    const svc = createMeetingRoomService({ env: TEST_ENV, conversationInput: true, sessionPolicy: true, candidateReasoner: reasoner });
+    const room = makeRoom(svc);
+    const rid = room.roomId;
+    const mid = room.meetingId;
+    try {
+      ingest(svc, room.key, rid, { meetingId: mid, utteranceId: "u1", sequence: 1, revision: 1, speaker: "alice", text: "hello" });
+      await flush();
+      expect(approvals.length).toBe(1);
+      ingest(svc, room.key, rid, { meetingId: mid, utteranceId: "u2", sequence: 2, revision: 1, speaker: "alice", text: "world" });
+      await flush();
+      expect(approvals.length).toBe(2);
+      expect(must(approvals[0]).signal?.aborted).toBe(true);
+      expect(revoked).toContain(must(approvals[0]).runId);
+      expect(modelCalls).toBe(0);
+    } finally {
+      for (const a of approvals) a.release(null);
+      await flush();
+      for (const a of approvals) a.release(null);
+      await flush();
+    }
   });
 });
