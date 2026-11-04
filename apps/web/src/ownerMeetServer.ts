@@ -1,9 +1,14 @@
 import { pathToFileURL } from "node:url";
+import { resolve, relative, isAbsolute, sep, dirname, basename, join } from "node:path";
+import { realpathSync, statSync } from "node:fs";
 import { createWebServer } from "./server.js";
 import { createOwnerMeetRuntime, type StartCapture } from "./ownerMeetRuntime.js";
 import type { createGoogleConnections } from "./googleConnections.js";
 import { createOwnerGoogleHttp } from "./ownerGoogleHttp.js";
 import { createLocalMeetCaptureFactory } from "./meetWorkerCapture.js";
+import { WEB_ROOT } from "./loadFixtures.js";
+import { createGoogleWriteOutbox } from "./googleWriteOutbox.js";
+import { createOwnerDraftHttp } from "./ownerDraftHttp.js";
 export type { StartCapture };
 export function assertOwnerMeetCliEnvironment(env: Readonly<Record<string,string|undefined>>): void {
   const m=env["SECOND_SEAT_MODE"]; if(m!==undefined && m!=="offline") throw new Error("Owner Meet start failed");
@@ -30,7 +35,7 @@ function parseArgs(argv: string[]): { email: string; port?: number } {
   if(port===undefined) return {email};
   return {email,port};
 }
-export async function startOwnerMeetServer(opts: { expectedOwnerEmail: string; port?: number; chromePath?: string; startCapture?: StartCapture; googleConnections?: ReturnType<typeof createGoogleConnections> }): Promise<{ url: string; server: import("node:http").Server; runtime: ReturnType<typeof createOwnerMeetRuntime>; stop: () => Promise<void> }> {
+export async function startOwnerMeetServer(opts: { expectedOwnerEmail: string; port?: number; chromePath?: string; startCapture?: StartCapture; googleConnections?: ReturnType<typeof createGoogleConnections>; googleJournalPath?: string; googleDraftFetch?: typeof fetch }): Promise<{ url: string; server: import("node:http").Server; runtime: ReturnType<typeof createOwnerMeetRuntime>; stop: () => Promise<void> }> {
   validateEmail(opts.expectedOwnerEmail);
   const port=validatePort(opts.port);
   const origin="http://localhost:"+String(port);
@@ -41,10 +46,33 @@ export async function startOwnerMeetServer(opts: { expectedOwnerEmail: string; p
     if(opts.chromePath!==undefined) (fOpts as Record<string,string>)["chromePath"]=opts.chromePath;
     startCapture=createLocalMeetCaptureFactory(fOpts);
   }
+  const checkout=resolve(WEB_ROOT,'../..');
+  function isInsideCheckout(resolved: string): boolean {
+    const rel=relative(checkout,resolved);
+    return rel==='' || (!isAbsolute(rel) && rel!=='..' && !rel.startsWith('..'+sep));
+  }
+  let journalPath: string | undefined;
+  if(opts.googleJournalPath!==undefined){
+    if(opts.googleConnections===undefined) throw new Error("Owner Meet start failed");
+    if(typeof opts.googleJournalPath!=="string" || !isAbsolute(opts.googleJournalPath) || opts.googleJournalPath.includes("\0")) throw new Error("Owner Meet start failed");
+    const resolvedJournal=resolve(opts.googleJournalPath);
+    if(resolvedJournal===checkout || isInsideCheckout(resolvedJournal)) throw new Error("Owner Meet start failed");
+    journalPath=resolvedJournal;
+  }
   let runtime: ReturnType<typeof createOwnerMeetRuntime>;
   try{ runtime=createOwnerMeetRuntime({origin,startCapture}); }catch{ throw new Error("Owner Meet start failed"); }
   let server: import("node:http").Server;
-  try{ const googleHttp=opts.googleConnections!==undefined ? createOwnerGoogleHttp({origin,connections:opts.googleConnections}) : undefined; server=createWebServer({meetingRoom:runtime.meetingRoom,meetWorkerHttp:runtime.meetWorkerHttp,...(googleHttp!==undefined ? {googleHttp} : {})}); }catch{ let cleanupFailed=false; try{ await runtime.dispose(); }catch{ cleanupFailed=true; } throw new Error(cleanupFailed ? "Owner Meet cleanup unconfirmed" : "Owner Meet start failed"); }
+  try{
+    let googleDraftHttp: ReturnType<typeof createOwnerDraftHttp> | undefined;
+    if(journalPath!==undefined && opts.googleConnections!==undefined){
+      const realParent=realpathSync(dirname(journalPath));
+      if(realParent===checkout || isInsideCheckout(realParent)) throw new Error("Owner Meet start failed");
+      if(!statSync(realParent).isDirectory()) throw new Error("Owner Meet start failed");
+      journalPath=join(realParent,basename(journalPath));
+      const outbox=createGoogleWriteOutbox({journalPath});
+      googleDraftHttp=createOwnerDraftHttp({origin,service:runtime.meetingRoom,connections:opts.googleConnections,outbox,fetcher:opts.googleDraftFetch??fetch});
+    }
+    const googleHttp=opts.googleConnections!==undefined ? createOwnerGoogleHttp({origin,connections:opts.googleConnections}) : undefined; server=createWebServer({meetingRoom:runtime.meetingRoom,meetWorkerHttp:runtime.meetWorkerHttp,...(googleHttp!==undefined ? {googleHttp} : {}),...(googleDraftHttp!==undefined ? {googleDraftHttp} : {})}); }catch{ let cleanupFailed=false; try{ await runtime.dispose(); }catch{ cleanupFailed=true; } throw new Error(cleanupFailed ? "Owner Meet cleanup unconfirmed" : "Owner Meet start failed"); }
   try{
     await new Promise<void>((resolve,reject)=>{
       const onL=()=>{ server.off("error",onE); resolve(); };

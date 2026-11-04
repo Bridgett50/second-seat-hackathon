@@ -19,6 +19,7 @@ import { CANDIDATE_CONTEXT_CLIENT_JS } from "./candidateContextClient.js";
 import { MEETING_INPUT_CLIENT_JS } from "./meetingInputClient.js";
 import { MEET_WORKER_CLIENT_JS } from "./meetWorkerClient.js";
 import { GOOGLE_CONNECT_CLIENT_JS } from "./googleConnectClient.js";
+import { OWNER_DRAFT_CLIENT_JS } from "./ownerDraftClient.js";
 
 /** Escape dynamic text and attribute values for HTML. */
 function esc(s: string): string {
@@ -826,7 +827,7 @@ document.addEventListener("keydown",function(e){
 })();`;
 
 /** Full `<!DOCTYPE html>` meeting room document with one main landmark. */
-export function renderMeetingRoomPage(snap: MeetingRoomSnapshot, aiSelfSrc?: string | null, aiConfigured = false, workerConfigured = false, googleConfigured = false): string {
+export function renderMeetingRoomPage(snap: MeetingRoomSnapshot, aiSelfSrc?: string | null, aiConfigured = false, workerConfigured = false, googleConfigured = false, googleDraftConfigured = false): string {
   const twinStage = twinStageHtml({ imageSrc: aiSelfSrc ?? null, modeLabel: workerConfigured ? 'Local Meet worker' : (aiConfigured ? "AI drafting configured" : "Offline demo"), narrowPlacement: "before", caption: aiConfigured ? "Review the redacted meeting context before AI drafting, then review the reply before using it." : "Offline meeting room with made-up meetings. The twin drafts; you approve every step before anything moves." });
   const body = renderMeetingRoomBody(snap);
   return `<!DOCTYPE html>
@@ -848,7 +849,7 @@ button{margin:.25rem;padding:.45rem 1rem;font:inherit;border-radius:.5rem;border
 button:disabled{opacity:.45;cursor:not-allowed}
 ${THEME_CSS}</style>
 </head>
-<body data-ai-drafting="${aiConfigured && snap.demo === null ? "1" : "0"}" data-meet-worker="${workerConfigured && snap.demo === null ? "1" : "0"}" data-google-connect="${googleConfigured && snap.demo === null ? "1" : "0"}">
+<body data-ai-drafting="${aiConfigured && snap.demo === null ? "1" : "0"}" data-meet-worker="${workerConfigured && snap.demo === null ? "1" : "0"}" data-google-connect="${googleConfigured && snap.demo === null ? "1" : "0"}" data-google-draft="${googleDraftConfigured && workerConfigured && googleConfigured && snap.demo === null ? "1" : "0"}">
 <main>
 <div class="ss-shell">
 <div class="ss-main">
@@ -865,6 +866,7 @@ ${CANDIDATE_CONTEXT_CLIENT_JS}
 ${MEETING_INPUT_CLIENT_JS}
 ${workerConfigured && snap.demo===null ? MEET_WORKER_CLIENT_JS : ''}
 ${googleConfigured && snap.demo===null ? GOOGLE_CONNECT_CLIENT_JS : ''}
+${googleDraftConfigured && workerConfigured && googleConfigured && snap.demo===null ? OWNER_DRAFT_CLIENT_JS : ''}
 </script>
 </body>
 </html>`;

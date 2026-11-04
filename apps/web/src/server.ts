@@ -26,6 +26,7 @@ import {
   renderMeetingRoomPage,
 } from "./meetingRoomRender.js";
 import type { createMeetWorkerHttp } from "./meetWorkerHttp.js";
+import type { createOwnerDraftHttp } from "./ownerDraftHttp.js";
 import type { createOwnerGoogleHttp } from "./ownerGoogleHttp.js";
 import type { createCandidateApprovalApi } from "./candidateApprovalApi.js";
 import { createCandidateRuntime } from "./candidateRuntime.js";
@@ -84,6 +85,10 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/meeting-room/worker/prepare": new Set(["roomId"]),
   "/api/google/connect": new Set(["purpose"]),
   "/api/google/disconnect": new Set([]),
+  "/api/google/draft/preview": new Set(["roomId", "to", "subject"]),
+  "/api/google/draft/approve": new Set(["roomId", "packageHash"]),
+  "/api/google/draft/create": new Set(["roomId", "packageHash"]),
+  "/api/google/draft/invalidate": new Set(["roomId"]),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -156,6 +161,7 @@ export interface WebServerDeps {
   candidateApprovalApi?: ReturnType<typeof createCandidateApprovalApi>;
   meetWorkerHttp?: ReturnType<typeof createMeetWorkerHttp>;
   googleHttp?: ReturnType<typeof createOwnerGoogleHttp>;
+  googleDraftHttp?: ReturnType<typeof createOwnerDraftHttp>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -382,7 +388,7 @@ export function createWebServer(deps?: WebServerDeps) {
         }
         throw err;
       }
-      const html = renderMeetingRoomPage(snapshot, aiSelf?.url ?? null, contextApprovalApi !== undefined && snapshot.demo === null, deps?.meetWorkerHttp !== undefined && snapshot.demo === null, deps?.googleHttp !== undefined && snapshot.demo === null);
+      const html = renderMeetingRoomPage(snapshot, aiSelf?.url ?? null, contextApprovalApi !== undefined && snapshot.demo === null, deps?.meetWorkerHttp !== undefined && snapshot.demo === null, deps?.googleHttp !== undefined && snapshot.demo === null, deps?.googleDraftHttp !== undefined && snapshot.demo === null);
       const headers: Record<string, string> = {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
@@ -418,6 +424,73 @@ export function createWebServer(deps?: WebServerDeps) {
       res.end("not found");
       return;
     }
+if (url.pathname.startsWith("/api/google/draft/")) {
+  res.setHeader("Cache-Control", "no-store");
+  if (!deps?.googleDraftHttp) {
+    json(res, 404, { error: "Not found" });
+    return;
+  }
+  void (async () => {
+    try {
+      if (req.method === "POST") {
+        const ct = req.headers["content-type"] ?? "";
+        const mediaType = (ct.split(";")[0] ?? "").trim().toLowerCase();
+        if (mediaType !== "application/json") {
+          json(res, 415, { error: "Unsupported Media Type" });
+          return;
+        }
+        let raw: string | null = null;
+        let parsed: unknown = null;
+        raw = await readBody(req);
+        try {
+          parsed = raw ? JSON.parse(raw) : null;
+        } catch {
+          json(res, 400, { error: "Malformed JSON" });
+          return;
+        }
+        const validationError = validatePostBody(url.pathname, req.headers["content-type"] ?? "", raw, parsed);
+        if (validationError) {
+          json(res, 400, { error: validationError });
+          return;
+        }
+        const reply = await deps.googleDraftHttp!({
+          method: req.method ?? "",
+          path: url.pathname,
+          callerKey: meetingRoomStoreKey(req.headers.cookie),
+          origin: typeof req.headers.origin === "string" ? req.headers.origin : null,
+          host: typeof req.headers.host === "string" ? req.headers.host : null,
+          remoteAddress: req.socket.remoteAddress ?? null,
+          body: parsed,
+          query: url.searchParams,
+        });
+        for (const [k, v] of Object.entries(reply.headers)) {
+          res.setHeader(k, v);
+        }
+        json(res, reply.status, reply.body);
+        return;
+      }
+      const reply = await deps.googleDraftHttp!({
+        method: req.method ?? "",
+        path: url.pathname,
+        callerKey: meetingRoomStoreKey(req.headers.cookie),
+        origin: typeof req.headers.origin === "string" ? req.headers.origin : null,
+        host: typeof req.headers.host === "string" ? req.headers.host : null,
+        remoteAddress: req.socket.remoteAddress ?? null,
+        body: null,
+        query: url.searchParams,
+      });
+      for (const [k, v] of Object.entries(reply.headers)) {
+        res.setHeader(k, v);
+      }
+      json(res, reply.status, reply.body);
+    } catch {
+      if (!res.writableEnded && !res.headersSent) {
+        json(res, 503, { error: "Unavailable" });
+      }
+    }
+  })();
+  return;
+}
     if (url.pathname.startsWith("/api/google/")) {
       res.setHeader("Cache-Control", "no-store");
       if (!deps?.googleHttp) {
