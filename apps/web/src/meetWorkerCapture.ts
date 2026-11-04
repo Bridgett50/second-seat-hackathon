@@ -4,7 +4,7 @@ import { createMeetAdmissionBrowser, type MeetProofBrowser } from "./meetAdmissi
 import { createMeetAdmissionProof, type MeetAdmissionTransport } from "./meetAdmissionProof.js";
 import { createMeetCaptionBuffer } from "./meetCaptionBuffer.js";
 import type { MeetWorkerBinding } from "./meetWorkerPairing.js";
-type FactoryOpts = { expectedOwnerEmail: string; chromePath?: string; allowOwnerTransfer?: boolean; launch?: () => Promise<MeetProofBrowser<Page>>; admit?: ReturnType<typeof createAuthenticatedMeetDriver>; enableCaptions?: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean>; };
+type FactoryOpts = { expectedOwnerEmail: string; chromePath?: string; allowOwnerTransfer?: boolean; launch?: () => Promise<MeetProofBrowser<Page>>; admit?: (page: Page, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal) => Promise<boolean>; enableCaptions?: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean>; };
 type Scope = { meetingUrl: string; displayName: string; binding: MeetWorkerBinding; isCurrent: () => boolean; };
 type CaptureHandle = Readonly<{ sample: ReturnType<typeof createMeetCaptionBuffer>["sample"]; stop: () => Promise<void>; }>;
 export class MeetCaptureStartError extends Error { readonly cleanupConfirmed: boolean; constructor(cleanupConfirmed: boolean) { super(cleanupConfirmed ? "Meet capture unavailable" : "Meet proof cleanup unconfirmed"); this.cleanupConfirmed = cleanupConfirmed; this.name = "MeetCaptureStartError"; } }
@@ -75,7 +75,7 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       const admitGuard = (): boolean => !externalSignal.aborted && !sig.aborted && !localStopped && scopeCurrent() && proofRef?.phase() === "joining";
       if (!admitGuard()) return false;
       let fn: (p: Page, sc: Readonly<{ meetingUrl: string; displayName: string }>, sg: AbortSignal) => Promise<boolean>;
-      if (capturedAdmit) fn = capturedAdmit as unknown as typeof fn;
+      if (capturedAdmit) fn = capturedAdmit;
       else {
         const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: capturedEmail, timeoutMs: 60000, allowOwnerTransfer: capturedAllowTransfer, ownerSignInTimeoutMs: 300000 });
         fn = async (p, sc, sg): Promise<boolean> => {

@@ -1,4 +1,16 @@
-import type { Page } from "@playwright/test";
+export type MeetDriverLocator = {
+  waitFor(options?: { state?: "attached" | "detached" | "visible" | "hidden"; timeout?: number }): Promise<void>;
+  count(): Promise<number>;
+  isVisible(): Promise<boolean>;
+  click(): Promise<void>;
+  or(locator: MeetDriverLocator): MeetDriverLocator;
+};
+export type MeetDriverPage = {
+  goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
+  url(): string;
+  getByRole(role: "button", options?: { name?: string; exact?: boolean }): MeetDriverLocator;
+  getByText(text: string, options?: { exact?: boolean }): MeetDriverLocator;
+};
 export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number }) {
   const expectedEmail = opts.expectedOwnerEmail;
   if (typeof expectedEmail !== "string" || expectedEmail.trim() === "" || expectedEmail.length > 320 || /[\x00-\x1F\x7F]/.test(expectedEmail)) {
@@ -13,7 +25,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
   if (!Number.isFinite(ownerSignInTimeoutMs) || !Number.isInteger(ownerSignInTimeoutMs) || ownerSignInTimeoutMs <= 0) throw new Error("invalid ownerSignInTimeoutMs");
   ownerSignInTimeoutMs = Math.min(300000, ownerSignInTimeoutMs);
   const scopeRe = /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
-  return async (page: Page, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal): Promise<boolean> => {
+  return async (page: MeetDriverPage, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal): Promise<boolean> => {
     const approvedUrl = scope.meetingUrl;
     if (signal.aborted) return false;
     if (!scopeRe.test(approvedUrl)) return false;
@@ -23,11 +35,39 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
     const u = new URL(page.url());
     return u.origin === "https://meet.google.com" && !u.username && !u.password && !u.port && (u.search === approvedTarget.search || (approvedTarget.search === "" && u.search === "?pli=1")) && u.hash === approvedTarget.hash && (u.pathname === `/${approvedCode}` || u.pathname === `/meet/${approvedCode}`);
   };
+    const waitOrAbort = (p: Promise<void>): Promise<boolean> => {
+      if (signal.aborted) {
+        p.catch(() => {});
+        return Promise.resolve(false);
+      }
+      return new Promise<boolean>((resolve) => {
+        const onAbort = (): void => {
+          signal.removeEventListener("abort", onAbort);
+          p.catch(() => {});
+          resolve(false);
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        p.then(() => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(true);
+        }, () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(false);
+        });
+      });
+    };
     try {
+      await page.goto("https://meet.google.com/", { waitUntil: "domcontentloaded", timeout });
+      const emailLoc = page.getByText(expectedEmail, { exact: true });
+      const signedIn = await waitOrAbort(emailLoc.waitFor({ state: "visible", timeout: ownerSignInTimeoutMs }));
+      if (!signedIn) return false;
+      if (signal.aborted) return false;
+      if (!(await emailLoc.isVisible())) return false;
+      const homeUrl = new URL(page.url());
+      if (homeUrl.origin !== "https://meet.google.com" || homeUrl.username || homeUrl.password || homeUrl.port) return false;
       await page.goto(approvedUrl, { waitUntil: "domcontentloaded", timeout });
       if (!isApprovedUrl()) return false;
       const cont = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
-      const emailLoc = page.getByText(expectedEmail, { exact: true });
       try { await emailLoc.or(cont).waitFor({ state: "visible", timeout }); } catch {}
       if (signal.aborted) return false;
       if ((await cont.count()) === 1 && (await cont.isVisible())) {
@@ -35,7 +75,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         if (!isApprovedUrl()) return false;
         await cont.click();
       }
-      await emailLoc.waitFor({ state: "visible", timeout: ownerSignInTimeoutMs });
+      if (!(await waitOrAbort(emailLoc.waitFor({ state: "visible", timeout })))) return false;
       if (!(await emailLoc.isVisible())) return false;
       if (signal.aborted) return false;
       let joinBtn = page.getByRole("button", { name: "Join now", exact: true });

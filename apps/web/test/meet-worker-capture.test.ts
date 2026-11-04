@@ -168,20 +168,21 @@ test("9 readiness modal forces decline before identity", async()=>{
   const exp="owner@example.test";
   for(const mode of ["owner","wrong","abort"] as const){
     const entered=deferred<void>(),reveal=deferred<void>();
-    let modal=false,declined=false,verified=false,jc=0,dc=0,done=false;
+    let modal=false,declined=false,verified=false,jc=0,dc=0,done=false,home=false;
+    const goto=vi.fn(async(u:string,_o?:unknown)=>{home=u==="https://meet.google.com/";});
     const pend=(a:()=>Promise<void>)=> done? a(): (done=true,entered.resolve(undefined),reveal.promise.then(a));
     type L={count:()=>Promise<number>,isVisible:()=>Promise<boolean>,waitFor:()=>Promise<void>,click:()=>Promise<void>,or:(o:L)=>L};
-    const mk=(k:string):L=>({count:async()=>k==="hw"? (modal&&!declined?1:0):k==="join"? (declined&&verified&&mode==="owner"?1:0):k==="leave"? (jc?1:0):0,isVisible:async()=>k==="hw"? (modal&&!declined):k==="owner"? (declined&&verified&&mode==="owner"):k==="join"? (declined&&verified&&mode==="owner"):k==="leave"? !!jc:false,waitFor:async()=>pend(async()=>{if(k==="owner"){if(mode==="wrong"||!declined) throw new Error("hidden");verified=true;}else if(k==="hw"){if(!modal||declined) throw new Error("hidden");}else if(k==="join"){if(!declined||!verified||mode!=="owner") throw new Error("hidden");}else if(k==="leave"){if(!jc) throw new Error("hidden");}}),click:async()=>{if(k==="hw"){declined=true;modal=false;dc++;}else if(k==="join"){if(!verified) throw new Error("forbidden");jc++;}},or(o:L){const u=mk(k+"|or");u.waitFor=async()=>pend(async()=>{if(!modal) throw new Error("hidden")});return u;}});
+    const mk=(k:string):L=>({count:async()=>k==="hw"? (home?0:modal&&!declined?1:0):k==="join"? (declined&&verified&&mode==="owner"?1:0):k==="leave"? (jc?1:0):0,isVisible:async()=>k==="hw"? (!home&&modal&&!declined):k==="owner"? (home?mode!=="wrong":declined&&verified&&mode==="owner"):k==="join"? (declined&&verified&&mode==="owner"):k==="leave"? !!jc:false,waitFor:async()=>pend(async()=>{if(k==="owner"){if(home){if(mode==="wrong") throw new Error("hidden");}else{if(mode==="wrong"||!declined) throw new Error("hidden");verified=true;}}else if(k==="hw"){if(home||!modal||declined) throw new Error("hidden");}else if(k==="join"){if(!declined||!verified||mode!=="owner") throw new Error("hidden");}else if(k==="leave"){if(!jc) throw new Error("hidden");}}),click:async()=>{if(k==="hw"){declined=true;modal=false;dc++;}else if(k==="join"){if(!verified) throw new Error("forbidden");jc++;}},or(o:L){const u=mk(k+"|or");u.waitFor=async()=>pend(async()=>{if(!modal) throw new Error("hidden")});return u;}});
     const owner=mk("owner"),hw=mk("hw"),join=mk("join"),leave=mk("leave"),dum=mk("dum");
-    const fake={goto:vi.fn(async()=>{}),url:()=>URL_S,getByText:vi.fn((t:string)=>t===exp?owner:dum),getByRole:vi.fn((r:string,o:{name?:string})=>o?.name==="Continue without microphone and camera"?hw:o?.name==="Join now"?join:o?.name==="Leave call"?leave:dum)} as unknown as Page;
+    const fake={goto,url:()=>URL_S,getByText:vi.fn((t:string)=>t===exp?owner:dum),getByRole:vi.fn((r:string,o:{name?:string})=>o?.name==="Continue without microphone and camera"?hw:o?.name==="Join now"?join:o?.name==="Leave call"?leave:dum)} as unknown as Page;
     const b=mkBrowser(fake as unknown as Page);const enableCaptions=vi.fn(async()=>true);
     const factory=createLocalMeetCaptureFactory({expectedOwnerEmail:exp,launch:async()=>b.browser,enableCaptions});
     const ac=new AbortController();const p=factory(scope(()=>true),ac.signal);p.catch(()=>{});
     await entered.promise;if(mode==="abort") ac.abort();modal=true;reveal.resolve(undefined);
     let h:Awaited<ReturnType<typeof factory>>|null=null,err:unknown=null;try{h=await p;}catch(e){err=e;}
     try{
-      if(mode==="owner"){expect(err).toBeNull();expect(dc).toBe(1);expect(jc).toBe(1);expect(verified).toBe(true);expect(enableCaptions).toHaveBeenCalledTimes(1);}
-      else {expect(err).toBeInstanceOf(MeetCaptureStartError);expect((err as MeetCaptureStartError).cleanupConfirmed).toBe(true);expect(jc).toBe(0);expect(enableCaptions).not.toHaveBeenCalled();if(mode==="abort") expect(dc).toBe(0);}
+      if(mode==="owner"){expect(err).toBeNull();expect(dc).toBe(1);expect(jc).toBe(1);expect(verified).toBe(true);expect(enableCaptions).toHaveBeenCalledTimes(1);expect(goto.mock.calls.map(c=>c[0])).toEqual(["https://meet.google.com/",URL_S]);}
+      else {expect(err).toBeInstanceOf(MeetCaptureStartError);expect((err as MeetCaptureStartError).cleanupConfirmed).toBe(true);expect(jc).toBe(0);expect(enableCaptions).not.toHaveBeenCalled();if(mode==="abort") expect(dc).toBe(0);else expect(goto).not.toHaveBeenCalledWith(URL_S, expect.anything());}
     }finally{if(h) await h.stop();expect(b.close).toHaveBeenCalledTimes(1);}
   }
 });

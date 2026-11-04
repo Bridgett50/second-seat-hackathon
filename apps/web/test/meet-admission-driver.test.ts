@@ -25,6 +25,7 @@ it("synthetic admission with redirect regression", async () => {
         const u = route.request().url();
         traces.push(u);
         if (u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: correct }); return; }
+        if (u === "https://meet.google.com/") { await route.fulfill({ status: 200, contentType: "text/html", body: `<!doctype html><html><body><span>owner@example.test</span></body></html>` }); return; }
         await route.abort();
       });
       const r1 = await driver(page, scope, new AbortController().signal);
@@ -41,11 +42,11 @@ it("synthetic admission with redirect regression", async () => {
         const u = route.request().url();
         traces.push(u);
         if (u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: wrong }); return; }
+        if (u === "https://meet.google.com/") { await route.fulfill({ status: 200, contentType: "text/html", body: `<!doctype html><html><body><span>wrong@example.test</span></body></html>` }); return; }
         await route.abort();
       });
       const r2 = await driver(page, scope, new AbortController().signal);
-      const joins2 = await page.locator("body").getAttribute("data-joins");
-      expect(r2).toBe(false); expect(joins2).toBe("0"); expect(traces).toContain(A);
+      expect(r2).toBe(false); expect(traces).toEqual(["https://meet.google.com/"]); expect(page.url()).toBe("https://meet.google.com/");
       await ctx.close();
     }
     ctx = await browser.newContext();
@@ -57,11 +58,12 @@ it("synthetic admission with redirect regression", async () => {
         const u = route.request().url();
         traces.push(u);
         if (u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: correctWithRedirect }); return; }
+        if (u === "https://meet.google.com/") { await route.fulfill({ status: 200, contentType: "text/html", body: `<!doctype html><html><body><span>owner@example.test</span></body></html>` }); return; }
         await route.abort();
       });
       const r3 = await driver(page, scope, new AbortController().signal);
       const joins3 = await page.locator("body").getAttribute("data-joins");
-      expect(r3).toBe(false); expect(joins3).toBe("0"); expect(traces).toEqual([A]); expect(page.url()).toBe(B);
+      expect(r3).toBe(false); expect(joins3).toBe("0"); expect(traces).toEqual(["https://meet.google.com/", A]); expect(page.url()).toBe(B);
       await ctx.close();
     }
     ctx = await browser.newContext();
