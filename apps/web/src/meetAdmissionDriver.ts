@@ -12,7 +12,7 @@ export type MeetDriverLocator = {
 export type MeetDriverPage = {
   goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
   url(): string;
-  getByRole(role: "button" | "link" | "menuitem", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
+  getByRole(role: "button" | "link" | "menuitem" | "menuitemradio" | "option", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
   getByText(text: string | RegExp, options?: { exact?: boolean }): MeetDriverLocator;
 };
 // Diagnostic only: mic control labels with anything shaped like an email removed, capped in length.
@@ -250,6 +250,29 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         }
         console.warn("[meet-step] " + what + " controls: " + (names.length === 0 ? "none" : names.join(" | ")));
       };
+      // Twin mode: the camera picker must name Chrome's fake capture device (the twin video file), never a real webcam.
+      const camDevice = visibleFirst(page.getByRole("button", { name: /^(camera|video)( device)?:/i }));
+      const camDeviceLabel = async (): Promise<string | null> => {
+        if (!(await shown(camDevice)) || camDevice.getAttribute === undefined) return null;
+        try { return await camDevice.getAttribute("aria-label", { timeout: 1000 }); } catch { return null; }
+      };
+      const logCamDevice = (label: string | null): void => { console.log("[meet-step] camera device: " + (label === null ? "(no camera picker)" : redactMeetMicLabel(label))); };
+      const twinCameraDevice = async (): Promise<boolean> => {
+        const label = await camDeviceLabel();
+        logCamDevice(label);
+        if (label === null || /fake/i.test(label)) return true;
+        if (signal.aborted || !isApprovedUrl()) return false;
+        step = "camDevice.open";
+        await camDevice.click({ timeout: clickMs });
+        const fakeItem = visibleFirst(page.getByRole("menuitemradio", { name: /fake/i }).or(page.getByRole("menuitem", { name: /fake/i })).or(page.getByRole("option", { name: /fake/i })));
+        if (!(await shown(fakeItem))) return false;
+        if (signal.aborted || !isApprovedUrl()) return false;
+        step = "camDevice.select";
+        await fakeItem.click({ timeout: clickMs });
+        const after = await camDeviceLabel();
+        logCamDevice(after);
+        return after !== null && /fake/i.test(after);
+      };
       let micTreatedOff = false;
       const micStillOn = async (): Promise<boolean> => (await shown(micOff)) && !(micTreatedOff && (await micBlocked()));
       if (await shown(micOff)) {
@@ -283,6 +306,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if ((await micStillOn()) || (!twin && (await shown(camOff)))) { await logMicControls(); return fail("micOff.confirm"); }
       if (twin && !(micTreatedOff && (await micBlocked())) && !(await shown(micMuted)) && !(await shown(micNotLive)) && !(!(await shown(micOff)) && (await shown(micPermission)))) { await logMicControls(); return fail("micOff.confirm"); }
       if (twin && !(await shown(camOff))) { await logControls(/camera/i, "camera"); return fail("camOn.confirm"); }
+      if (twin && !(await twinCameraDevice())) { await logControls(/camera/i, "camera"); return fail("camera.device"); }
       if (signal.aborted) return false;
       let ft = false; try { ft = await ownerText.isVisible(); } catch { ft = false; }
       let fb = false; try { fb = await ownerBtn.isVisible(); } catch { fb = false; }

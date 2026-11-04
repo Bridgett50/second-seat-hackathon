@@ -513,7 +513,7 @@ test("factory attached-profile twin-image: spawns via the child launcher, grants
   expect(browserClosed).toBe(1); expect(fc.kills).toEqual(["SIGTERM"]);
   expect(() => createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", browserMode: "attached-profile", profileDir: "rel/dir" })).toThrow();
 });
-test("guest join: env is read, names without AI twin are refused, and captions are enabled after admission", async () => {
+test("guest join: env is read, names without AI twin are refused, captions are enabled after admission, and a captions failure keeps the worker in the call", async () => {
   expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "guest" })).toEqual({ joinMode: "guest" });
   expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "owner" })).toEqual({});
   expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "guest", SECOND_SEAT_MEET_GUEST_NAME: "Bridgett's AI twin" })).toEqual({ joinMode: "guest", guestName: "Bridgett's AI twin" });
@@ -527,11 +527,30 @@ test("guest join: env is read, names without AI twin are refused, and captions a
   const launch = vi.fn(async () => b.browser);
   const admit = vi.fn(async () => true);
   const enableCaptions = vi.fn(async () => false);
-  const factory = createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", joinMode: "guest", launch, admit, enableCaptions });
-  await expect(factory(scope(() => true), new AbortController().signal)).rejects.toBeInstanceOf(MeetCaptureStartError);
-  expect(admit).toHaveBeenCalledTimes(1);
-  expect(enableCaptions).toHaveBeenCalledTimes(1);
-  expect(b.close).toHaveBeenCalledTimes(1);
+  let t = 1000;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const factory = createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", joinMode: "guest", launch, admit, enableCaptions, now: () => t });
+    const cap = await factory(scope(() => true), new AbortController().signal);
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(enableCaptions).toHaveBeenCalledTimes(1);
+    // Captions not on yet: the worker stays in the call (no close) and retries from sample(), throttled by the injected clock.
+    expect(b.close).toHaveBeenCalledTimes(0);
+    await cap.sample();
+    expect(enableCaptions).toHaveBeenCalledTimes(1);
+    t = 7000;
+    enableCaptions.mockResolvedValue(true);
+    await cap.sample();
+    expect(enableCaptions).toHaveBeenCalledTimes(2);
+    expect(b.close).toHaveBeenCalledTimes(0);
+    await vi.waitFor(async () => { t += 10000; await cap.sample(); expect(enableCaptions).toHaveBeenCalledTimes(2); });
+    expect(b.close).toHaveBeenCalledTimes(0);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("capture.admitted") || String(c[0]).includes("capture.sample"))).toBe(false);
+    await cap.stop();
+    expect(b.close).toHaveBeenCalledTimes(1);
+  } finally {
+    warn.mockRestore();
+  }
 });
 test("captions: two Captions and translation controls (strict multi-match) click the first visible one; two attached regions count as on", async () => {
   const clicks: string[] = [];
@@ -577,4 +596,60 @@ test("captions: two Captions and translation controls (strict multi-match) click
   expect(await enableMeetCaptions(page, new AbortController().signal, () => true, onFail)).toBe(true);
   expect(clicks).toEqual(["toggle#1"]);
   expect(onFail).not.toHaveBeenCalled();
+});
+// MSF31: live 4:08 PM CT run: "Captions and translation" opens a bottom tray with a "Live captions" chip and "Translate speech".
+function trayPage(o: { chipPressed: boolean; preOn: boolean }): { page: MeetCaptionsPage; clicks: string[]; waits: number[] } {
+  const clicks: string[] = []; const waits: number[] = []; let trayOpen = false; let chipOn = o.chipPressed; let regionOn = o.preOn;
+  const loc = (key: string, visible: () => boolean, onClick: () => void, attrs: () => Record<string, string>): FL => {
+    const l: FL = {
+      count: async () => (visible() ? 1 : 0), isVisible: async () => visible(),
+      click: async () => { clicks.push(key); onClick(); },
+      waitFor: async (w: { state: "visible"; timeout: number }) => { waits.push(w.timeout); if (!visible()) throw new Error("timeout"); },
+      getAttribute: async (n: string) => (n === "aria-label" ? key : attrs()[n] ?? null),
+      or: () => l, nth: () => l,
+    };
+    return l;
+  };
+  const none = loc("none", () => false, () => {}, () => ({}));
+  const translate = loc("Translate speech", () => trayOpen, () => {}, () => ({ "aria-pressed": "false" }));
+  const live = loc("Live captions", () => trayOpen, () => { chipOn = true; regionOn = true; }, () => ({ "aria-pressed": chipOn ? "true" : "false" }));
+  const chips: FL = { count: async () => (trayOpen ? 2 : 0), isVisible: async () => trayOpen, click: async () => { throw new Error("strict"); }, waitFor: async () => { throw new Error("strict"); }, getAttribute: async () => { throw new Error("strict"); }, or: () => chips, nth: (i: number) => (!trayOpen ? none : i === 0 ? translate : i === 1 ? live : none) };
+  const toggle = loc("Captions and translation", () => true, () => { trayOpen = true; }, () => ({}));
+  const region = loc("Captions", () => regionOn || (trayOpen && chipOn), () => {}, () => ({}));
+  const page: MeetCaptionsPage = {
+    getByRole(role: "button" | "checkbox" | "switch" | "region", options: { name: string | RegExp; exact?: boolean }) {
+      if (role === "region") return options.name === "Captions" ? region : none;
+      if (options.name instanceof RegExp) return chips;
+      return options.name === "Captions and translation" && role === "button" ? toggle : none;
+    },
+    getByText() { return none; },
+    locator(selector: string) { return selector === MEET_CAPTION_REGION_SELECTOR || selector === MEET_CAPTION_REGION_ALT_SELECTOR ? region : none; },
+  };
+  return { page, clicks, waits };
+}
+test("MSF31 captions tray: the toggle opens the tray, the Live captions chip is off and clicked once, the region attaches; Translate is never clicked", async () => {
+  const f = trayPage({ chipPressed: false, preOn: false });
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true, async () => {}, 50)).toBe(true);
+  expect(f.clicks).toEqual(["Captions and translation", "Live captions"]);
+  expect(f.clicks.some((c) => /translate speech|gemini/i.test(c))).toBe(false);
+  expect(f.waits).toContain(50);
+});
+test("MSF31 captions tray: a Live captions chip that is already pressed is not clicked", async () => {
+  const f = trayPage({ chipPressed: true, preOn: false });
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true, async () => {}, 50)).toBe(true);
+  expect(f.clicks).toEqual(["Captions and translation"]);
+});
+test("MSF31 captions tray: captions already on means no clicks at all", async () => {
+  const f = trayPage({ chipPressed: false, preOn: true });
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true, async () => {}, 50)).toBe(true);
+  expect(f.clicks).toEqual([]);
+});
+test("MSF31 diagnostic: caption switches and checkboxes log their aria state, unnamed ones use nearby text, emails are redacted", async () => {
+  const el = (attrs: Record<string, string>, text: string) => ({ getAttribute: async (n: string) => attrs[n] ?? null, innerText: async () => text });
+  const page = { locator: (sel: string) => ({ all: async () => (sel.includes("switch") ? [el({ "aria-label": "Live captions", "aria-checked": "false" }, ""), el({}, "Live captions for owner@example.test")] : sel.includes("button") ? [el({ "aria-label": "Captions and translation", "aria-pressed": "true" }, "")] : []) }) };
+  const out = await collectMeetUiDiagnostic(page);
+  expect(out).toContain("switch: Live captions checked=false");
+  expect(out).toContain("button: Captions and translation pressed=true");
+  expect(out).toContain("switch: Live captions for [email]");
+  expect(out.includes("@")).toBe(false);
 });

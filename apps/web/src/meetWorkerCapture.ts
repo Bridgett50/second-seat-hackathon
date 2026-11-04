@@ -8,13 +8,17 @@ import { createMeetAdmissionProof, type MeetAdmissionTransport } from "./meetAdm
 import { createMeetCaptionBuffer } from "./meetCaptionBuffer.js";
 import { logMeetUiDiagnosticOnce, MEET_CAPTION_REGION_SELECTOR, MEET_CAPTION_REGION_ALT_SELECTOR } from "./meetCaptionReader.js";
 import type { MeetWorkerBinding } from "./meetWorkerPairing.js";
-type FactoryOpts = { expectedOwnerEmail: string; chromePath?: string; allowOwnerTransfer?: boolean; ownerUnrecognizedGraceMs?: number; launch?: () => Promise<MeetProofBrowser<Page>>; admit?: (page: Page, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal) => Promise<boolean>; enableCaptions?: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean>; browserMode?: MeetBrowserMode; profileDir?: string; debugPort?: number; cameraMode?: MeetCameraMode; twinMedia?: TwinMedia; spawnChrome?: (command: string, args: string[]) => AttachedChild; connectCdp?: (endpoint: string) => Promise<AttachedBrowser<Page>>; joinMode?: MeetJoinMode; guestName?: string; };
+type FactoryOpts = { expectedOwnerEmail: string; chromePath?: string; allowOwnerTransfer?: boolean; ownerUnrecognizedGraceMs?: number; launch?: () => Promise<MeetProofBrowser<Page>>; admit?: (page: Page, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal) => Promise<boolean>; enableCaptions?: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean>; browserMode?: MeetBrowserMode; profileDir?: string; debugPort?: number; cameraMode?: MeetCameraMode; twinMedia?: TwinMedia; spawnChrome?: (command: string, args: string[]) => AttachedChild; connectCdp?: (endpoint: string) => Promise<AttachedBrowser<Page>>; joinMode?: MeetJoinMode; guestName?: string; now?: () => number; };
 type Scope = { meetingUrl: string; displayName: string; binding: MeetWorkerBinding; isCurrent: () => boolean; };
 type CaptureHandle = Readonly<{ sample: ReturnType<typeof createMeetCaptionBuffer>["sample"]; stop: () => Promise<void>; }>;
 export class MeetCaptureStartError extends Error { readonly cleanupConfirmed: boolean; constructor(cleanupConfirmed: boolean) { super(cleanupConfirmed ? "Meet capture unavailable" : "Meet proof cleanup unconfirmed"); this.cleanupConfirmed = cleanupConfirmed; this.name = "MeetCaptureStartError"; } }
 type CapLoc = { count(): Promise<number>; isVisible(): Promise<boolean>; click(): Promise<void>; waitFor(options: { state: "visible" | "attached"; timeout: number }): Promise<void>; getAttribute(name: string): Promise<string | null>; or(other: CapLoc): CapLoc; nth(index: number): CapLoc };
 export type MeetCaptionsPage = { getByRole(role: "button" | "checkbox" | "switch" | "region", options: { name: string | RegExp; exact?: boolean }): CapLoc; getByText(text: string, options: { exact: boolean }): CapLoc; locator(selector: string): CapLoc };
-export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSignal, isCurrent: () => boolean, onFail: () => Promise<void> = async () => {}): Promise<boolean> {
+// After "Captions and translation" is clicked, how long to wait for the region, "Turn on captions" or the Live captions chip.
+export const MEET_CAPTIONS_TRAY_WAIT_MS = 8000;
+// When captions could not be turned on, sample() tries again at most this often; the worker stays in the call meanwhile.
+export const MEET_CAPTIONS_RETRY_MS = 5000;
+export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSignal, isCurrent: () => boolean, onFail: () => Promise<void> = async () => {}, trayWaitMs: number = MEET_CAPTIONS_TRAY_WAIT_MS): Promise<boolean> {
   const run = async (): Promise<boolean> => {
     const guard = (): boolean => !signal.aborted && isCurrent();
     if (!guard()) return false;
@@ -35,17 +39,19 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
       if (gotItCount === 1) { const gv = await gotIt.isVisible(); if (!guard()) return false; if (gv) { await gotIt.click(); if (!guard()) return false; } }
       const live = /live captions/i;
       const chip = page.getByRole("button", { name: live }).or(page.getByRole("checkbox", { name: live })).or(page.getByRole("switch", { name: live }));
-      const chipCount = await chip.count(); if (!guard()) return false;
-      // Use the first visible "Live captions" chip; Translate and Gemini controls are never used.
-      let target: CapLoc | null = null; let targetLabel = "";
-      for (let i = 0; i < Math.min(chipCount, 8); i++) {
-        const c = chip.nth(i);
-        const vis = await c.isVisible(); if (!guard()) return false; if (!vis) continue;
-        const label = (await c.getAttribute("aria-label")) ?? ""; if (!guard()) return false;
-        if (/translat|gemini/i.test(label)) continue;
-        target = c; targetLabel = label; break;
-      }
-      if (target) {
+      // Use the first visible "Live captions" chip (Meet's bottom caption tray); Translate and Gemini controls are never used.
+      // null: no visible chip. Otherwise the chip is turned on once if it is off, then the Captions region must attach.
+      const useLiveChip = async (): Promise<boolean | null> => {
+        const chipCount = await chip.count(); if (!guard()) return false;
+        let target: CapLoc | null = null; let targetLabel = "";
+        for (let i = 0; i < Math.min(chipCount, 8); i++) {
+          const c = chip.nth(i);
+          const vis = await c.isVisible(); if (!guard()) return false; if (!vis) continue;
+          const label = (await c.getAttribute("aria-label")) ?? ""; if (!guard()) return false;
+          if (/translat|gemini/i.test(label)) continue;
+          target = c; targetLabel = label; break;
+        }
+        if (target === null) return null;
         const pressed = await target.getAttribute("aria-pressed"); if (!guard()) return false;
         const checked = await target.getAttribute("aria-checked"); if (!guard()) return false;
         const alreadyOn = pressed === "true" || checked === "true" || /turn off live captions/i.test(targetLabel);
@@ -53,7 +59,9 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
         const anyRegion = page.locator(MEET_CAPTION_REGION_SELECTOR).or(page.locator(MEET_CAPTION_REGION_ALT_SELECTOR));
         await anyRegion.nth(0).waitFor({ state: "attached", timeout: 30000 }); if (!guard()) return false;
         count = await anyRegion.count(); if (!guard()) return false; return count >= 1;
-      }
+      };
+      const pre = await useLiveChip(); if (!guard()) return false;
+      if (pre !== null) return pre;
       const toggle = page.getByRole("button", { name: "Captions and translation", exact: true }).or(page.getByRole("checkbox", { name: "Captions and translation", exact: true }));
       // Locators are strict (isVisible/click/waitFor throw on 2 matches): use the first visible match by index.
       const firstVisibleOf = async (l: CapLoc): Promise<CapLoc | null> => {
@@ -69,9 +77,12 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
       if (toggleTarget === null) return false;
       await toggleTarget.click(); if (!guard()) return false;
       const turnOn = page.getByText("Turn on captions", { exact: true });
-      // Some Meet versions turn captions on straight from this button: then the Captions region shows instead of "Turn on captions".
-      const shown = await Promise.any([region.nth(0).waitFor({ state: "attached", timeout: 10000 }).then(() => "region"), turnOn.nth(0).waitFor({ state: "visible", timeout: 10000 }).then(() => "turnOn")]); if (!guard()) return false;
+      // Some Meet versions turn captions on straight from this button (the Captions region shows), some show "Turn on captions",
+      // and some open a bottom tray with a "Live captions" chip (plus "Translate speech", never clicked).
+      const chipShown = (i: number): Promise<string> => chip.nth(i).waitFor({ state: "visible", timeout: trayWaitMs }).then(() => "chip");
+      const shown = await Promise.any([region.nth(0).waitFor({ state: "attached", timeout: trayWaitMs }).then(() => "region"), turnOn.nth(0).waitFor({ state: "visible", timeout: trayWaitMs }).then(() => "turnOn"), chipShown(0), chipShown(1), chipShown(2)]); if (!guard()) return false;
       if (shown === "region") { count = await region.count(); if (!guard()) return false; return count >= 1; }
+      if (shown === "chip") { const viaChip = await useLiveChip(); if (!guard()) return false; return viaChip === true; }
       const turnOnTarget = await firstVisibleOf(turnOn); if (!guard()) return false;
       if (turnOnTarget === null) return false;
       await turnOnTarget.click(); if (!guard()) return false;
@@ -221,6 +232,7 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
   const capturedAdmit = opts.admit;
   const capturedGrace = opts.ownerUnrecognizedGraceMs;
   const capturedEnableCaptions = opts.enableCaptions;
+  const capturedNow = opts.now ?? (() => Date.now());
   const defaultEnableCaptions = (page: Page, signal: AbortSignal, isCurrent: () => boolean): Promise<boolean> => enableMeetCaptions(page, signal, isCurrent, () => logMeetUiDiagnosticOnce(page));
   const enableFn: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean> = capturedEnableCaptions ?? defaultEnableCaptions;
   const capturedCameraMode: MeetCameraMode = opts.cameraMode ?? "off";
@@ -249,6 +261,10 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
     let captionBuffer: ReturnType<typeof createMeetCaptionBuffer> | null = null;
     // First caption read, started the moment captions are confirmed (no wait for the first bridge tick).
     let earlyRead: ReturnType<ReturnType<typeof createMeetCaptionBuffer>["sample"]> | null = null;
+    // Captions not on at join is not fatal: sample() retries enabling them; only an explicit Stop or a fatal error ends the worker.
+    let captionsOn = false;
+    let lastEnableAt = 0;
+    let enabling: Promise<void> | null = null;
     let cachedStopPromise: Promise<void> | null = null;
     let proofSignal: AbortSignal | null = null;
     let capturedPage: Page | null = null;
@@ -312,7 +328,8 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       if (!admittedGuard()) throw new MeetCaptureStartError(true);
       const sigForCap = proofSignal ?? externalSignal;
       const capOk = await enableFn(capturedPage, sigForCap, () => admittedGuard()); if (!admittedGuard()) throw new MeetCaptureStartError(true);
-      if (!capOk) throw new MeetCaptureStartError(true);
+      captionsOn = capOk;
+      if (!capOk) { lastEnableAt = capturedNow(); console.warn("[meet-step] captions not on yet: staying in the call and retrying"); }
       if (!admittedGuard()) throw new MeetCaptureStartError(true);
       const startedBuffer = createMeetCaptionBuffer({ page: capturedPage, meetingUrl: capturedScopeMeetingUrl, meetingId, signal: sigForCap, isCurrent: () => admittedGuard() });
       captionBuffer = startedBuffer;
@@ -327,6 +344,11 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
     const sample = async (): Promise<readonly Readonly<{ event: Readonly<{ version: 1; meetingId: string; utteranceId: string; sequence: number; revision: number; speaker: string; text: string }>; verified: false }>[]> => {
       const admittedGuard2 = (): boolean => !localStopped && !externalSignal.aborted && scopeCurrent() && proofRef!.phase() === "admitted";
       if (!admittedGuard2()) { console.warn("[meet-step] failed: capture.admitted"); localStop().catch(()=>{}); return Object.freeze([]); }
+      const retryPage = capturedPage;
+      if (!captionsOn && enabling === null && retryPage !== null && capturedNow() - lastEnableAt >= MEET_CAPTIONS_RETRY_MS) {
+        lastEnableAt = capturedNow();
+        enabling = enableFn(retryPage, proofSignal ?? externalSignal, () => admittedGuard2()).then((ok) => { if (ok) captionsOn = true; }, () => {}).finally(() => { enabling = null; });
+      }
       try {
         if (earlyRead !== null) {
           const first = earlyRead;

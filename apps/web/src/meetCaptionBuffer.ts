@@ -148,7 +148,13 @@ export function createMeetCaptionBuffer(opts: { page: Page; meetingUrl: string; 
       // rolling window instead of a permanent stop: forget the oldest rows that are no longer on screen
       if (known.size > 512) { for (const k of Array.from(known.keys())) { if (known.size <= 384) break; if (!seenKeys.has(k)) known.delete(k); } }
       return Object.freeze(events);
-    } catch { stop(); return freezeEmpty(); } finally { busy = false; }
+    } catch {
+      // A read that throws while the caption region changes (rows appearing) is not fatal: stay ready for the next sample.
+      let current = false;
+      try { current = !stopped && !signal.aborted && isCurrent() === true; } catch { current = false; }
+      if (!current) stop();
+      return freezeEmpty();
+    } finally { busy = false; }
   };
   return Object.freeze({ sample, stop });
 }

@@ -1285,6 +1285,10 @@ function strictFake(labels: string[], o: { micFlips: boolean; camFlips: boolean 
         else if (n === "button:Turn off camera") swap("Turn off camera", "Turn on camera");
         else if (n === "button:Turn on camera" && o.camFlips) swap("Turn on camera", "Turn off camera");
         else if (n === "button:Join now") { visible.add("button:Leave call"); visible.add("button:Leave call~2"); }
+        else if ((roleOf(k) === "menuitemradio" || roleOf(k) === "option") && /fake/i.test(nameOf(k))) {
+          for (const c of [...visible]) if (roleOf(c) === "button" && /^camera:/i.test(nameOf(c))) visible.delete(c);
+          visible.add("button:Camera: " + nameOf(k));
+        }
         return Promise.resolve();
       },
       or(other: MeetDriverLocator) {
@@ -1385,6 +1389,57 @@ it("T45 twin mode with two live Turn off microphone controls that never flip sti
     expect(logged[logged.length - 1]).toBe("[meet-step] failed: micOff.confirm");
   } finally {
     warn.mockRestore();
+    vi.useRealTimers();
+  }
+});
+// MSF31: the twin joined on a real webcam; in twin mode the camera picker must name Chrome's fake capture device.
+it("T46 twin mode on a real webcam switches the camera picker to the fake twin device, logs the redacted labels, never clicks Allow, and joins", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn on microphone", "button:Turn off camera", "button:Camera: FaceTime HD Camera (user@example.com)", "menuitemradio:FaceTime HD Camera", "menuitemradio:fake_device_0", "button:Allow microphone and camera"], { micFlips: false, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Camera: FaceTime HD Camera (user@example.com)", "menuitemradio:fake_device_0", "button:Join now"]);
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("[meet-step] camera device: "));
+    expect(lines).toEqual(["[meet-step] camera device: Camera: FaceTime HD Camera ([email])", "[meet-step] camera device: Camera: fake_device_0"]);
+  } finally {
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T47 twin mode already on the fake device does not touch the camera picker", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn on microphone", "button:Turn off camera", "button:Camera: fake_device_0"], { micFlips: false, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Join now"]);
+  } finally {
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T48 twin mode with only a real webcam refuses at camera.device and never joins or clicks Allow", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn on microphone", "button:Turn off camera", "button:Camera: FaceTime HD Camera", "menuitemradio:FaceTime HD Camera", "button:Allow microphone and camera"], { micFlips: false, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(warn.mock.calls.some((c) => String(c[0]) === "[meet-step] failed: camera.device")).toBe(true);
+    expect(f.clicks.some((c) => /join now|allow/i.test(c))).toBe(false);
+  } finally {
+    warn.mockRestore();
+    log.mockRestore();
     vi.useRealTimers();
   }
 });

@@ -34,7 +34,16 @@ let name:string|null=null;
 try{name=await el.getAttribute("aria-label");}catch{name=null;}
 if((name===null||name.trim()==="")&&role!=="region"){try{name=(await el.innerText()).split("\n")[0]??"";}catch{name=null;}}
 const n=redactMeetDiagnostic((name??"").replace(/\s+/g," ").trim()).slice(0,80);
-lines.push(role+": "+(n===""?"(unnamed)":n));
+// Caption toggles (switch, checkbox, or a button named for captions) also log their on/off state.
+let state="";
+if(role==="switch"||role==="checkbox"||(role==="button"&&/caption/i.test(n))){
+let pressed:string|null=null;let checked:string|null=null;
+try{pressed=await el.getAttribute("aria-pressed");}catch{pressed=null;}
+try{checked=await el.getAttribute("aria-checked");}catch{checked=null;}
+if(pressed!==null)state+=" pressed="+pressed.slice(0,8);
+if(checked!==null)state+=" checked="+checked.slice(0,8);
+}
+lines.push(role+": "+(n===""?"(unnamed)":n)+state);
 }
 }
 return lines.join("\n");

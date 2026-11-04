@@ -120,3 +120,23 @@ test("meet caption buffer keeps sampling past 256 rows, reads structural rows, a
     await browser.close();
   }
 }, 30000);
+// MSF31: rows appearing (the caption region being replaced) never stop the buffer; the next sample reads them.
+test("meet caption buffer keeps sampling when the caption region is replaced as rows appear", async () => {
+  const target = "https://meet.google.com/abc-defg-hij";
+  const html = "<!DOCTYPE html><html><head><meta charset='utf-8'></head><body><button aria-label='Leave call'></button><div id='host'><div role='region' aria-label='Captions'></div></div></body></html>";
+  const chromePath = process.env.PLAYWRIGHT_CHROME_PATH;
+  const browser = await chromium.launch(chromePath ? { executablePath: chromePath } : existsSync("/usr/bin/google-chrome") ? { executablePath: "/usr/bin/google-chrome" } : {});
+  try {
+    const page = await browser.newPage();
+    await page.route("**/*", async (route) => { await route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }); });
+    await page.goto(target);
+    const buffer = createMeetCaptionBuffer({ page, meetingUrl: target, meetingId: "abc-defg-hij", signal: new AbortController().signal, isCurrent: () => true });
+    expect(await buffer.sample()).toEqual([]);
+    await page.setContent("<!DOCTYPE html><html><head><meta charset='utf-8'></head><body><button aria-label='Leave call'></button><div id='host'><div role='region' aria-label='Captions'><div class='nMcdL'><div class='adE6rb'><div class='KcIKyf'>Alice</div></div><div class='ygicle'>hello there</div></div></div></div></body></html>");
+    const rows = await buffer.sample();
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.event.speaker).toBe("Alice");
+  } finally {
+    await browser.close();
+  }
+});
