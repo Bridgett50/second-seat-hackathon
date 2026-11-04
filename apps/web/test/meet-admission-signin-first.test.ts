@@ -445,10 +445,11 @@ it("T10 Continue modal shown first is dismissed without waiting out the owner po
   expect(gotos).toEqual([SA]);
   expect(clicks).toEqual(["Continue without microphone and camera", "Join now"]);
 }, 3000);
-function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void; go: (u: string) => void; stick: (k: string) => void; timeouts: Array<number | undefined>; breakClick: (k: string) => void; presses: string[]; lateTip: () => void } {
+function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void; go: (u: string) => void; stick: (k: string) => void; timeouts: Array<number | undefined>; breakClick: (k: string) => void; presses: string[]; lateTip: () => void; coverTrial: (k: string, reveal: string) => void } {
   const timeouts: Array<number | undefined> = [];
   const presses: string[] = [];
   let tipLate = false;
+  const covered = new Map<string, string>();
   const broken = new Set<string>();
   const gotos: string[] = [];
   let at = "";
@@ -470,6 +471,8 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
       isVisible() { return Promise.resolve(visible.has(k)); },
       click(o?: { timeout?: number; trial?: boolean }) {
         if (o?.trial === true) {
+          const reveal = covered.get(k);
+          if (reveal !== undefined) { if (reveal !== "") show(reveal); return Promise.reject(new Error("covered")); }
           if (k === "menuitem:Join here too" && tipLate) { tipLate = false; show("text:Switch the call here"); show("button:Got it"); }
           if (k === "menuitem:Join here too" && visible.has("text:Switch the call here")) return Promise.reject(new Error("covered"));
           return Promise.resolve();
@@ -503,7 +506,7 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
     },
     getByText(text: string | RegExp) { return mk("text:" + (typeof text === "string" ? text : text.test("You can\u2019t join this video call") ? "cantjoin" : "?")); },
   };
-  return { page, clicks, gotos, show, go: (u: string) => { at = u; }, stick: (k: string) => { stuck.add(k); }, timeouts, breakClick: (k: string) => { broken.add(k); }, presses, lateTip: () => { tipLate = true; } };
+  return { page, clicks, gotos, show, go: (u: string) => { at = u; }, stick: (k: string) => { stuck.add(k); }, timeouts, breakClick: (k: string) => { broken.add(k); }, presses, lateTip: () => { tipLate = true; }, coverTrial: (k: string, reveal: string) => { covered.set(k, reveal); } };
 }
 it("T11 Getting ready spinner then Ask to join keeps waiting signed out past the grace period", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -927,6 +930,65 @@ it("T33 Enter fallback is refused when the URL changed during the wait", async (
     expect(f.presses).toEqual([]);
     expect(f.clicks).toEqual([]);
   } finally {
+    vi.useRealTimers();
+  }
+});
+it("T34 blocked microphone permission skips the Turn off microphone click and the join continues", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Join now");
+    f.show("button:Turn off microphone");
+    f.show("button:Allow microphone and camera");
+    f.breakClick("button:Turn off microphone");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Join now"]);
+    expect(f.clicks).not.toContain("button:Allow microphone and camera");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T35 Permission needed shown after a failed trial click counts the microphone as off", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Join now");
+    f.show("button:Turn off microphone");
+    f.coverTrial("button:Turn off microphone", "text:Permission needed");
+    f.breakClick("button:Turn off microphone");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Join now"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T36 microphone not blocked whose click times out still fails closed", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Join now");
+    f.show("button:Turn off microphone");
+    f.coverTrial("button:Turn off microphone", "");
+    f.breakClick("button:Turn off microphone");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+    const logged = warn.mock.calls.map((c) => c.map(String).join(" "));
+    expect(logged).toEqual(["[meet-step] failed: micOff.click (Error)"]);
+  } finally {
+    warn.mockRestore();
     vi.useRealTimers();
   }
 });

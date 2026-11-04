@@ -204,10 +204,30 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       const micOff = page.getByRole("button", { name: "Turn off microphone" });
       const camOff = page.getByRole("button", { name: "Turn off camera" });
       const micMuted = page.getByRole("button", { name: /^turn on microphone|microphone.*(blocked|problem|permission needed|not (found|allowed))/i });
+      // With the mic permission blocked, Meet shows the Allow microphone and camera card and its Turn off microphone control is not actionable.
+      const micPermission = page.getByText("Permission needed", { exact: false });
+      const micProblem = page.getByRole("button", { name: /microphone.*(blocked|problem|permission needed|not (found|allowed))/i });
+      const allowAv = page.getByRole("button", { name: "Allow microphone and camera", exact: true });
+      const avPrompt = page.getByText("Do you want people to see and hear you?", { exact: false });
+      const micBlocked = async (): Promise<boolean> => (await shown(micPermission)) || (await shown(micProblem)) || (await shown(allowAv)) || (await shown(avPrompt));
+      let micTreatedOff = false;
+      const micStillOn = async (): Promise<boolean> => (await shown(micOff)) && !(micTreatedOff && (await micBlocked()));
       if (await shown(micOff)) {
         if (signal.aborted || !isApprovedUrl()) return false;
-        step = "micOff.click";
-        await micOff.click({ timeout: clickMs });
+        if (await micBlocked()) {
+          micTreatedOff = true;
+        } else {
+          step = "micOff.actionable";
+          let micReady = false;
+          try { await micOff.click({ timeout: 1500, trial: true }); micReady = true; } catch { micReady = false; }
+          if (signal.aborted || !isApprovedUrl()) return false;
+          if (!micReady && (await micBlocked())) {
+            micTreatedOff = true;
+          } else {
+            step = "micOff.click";
+            await micOff.click({ timeout: clickMs });
+          }
+        }
       }
       if (!twin && (await shown(camOff))) {
         if (signal.aborted || !isApprovedUrl()) return false;
@@ -215,8 +235,8 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         await camOff.click({ timeout: clickMs });
       }
       if (!(await pause(500))) return false;
-      if ((await shown(micOff)) || (!twin && (await shown(camOff)))) return fail("micOff.confirm");
-      if (twin && !(await shown(micMuted))) return fail("micOff.confirm");
+      if ((await micStillOn()) || (!twin && (await shown(camOff)))) return fail("micOff.confirm");
+      if (twin && !(micTreatedOff && (await micBlocked())) && !(await shown(micMuted))) return fail("micOff.confirm");
       if (signal.aborted) return false;
       let ft = false; try { ft = await ownerText.isVisible(); } catch { ft = false; }
       let fb = false; try { fb = await ownerBtn.isVisible(); } catch { fb = false; }
@@ -257,7 +277,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
           let eb = false; try { eb = await ownerBtn.isVisible(); } catch { eb = false; }
           if (!et && !eb) return fail("ownerCheck");
           if (!isApprovedUrl()) return fail("urlRecheck");
-          if ((await shown(micOff)) || (!twin && (await shown(camOff)))) return fail("micOff.confirm");
+          if ((await micStillOn()) || (!twin && (await shown(camOff)))) return fail("micOff.confirm");
           const leaveNow = page.getByRole("button", { name: "Leave call", exact: true });
           if (!(await shown(leaveNow))) {
             if (signal.aborted) return false;
