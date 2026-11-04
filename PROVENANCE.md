@@ -527,3 +527,19 @@ Google consent, data writes, live AI, full speech capture and deployment not pro
 Muse Code 1.4.14, backed by Baseten meta-models/muse-spark-open-1026, authored ownerDraftClient and ownerDraftHttp, opt-in server/renderer wiring, external journal launcher with optional CLI arg, and fixtures/tests within bounded sessions. Requirements originated from Codex, which also performed review, exact mechanical application, testing, and Git; Muse did not execute Git. Outline-only, wrong-API, and truncated proposals were rejected or corrected; there was no universal first-attempt failure and no rejected claim asserting calls were absent.
 
 Verified with a real installed Chrome and actual local server, runtime, connections, exporter, and outbox, the flow passed preview, explicit approval, single draft creation, and edit lock with exact MIME recipient, subject, and body. Only Google exchange/Gmail fetch and capture/scheduler were fake in that proof, not actual Gmail delivery. HTTP and real TCP launcher checks passed with strict web TypeScript at zero; existing default offline MR-R3 assertions remain unchanged, while optional private scripts are omitted when disabled. Gmail API is enabled in the existing Google project, but no real OAuth mailbox grant, real Gmail draft creation, model inference, or email delivery has occurred; production send refusal remains frozen. Coding usage was provider-reported while billing/key balance is unverified, with no Grok, frozen/sealed, or new cash changes.
+
+### Nov 4, 2026 — Google OAuth cross-site cookie repair
+
+Real-owner OAuth return of `401` exposed that `Strict` cookies are not sent on cross-site navigations. Prior manual-cookie tests had missed this handling.
+
+Muse Code 1.4.14, supplied with `baseten/meta-models/muse-spark-open-1026`, authored `server.ts` to reissue the session cookie as `Lax` when Google OAuth is configured, and `google-oauth-cross-site.test.ts` in bounded sessions.
+
+The new Chrome test first failed with `401` where `303` was expected, then passed with `303`/`connected` after the source fix. It used a synthetic identity page and fake token exchange; the actual app callback, state, and PKCE controller were exercised.
+
+Four unchanged default-cookie tests and Gmail flow/Origin checks continue to pass. TypeScript checks show 0 errors.
+
+Default/public cookie behavior remains `Strict` with `HttpOnly`/`Secure` policy. State/PKCE/Origin protections were preserved.
+
+Human Google retry and real Gmail draft creation are still pending. No cookie-value upgrade test or broader browser behavior beyond what was observed is claimed.
+
+Codex was used for requirements, review, mechanical application, tests, and Git; Muse did not execute Git. No frozen, sealed, Grok, or application AI runs occurred. Coding usage was recorded; billing is unverified. No codes or secret values are included.
