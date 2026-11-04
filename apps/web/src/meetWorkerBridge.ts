@@ -85,18 +85,19 @@ if(rec.sampling)return freezeReply(409,rec.state,rec.accepted);
 rec.sampling=true;
 try{
 let batch:readonly unknown[];
-try{if(rec.capture===null)throw new Error("no capture");batch=await rec.capture.sample() as readonly unknown[]}catch{void beginStop(rec);return freezeReply(200,"stopping",rec.accepted)}
+try{if(rec.capture===null)throw new Error("no capture");batch=await rec.capture.sample() as readonly unknown[]}catch{console.warn("[meet-step] failed: bridge.sample");void beginStop(rec);return freezeReply(200,"stopping",rec.accepted)}
 if(!rec.lease.isCurrent()||rec.controller.signal.aborted){void beginStop(rec);return freezeReply(200,rec.state,rec.accepted)}
 for(const item of batch){
 if(!rec.lease.isCurrent()||rec.controller.signal.aborted){void beginStop(rec);break}
 let ev:unknown;let ver:unknown;
 try{ev=(item as Record<string,unknown>)["event"];ver=(item as Record<string,unknown>)["verified"]}catch{void beginStop(rec);break}
-if(ver!==false){void beginStop(rec);break}
-try{const mid=(ev as Record<string,unknown>)["meetingId"];if(mid!==rec.binding.meetingId)throw new Error("foreign")}catch{void beginStop(rec);break}
+if(ver!==false){console.warn("[meet-step] failed: bridge.verified");void beginStop(rec);break}
+try{const mid=(ev as Record<string,unknown>)["meetingId"];if(mid!==rec.binding.meetingId)throw new Error("foreign")}catch{console.warn("[meet-step] failed: bridge.meetingId");void beginStop(rec);break}
 if(!rec.lease.isCurrent()||rec.controller.signal.aborted){void beginStop(rec);break}
 let res:ReturnType<MeetingRoomService["ingestConversationAs"]>;
-try{res=service.ingestConversationAs(callerKey as string,roomId as string,ev as unknown)}catch{void beginStop(rec);break}
-if(res.status!==200){void beginStop(rec);break}
+try{res=service.ingestConversationAs(callerKey as string,roomId as string,ev as unknown)}catch{console.warn("[meet-step] failed: bridge.ingest");void beginStop(rec);break}
+if(res.status===409)continue;
+if(res.status!==200){console.warn("[meet-step] failed: bridge.ingest "+String(res.status));void beginStop(rec);break}
 rec.accepted++}
 return freezeReply(200,rec.state,rec.accepted)}catch{void beginStop(rec);return freezeReply(200,rec.state,rec.accepted)}finally{rec.sampling=false}},
 async stop(callerKey:string|null,roomId:unknown):Promise<Reply>{

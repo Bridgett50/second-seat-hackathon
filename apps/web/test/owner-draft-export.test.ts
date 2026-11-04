@@ -68,3 +68,11 @@ try{unlinkSync(f.path+".lock");}catch{}
 expect(f.outbox.lookup(ik)?.status).toBe("attempted");const c2=f.reconstruct();const pv=c2.preview("browser-A","room-A","alice@example.com","Résumé") as unknown as {status:string;packageHash:string};expect(pv.status).toBe("preview"); c2.approve("browser-A","room-A",(pv as unknown as {packageHash:string}).packageHash); expect((await c2.create("browser-A","room-A",(pv as unknown as {packageHash:string}).packageHash,new AbortController().signal)).status).toBe("denied");
 }finally{f.cleanup();}
 });
+test("denied previews say why",()=>{const f=mkFixture();try{
+expect(f.ctrl.preview("","room-A","alice@example.com","Résumé")).toEqual({status:"denied",reason:"Invalid request"});
+expect(f.ctrl.preview("browser-A","room-A","not-an-email","Résumé")).toEqual({status:"denied",reason:"Invalid draft package"});
+f.setCurrent(null);
+expect(f.ctrl.preview("browser-A","room-A","alice@example.com","Résumé")).toEqual({status:"denied",reason:"No approved draft yet"});
+f.setCurrent({identity:" ",body:"Body"});
+expect(f.ctrl.preview("browser-A","room-A","alice@example.com","Résumé")).toEqual({status:"denied",reason:"Draft identity missing"});
+}finally{f.cleanup();}});

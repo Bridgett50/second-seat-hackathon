@@ -25,27 +25,28 @@ export function createOwnerDraftExport(deps: Deps) {
   }
   function isExpired(e: Entry, curNow: number): boolean { return curNow >= e.expiresAt; }
   const api = {
-    preview(callerKey: string, roomId: string, to: string, subject: string): Readonly<{ status: "preview"; package: GoogleDraftPackage; packageHash: string; expiresAt: number }> | Readonly<{ status: "denied" }> {
-      const denied = Object.freeze({ status: "denied" } as const);
+    preview(callerKey: string, roomId: string, to: string, subject: string): Readonly<{ status: "preview"; package: GoogleDraftPackage; packageHash: string; expiresAt: number }> | Readonly<{ status: "denied"; reason: string }> {
+      const deny = (reason: string): Readonly<{ status: "denied"; reason: string }> => Object.freeze({ status: "denied", reason });
+      const denied = deny("Invalid request");
       if (!validKey(callerKey) || !validKey(roomId)) return denied;
       const key = mk(callerKey, roomId);
       store.delete(mk(callerKey, roomId));
       const t = nowMs(now); if (t === null) return denied;
       prune(t);
       let cur: { identity: string; body: string } | null;
-      try { cur = readCurrent(callerKey, roomId); } catch { return denied; }
-      if (!cur || typeof cur.identity !== "string" || typeof cur.body !== "string") return denied;
-      if (cur.identity.trim().length === 0 || cur.identity.length > 1024 || hasCtl(cur.identity)) return denied;
-      if (typeof cur.body !== "string") return denied;
+      try { cur = readCurrent(callerKey, roomId); } catch { return deny("No approved draft yet"); }
+      if (!cur || typeof cur.identity !== "string" || typeof cur.body !== "string") return deny("No approved draft yet");
+      if (cur.identity.trim().length === 0 || cur.identity.length > 1024 || hasCtl(cur.identity)) return deny("Draft identity missing");
+      if (typeof cur.body !== "string") return deny("No approved draft yet");
       const body = cur.body; const identity = cur.identity;
       const pkgRaw = Object.freeze({ to, subject, body });
       let hash: string;
-      try { hash = googleDraftPackageHash(pkgRaw); } catch { return denied; }
+      try { hash = googleDraftPackageHash(pkgRaw); } catch { return deny("Invalid draft package"); }
       // validate explicit owner to/subject unchanged via hash already does; need to ensure pkg equals frozen snapshot
       const pkg = Object.freeze({ to, subject, body }) as GoogleDraftPackage;
       // verify hash used pkg exact (googleDraftPackageHash validates to/subject/body constraints)
       // cap check after prune
-      if (store.size >= CAP) return denied;
+      if (store.size >= CAP) return deny("Too many pending previews");
       const expiresAt = t + TTL;
       if (!Number.isFinite(expiresAt)) return denied;
       const entry: Entry = { pkg, packageHash: hash, identity, body, expiresAt, approved: false, used: false, claimed: false };

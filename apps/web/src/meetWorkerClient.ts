@@ -3,7 +3,7 @@ export const MEET_WORKER_CLIENT_JS = String.raw`
 var b=document.body;if(!b||b.dataset.meetWorker!=='1')return;
 var originalRoot=document.querySelector('#mr-root[data-room-id]');if(!originalRoot)return;
 var root=originalRoot;var roomId=root.dataset.roomId;if(!roomId)return;
-var capturedRoomId=roomId;var curStatus='idle';var canPrepareFlag=false;
+var capturedRoomId=roomId;var curStatus='idle';var canPrepareFlag=false;var wasListening=false,userStopped=false;
 var gen=0,dead=false,timer=null,ctrl=null,inflight=false;
 var els={};var editorRows=new Map();var dirtyWarn=null;
 function abortInflight(){if(ctrl){try{ctrl.abort();}catch(e){}ctrl=null;}}
@@ -16,8 +16,8 @@ function statusText(s){
 if(s==='starting')return 'Starting worker...';
 if(s==='listening')return 'Listening...';
 if(s==='stopping')return 'Stopping worker...';
-if(s==='stopped')return 'Stopped. You can review the transcript.';
-if(s==='failed')return 'Worker failed to start.';
+if(s==='stopped')return (wasListening&&!userStopped)?'Worker stopped (capture lost). You can review the transcript.':'Stopped. You can review the transcript.';
+if(s==='failed')return wasListening?'Worker stopped (capture lost).':'Worker failed to start.';
 if(s==='stop-unconfirmed')return 'Stop requested. Waiting for confirmation.';
 return 'Idle.';
 }
@@ -87,7 +87,7 @@ else {v.row.parentNode.removeChild(v.row);editorRows.delete(k);}
 syncButtons();
 }
 function render(data){
-if(typeof data.status==='string'){curStatus=data.status;canPrepareFlag=data.canPrepare;els.st.textContent=statusText(curStatus);}
+if(typeof data.status==='string'){curStatus=data.status;if(curStatus==='listening')wasListening=true;canPrepareFlag=data.canPrepare;els.st.textContent=statusText(curStatus);}
 if(data.snapshot&&typeof data.snapshot==='object'&&!Array.isArray(data.snapshot)&&data.snapshot.roomId===capturedRoomId){
 window.__mrSnap=data.snapshot;
 if(typeof data.html==='string'&&root.innerHTML!==undefined)root.innerHTML=data.html;
@@ -136,7 +136,7 @@ if(!d||g!==gen||dead||!isAlive())return;render(d);
 }finally{if(g===gen)inflight=false;syncButtons();schedulePoll();}
 }
 async function onConnect(){
-if(!canConnect())return;var url=els.inpUrl.value.trim();var name=els.inpName.value.trim();
+if(!canConnect())return;wasListening=false;userStopped=false;var url=els.inpUrl.value.trim();var name=els.inpName.value.trim();
 els.inpUrl.value=url;els.inpName.value=name;
 if(!validUrl(url)||!validName(name))return;
 var g=++gen;inflight=true;syncButtons();
@@ -144,7 +144,7 @@ try{var d=await doFetch('/api/meeting-room/worker/connect',{method:'POST',header
 if(!d||g!==gen||dead||!isAlive())return;render(d);}finally{if(g===gen)inflight=false;syncButtons();schedulePoll();}
 }
 async function onStop(){
-if(!canStop())return;var g=++gen;inflight=true;syncButtons();
+if(!canStop())return;userStopped=true;var g=++gen;inflight=true;syncButtons();
 try{var d=await doFetch('/api/meeting-room/worker/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roomId:capturedRoomId})},g);
 if(!d||g!==gen||dead||!isAlive())return;render(d);}finally{if(g===gen)inflight=false;syncButtons();schedulePoll();}
 }

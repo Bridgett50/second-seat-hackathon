@@ -57,4 +57,18 @@ describe("googleDraft",()=>{
  const [r1,r2]=await Promise.all([adapter("browser-A",pkg,new AbortController().signal),adapter("browser-A",pkg,new AbortController().signal)]);
  const statuses=[r1.status,r2.status].sort(); expect(statuses).toEqual(["created","denied"]); expect(fetchCalls).toBe(1);
  });
+ it("expired or missing token and provider 401 ask the owner to reconnect Gmail; Send is never called",async()=>{
+ const h=googleDraftPackageHash(pkg); const seen:string[]=[];
+ const f401: typeof fetch=(input)=>{seen.push(String(input)); return Promise.resolve(new Response("{}",{status:401}));};
+ const none=createGoogleDraftAdapter({fetcher:f401,getToken:(_k:string)=>null,claimApproval:(_k:string,_h:string)=>true,isCurrent:(_k:string,_h:string)=>true});
+ expect(await none("browser-A",pkg,new AbortController().signal)).toEqual({status:"denied",packageHash:h,reason:"Reconnect Gmail"});
+ expect(seen).toEqual([]);
+ const expired=createGoogleDraftAdapter({fetcher:f401,getToken:(_k:string)=>"expired-token",claimApproval:(_k:string,_h:string)=>true,isCurrent:(_k:string,_h:string)=>true});
+ const r=await expired("browser-A",pkg,new AbortController().signal);
+ expect(Object.isFrozen(r)).toBe(true); expect(r).toEqual({status:"unconfirmed",packageHash:h,reason:"Reconnect Gmail"});
+ expect(seen).toEqual(["https://gmail.googleapis.com/gmail/v1/users/me/drafts"]);
+ const f500: typeof fetch=()=>Promise.resolve(new Response("{}",{status:500}));
+ const other=createGoogleDraftAdapter({fetcher:f500,getToken:(_k:string)=>"test-token",claimApproval:(_k:string,_h:string)=>true,isCurrent:(_k:string,_h:string)=>true});
+ expect(await other("browser-A",pkg,new AbortController().signal)).toEqual({status:"unconfirmed",packageHash:h});
+ });
 });

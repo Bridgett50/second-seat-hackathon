@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { readMeetCaptionRows } from "./meetCaptionReader.js";
+import { readMeetCaptionRows, MEET_CAPTION_REGION_SELECTOR, MEET_CAPTION_REGION_ALT_SELECTOR, MEET_CAPTION_REGION_PICK } from "./meetCaptionReader.js";
 const CANON = /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
 function parseMeetUrl(u: string): string | null {
   try {
@@ -10,8 +10,8 @@ function parseMeetUrl(u: string): string | null {
     const m2 = p.pathname.match(/^\/meet\/([a-z]{3}-[a-z]{4}-[a-z]{3})$/);
     const code = m1?.[1] ?? m2?.[1] ?? null;
     if (code === null) return null;
-    if (p.search === "" || p.search === "?pli=1") return `https://meet.google.com/${code}`;
-    return null;
+    // match the meeting code only; the query string (authuser, hl, pli, ...) is ignored
+    return `https://meet.google.com/${code}`;
   } catch { return null; }
 }
 type CapsuleNode = { readonly children: ArrayLike<CapsuleNode>; readonly tagName: string; readonly classList: { contains(c: string): boolean }; querySelectorAll(s: string): ArrayLike<CapsuleNode>; readonly offsetParent: unknown; readonly innerText: string };
@@ -52,7 +52,9 @@ export function createMeetCaptionBuffer(opts: { page: Page; meetingUrl: string; 
       const expectedRows: readonly { speaker: string; text: string }[] = rows.map((r) => ({ speaker: r.speaker, text: r.text }));
       let matched: { rowKeys: string[]; rows: { speaker: string; text: string }[]; counter: number } | null;
       try {
-        const region = (page as unknown as { locator: (s: string) => { evaluate: (fn: (el: unknown, arg: unknown) => unknown, arg: unknown) => Promise<unknown> } }).locator('[role="region"][aria-label="Captions"]');
+        const regionSel = (await page.locator(MEET_CAPTION_REGION_SELECTOR).count()) > 0 ? MEET_CAPTION_REGION_SELECTOR + MEET_CAPTION_REGION_PICK : MEET_CAPTION_REGION_ALT_SELECTOR + MEET_CAPTION_REGION_PICK;
+        if (!guard()) { stop(); return freezeEmpty(); }
+        const region = (page as unknown as { locator: (s: string) => { evaluate: (fn: (el: unknown, arg: unknown) => unknown, arg: unknown) => Promise<unknown> } }).locator(regionSel);
         if (!guard()) { stop(); return freezeEmpty(); }
         const res = await region.evaluate((regionEl: unknown, arg: unknown) => {
           const a = arg as { expectedRows: { speaker: string; text: string }[]; namespace: string };
@@ -68,13 +70,26 @@ export function createMeetCaptionBuffer(opts: { page: Page; meetingUrl: string; 
             const s = getStyle(n);
             return s.display !== "none" && s.visibility !== "hidden";
           };
-          const domRows = Array.from(el.children).filter((c) => c.tagName === "DIV" && c.classList.contains("nMcdL"));
+          const legacyRows = Array.from(el.children).filter((c) => c.tagName === "DIV" && c.classList.contains("nMcdL"));
+          const kidsOf = (n: CapsuleNode): CapsuleNode[] => Array.from(n.children).filter((k) => k.tagName === "DIV" && isVis(k));
+          const domRows = legacyRows.length > 0 ? legacyRows : Array.from(el.children).filter((c) => c.tagName === "DIV" && isVis(c) && kidsOf(c).length >= 2);
           if (domRows.length !== a.expectedRows.length) return null;
           const out: { speaker: string; text: string }[] = [];
           for (let i = 0; i < domRows.length; i++) {
             const r = domRows[i] as CapsuleNode;
             const exp = a.expectedRows[i] as { speaker: string; text: string };
             if (!isVis(r)) return null;
+            if (legacyRows.length === 0) {
+              const kids = kidsOf(r);
+              const sh = kids[0];
+              const st = kids[kids.length - 1];
+              if (sh === undefined || st === undefined) return null;
+              const sSpeaker = (sh.innerText.split("\n")[0] ?? "").trim();
+              const sText = st.innerText.trim();
+              if (sSpeaker !== exp.speaker || sText !== exp.text) return null;
+              out.push({ speaker: sSpeaker, text: sText });
+              continue;
+            }
             const headers = r.querySelectorAll(":scope > div.adE6rb");
             const texts = r.querySelectorAll(":scope > div.ygicle");
             if (headers.length !== 1 || texts.length !== 1) return null;
@@ -103,7 +118,6 @@ export function createMeetCaptionBuffer(opts: { page: Page; meetingUrl: string; 
       } catch { return freezeEmpty(); }
       if (!guard()) { stop(); return freezeEmpty(); }
       if (!matched || !matched.rowKeys || matched.rowKeys.length !== rows.length) return freezeEmpty();
-      if (matched.counter > 256) { known.clear(); stopped = true; return freezeEmpty(); }
       const proposedKnown = new Map(known);
       let proposedCounter = seqCounter;
       let proposedTotal = totalKnown;
@@ -115,7 +129,6 @@ export function createMeetCaptionBuffer(opts: { page: Page; meetingUrl: string; 
         seenKeys.add(k);
         const prev = proposedKnown.get(k);
         if (!prev) {
-          if (proposedTotal >= 256) { known.clear(); stopped = true; return freezeEmpty(); }
           proposedCounter += 1;
           proposedTotal += 1;
           const ev = Object.freeze({ version: 1 as const, meetingId, utteranceId: k, sequence: proposedCounter, revision: 1, speaker: r.speaker, text: r.text });
@@ -132,10 +145,16 @@ export function createMeetCaptionBuffer(opts: { page: Page; meetingUrl: string; 
       totalKnown = proposedTotal;
       known.clear();
       for (const [k, v] of proposedKnown) known.set(k, v);
-      // retain only keys still conceptually possible: keep all historical keys (removed rows stay) but we already have them in proposedKnown
-      // actually we must keep all known including not seen (removed) - proposedKnown already contains them
+      // rolling window instead of a permanent stop: forget the oldest rows that are no longer on screen
+      if (known.size > 512) { for (const k of Array.from(known.keys())) { if (known.size <= 384) break; if (!seenKeys.has(k)) known.delete(k); } }
       return Object.freeze(events);
-    } catch { stop(); return freezeEmpty(); } finally { busy = false; }
+    } catch {
+      // A read that throws while the caption region changes (rows appearing) is not fatal: stay ready for the next sample.
+      let current = false;
+      try { current = !stopped && !signal.aborted && isCurrent() === true; } catch { current = false; }
+      if (!current) stop();
+      return freezeEmpty();
+    } finally { busy = false; }
   };
   return Object.freeze({ sample, stop });
 }
