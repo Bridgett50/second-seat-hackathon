@@ -445,7 +445,9 @@ it("T10 Continue modal shown first is dismissed without waiting out the owner po
   expect(gotos).toEqual([SA]);
   expect(clicks).toEqual(["Continue without microphone and camera", "Join now"]);
 }, 3000);
-function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void; go: (u: string) => void; stick: (k: string) => void } {
+function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void; go: (u: string) => void; stick: (k: string) => void; timeouts: Array<number | undefined>; breakClick: (k: string) => void } {
+  const timeouts: Array<number | undefined> = [];
+  const broken = new Set<string>();
   const gotos: string[] = [];
   let at = "";
   const clicks: string[] = [];
@@ -464,7 +466,9 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
       },
       count() { return Promise.resolve(visible.has(k) ? 1 : 0); },
       isVisible() { return Promise.resolve(visible.has(k)); },
-      click() {
+      click(o?: { timeout?: number }) {
+        timeouts.push(o?.timeout);
+        if (broken.has(k)) return Promise.reject(new Error("click failed for owner@example.test"));
         clicks.push(k);
         if (k === "button:Join now" || k === "menuitem:Join here too") show("button:Leave call");
         if (k.startsWith("button:Turn off ") && !stuck.has(k)) visible.delete(k);
@@ -487,7 +491,7 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
     },
     getByText(text: string | RegExp) { return mk("text:" + (typeof text === "string" ? text : text.test("You can\u2019t join this video call") ? "cantjoin" : "?")); },
   };
-  return { page, clicks, gotos, show, go: (u: string) => { at = u; }, stick: (k: string) => { stuck.add(k); } };
+  return { page, clicks, gotos, show, go: (u: string) => { at = u; }, stick: (k: string) => { stuck.add(k); }, timeouts, breakClick: (k: string) => { broken.add(k); } };
 }
 it("T11 Getting ready spinner then Ask to join keeps waiting signed out past the grace period", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -779,6 +783,51 @@ it("T25 Switch the call here tip is dismissed with Got it only, then Join here t
     expect(f.clicks).toEqual(["button:Got it", "menuitem:Join here too"]);
     expect(f.clicks).not.toContain("button:Switch here");
   } finally {
+    vi.useRealTimers();
+  }
+});
+it("T27 pre-join clicks use a 5 s timeout and Allow microphone and camera is never clicked", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Switch here");
+    f.show("menuitem:Join here too");
+    f.show("text:Switch the call here");
+    f.show("button:Got it");
+    f.show("button:Allow microphone and camera");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Got it", "menuitem:Join here too"]);
+    expect(f.clicks).not.toContain("button:Allow microphone and camera");
+    expect(f.timeouts).toEqual([5000, 5000]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T28 a failing pre-join click logs its step tag and no email", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Switch here");
+    f.show("menuitem:Join here too");
+    f.show("text:Switch the call here");
+    f.show("button:Got it");
+    f.breakClick("button:Got it");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    const logged = warn.mock.calls.map((c) => c.map(String).join(" "));
+    expect(logged).toEqual(["[meet-step] failed: gotIt.click (Error)"]);
+    expect(logged.join(" ").includes("@")).toBe(false);
+    expect(f.clicks).toEqual([]);
+  } finally {
+    warn.mockRestore();
     vi.useRealTimers();
   }
 });

@@ -2,7 +2,7 @@ export type MeetDriverLocator = {
   waitFor(options?: { state?: "attached" | "detached" | "visible" | "hidden"; timeout?: number }): Promise<void>;
   count(): Promise<number>;
   isVisible(): Promise<boolean>;
-  click(): Promise<void>;
+  click(options?: { timeout?: number }): Promise<void>;
   or(locator: MeetDriverLocator): MeetDriverLocator;
 };
 export type MeetDriverPage = {
@@ -64,6 +64,10 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         });
       });
     };
+    // Pre-join failures log one step tag (never an email or caption text); pre-join clicks give up after 5 s.
+    let step = "goto";
+    const clickMs = 5000;
+    const fail = (tag: string): false => { console.warn("[meet-step] failed: " + tag); return false; };
     try {
       const signInUrl = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(approvedUrl)}`;
       await page.goto(signInUrl, { waitUntil: "domcontentloaded", timeout });
@@ -119,7 +123,8 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         } else if (isApprovedUrl()) {
           if (!twin && (await shown(cont))) {
             if (signal.aborted) return false;
-            await cont.click();
+            step = "cont.click";
+            await cont.click({ timeout: clickMs });
             continue;
           }
           if ((await shown(signInBtn)) || (await shown(signInLink)) || (await shown(askBtn)) || (twin && (await shown(cont)))) lastSeen = Date.now();
@@ -137,17 +142,19 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if (signal.aborted) return false;
       if (!twin && (await cont.count()) === 1 && (await cont.isVisible())) {
         if (signal.aborted) return false;
-        if (!isApprovedUrl()) return false;
-        await cont.click();
+        if (!isApprovedUrl()) return fail("urlRecheck");
+        step = "cont.click";
+        await cont.click({ timeout: clickMs });
       }
-      if (!(await waitOrAbort(firstVisible(ownerText, ownerBtn, timeout)))) return false;
+      if (!(await waitOrAbort(firstVisible(ownerText, ownerBtn, timeout)))) return fail("ownerCheck");
       let mt = false; try { mt = await ownerText.isVisible(); } catch { mt = false; }
       let mb = false; try { mb = await ownerBtn.isVisible(); } catch { mb = false; }
-      if (!mt && !mb) return false;
+      if (!mt && !mb) return fail("ownerCheck");
       if (signal.aborted) return false;
       let joinBtn = page.getByRole("button", { name: "Join now", exact: true });
       const switchBtn = page.getByRole("button", { name: "Switch here", exact: true });
       const otherWays = page.getByRole("button", { name: "Other ways to join", exact: true });
+      step = "joinOptions.wait";
       if (allowTransfer) {
         await joinBtn.or(switchBtn).waitFor({ state: "visible", timeout });
       } else {
@@ -157,8 +164,9 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       const cont2 = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
       if (!twin && (await cont2.count()) === 1 && (await cont2.isVisible())) {
         if (signal.aborted) return false;
-        if (!isApprovedUrl()) return false;
-        await cont2.click();
+        if (!isApprovedUrl()) return fail("urlRecheck");
+        step = "cont2.click";
+        await cont2.click({ timeout: clickMs });
       }
       if ((await joinBtn.count()) !== 1 || !(await joinBtn.isVisible())) {
         if (allowTransfer === true && (await shown(switchBtn))) {
@@ -170,17 +178,19 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
           const gotIt = page.getByRole("button", { name: "Got it", exact: true });
           if ((await shown(switchTip)) && (await gotIt.count()) === 1 && (await gotIt.isVisible())) {
             if (signal.aborted || !isApprovedUrl()) return false;
-            await gotIt.click();
+            step = "gotIt.click";
+            await gotIt.click({ timeout: clickMs });
           }
           if (signal.aborted) return false;
           // Meet can remember the expanded join list ("Show fewer options"); then Join here too is already visible.
           if (!(await shown(joinHere))) {
-            if (!(await shown(otherWays))) return false;
+            if (!(await shown(otherWays))) return fail("joinList");
             if (signal.aborted || !isApprovedUrl()) return false;
-            await otherWays.click();
-            if (!(await waitOrAbort(joinHere.waitFor({ state: "visible", timeout })))) return false;
+            step = "otherWays.click";
+            await otherWays.click({ timeout: clickMs });
+            if (!(await waitOrAbort(joinHere.waitFor({ state: "visible", timeout })))) return fail("joinHere.wait");
           }
-          if (!(await shown(joinHere))) return false;
+          if (!(await shown(joinHere))) return fail("joinHere.visible");
           if (signal.aborted || !isApprovedUrl()) return false;
           joinBtn = joinHere;
         }
@@ -190,28 +200,34 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       const micMuted = page.getByRole("button", { name: /^turn on microphone|microphone.*(blocked|problem|permission needed|not (found|allowed))/i });
       if (await shown(micOff)) {
         if (signal.aborted || !isApprovedUrl()) return false;
-        await micOff.click();
+        step = "micOff.click";
+        await micOff.click({ timeout: clickMs });
       }
       if (!twin && (await shown(camOff))) {
         if (signal.aborted || !isApprovedUrl()) return false;
-        await camOff.click();
+        step = "camOff.click";
+        await camOff.click({ timeout: clickMs });
       }
       if (!(await pause(500))) return false;
-      if ((await shown(micOff)) || (!twin && (await shown(camOff)))) return false;
-      if (twin && !(await shown(micMuted))) return false;
+      if ((await shown(micOff)) || (!twin && (await shown(camOff)))) return fail("micOff.confirm");
+      if (twin && !(await shown(micMuted))) return fail("micOff.confirm");
       if (signal.aborted) return false;
       let ft = false; try { ft = await ownerText.isVisible(); } catch { ft = false; }
       let fb = false; try { fb = await ownerBtn.isVisible(); } catch { fb = false; }
-      if ((!ft && !fb) || signal.aborted) return false;
-      if (!isApprovedUrl()) return false;
-      await joinBtn.click();
+      if (signal.aborted) return false;
+      if (!ft && !fb) return fail("ownerCheck");
+      if (!isApprovedUrl()) return fail("urlRecheck");
+      step = "joinHere.click";
+      await joinBtn.click({ timeout: clickMs });
       const leaveBtn = page.getByRole("button", { name: "Leave call", exact: true });
+      step = "leave.wait";
       await leaveBtn.waitFor({ state: "visible", timeout });
       if (signal.aborted) return false;
       if (!isApprovedUrl()) return false;
       return await leaveBtn.isVisible();
-    } catch {
-      return false;
+    } catch (e) {
+      // Only the step tag and the error name are logged; the error message could contain an email.
+      return fail(step + " (" + (e instanceof Error ? e.name : "unknown") + ")");
     }
   };
 }
