@@ -1,7 +1,7 @@
 import { test, expect, vi } from "vitest";
 import type { Page } from "@playwright/test";
 import type { MeetProofBrowser } from "./../src/meetAdmissionBrowser.js";
-import { createLocalMeetCaptureFactory, MeetCaptureStartError, enableMeetCaptions, type MeetCaptionsPage } from "../src/meetWorkerCapture.js";
+import { createLocalMeetCaptureFactory, MeetCaptureStartError, enableMeetCaptions, type MeetCaptionsPage, meetChromeArgs, meetPermissionGrants, launchAttachedMeetChrome, defaultMeetChromePath, resolveMeetProfileDir, meetCaptureOptsFromEnv, type AttachedChild, type AttachedBrowser } from "../src/meetWorkerCapture.js";
 import { collectMeetUiDiagnostic, MEET_CAPTION_REGION_SELECTOR, MEET_CAPTION_REGION_ALT_SELECTOR } from "../src/meetCaptionReader.js";
 
 type D<T>={promise:Promise<T>;resolve:(v:T)=>void;reject:(e:unknown)=>void};
@@ -189,7 +189,7 @@ test("9 readiness modal forces decline before identity", async()=>{
   }
 });
 
-type FL = { count(): Promise<number>; isVisible(): Promise<boolean>; click(): Promise<void>; waitFor(o: { state: "visible"; timeout: number }): Promise<void>; getAttribute(n: string): Promise<string | null>; or(o: FL): FL };
+type FL = { count(): Promise<number>; isVisible(): Promise<boolean>; click(): Promise<void>; waitFor(o: { state: "visible"; timeout: number }): Promise<void>; getAttribute(n: string): Promise<string | null>; or(o: FL): FL; nth(i: number): FL };
 function capPage(init: { chip?: { role: string; attr: string; on: boolean }; oldUi?: boolean; regionOn?: boolean; noRegion?: boolean }): { page: MeetCaptionsPage; clicks: string[]; asked: string[] } {
   const clicks: string[] = [];
   const asked: string[] = [];
@@ -204,6 +204,19 @@ function capPage(init: { chip?: { role: string; attr: string; on: boolean }; old
       waitFor: async () => { if (!(await a.isVisible()) && !(await b.isVisible())) throw new Error("timeout"); },
       getAttribute: async (n: string) => ((await a.count()) > 0 ? a.getAttribute(n) : b.getAttribute(n)),
       or: (o: FL) => orL(l, o),
+      nth: (i: number) => lazy(async () => { const ac = await a.count(); return i < ac ? a.nth(i) : b.nth(i - ac); }),
+    };
+    return l;
+  };
+  const lazy = (get: () => Promise<FL>): FL => {
+    const l: FL = {
+      count: async () => (await get()).count(),
+      isVisible: async () => (await get()).isVisible(),
+      click: async () => (await get()).click(),
+      waitFor: async (o: { state: "visible"; timeout: number }) => (await get()).waitFor(o),
+      getAttribute: async (n: string) => (await get()).getAttribute(n),
+      or: (o: FL) => orL(l, o),
+      nth: (i: number) => (i === 0 ? l : loc("none", () => false)),
     };
     return l;
   };
@@ -215,6 +228,7 @@ function capPage(init: { chip?: { role: string; attr: string; on: boolean }; old
       waitFor: async () => { if (!vis()) throw new Error("timeout"); },
       getAttribute: async (n: string) => attrs()[n] ?? null,
       or: (o: FL) => orL(l, o),
+      nth: (i: number) => (i === 0 ? l : loc(key + "#" + String(i), () => false)),
     };
     return l;
   };
@@ -285,4 +299,150 @@ test("captions: diagnostic lists only role and name, redacts emails, and skips c
   expect(out).toContain("region: (unnamed)");
   expect(out).not.toContain("@");
   expect(out).not.toContain("secret caption");
+});
+type Chip = { label: string; visible: boolean; attrs: Record<string, string> };
+function chipPage(chips: Chip[]): { page: MeetCaptionsPage; clicks: string[]; waits: number[] } {
+  const clicks: string[] = []; const waits: number[] = []; let regionOn = false;
+  const one = (c: Chip | undefined, key: string): FL => {
+    const l: FL = {
+      count: async () => (c ? 1 : 0), isVisible: async () => c?.visible === true,
+      click: async () => { clicks.push(key); regionOn = true; },
+      waitFor: async () => { if (!c?.visible) throw new Error("timeout"); },
+      getAttribute: async (n: string) => (n === "aria-label" ? c?.label ?? null : c?.attrs[n] ?? null),
+      or: () => l, nth: () => l,
+    };
+    return l;
+  };
+  const all: FL = { count: async () => chips.length, isVisible: async () => chips.some((c) => c.visible), click: async () => { throw new Error("strict"); }, waitFor: async () => { throw new Error("strict"); }, getAttribute: async () => { throw new Error("strict"); }, or: () => all, nth: (i: number) => one(chips[i], "chip:" + (chips[i]?.label ?? "")) };
+  const region: FL = { count: async () => (regionOn ? 1 : 0), isVisible: async () => regionOn, click: async () => {}, waitFor: async (o: { state: "visible"; timeout: number }) => { waits.push(o.timeout); if (!regionOn) throw new Error("timeout"); }, getAttribute: async () => null, or: () => region, nth: () => region };
+  const none: FL = { count: async () => 0, isVisible: async () => false, click: async () => {}, waitFor: async () => { throw new Error("timeout"); }, getAttribute: async () => null, or: (o: FL) => o, nth: () => none };
+  const page: MeetCaptionsPage = {
+    getByRole(role: "button" | "checkbox" | "switch" | "region", options: { name: string | RegExp; exact?: boolean }) { return role === "button" && options.name instanceof RegExp ? all : none; },
+    getByText() { return none; },
+    locator(selector: string) { return selector === MEET_CAPTION_REGION_ALT_SELECTOR ? region : none; },
+  };
+  return { page, clicks, waits };
+}
+test("captions: first visible Live captions chip is used, Translate and Gemini are skipped, and the region gets 30s", async () => {
+  const f = chipPage([{ label: "Translate live captions", visible: true, attrs: {} }, { label: "Live captions", visible: false, attrs: {} }, { label: "Live captions with Gemini", visible: true, attrs: {} }, { label: "Live captions", visible: true, attrs: { "aria-pressed": "false" } }]);
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true)).toBe(true);
+  expect(f.clicks).toEqual(["chip:Live captions"]);
+  expect(f.waits).toEqual([30000]);
+});
+test("captions: a chip labelled Turn off live captions is already on and is not clicked", async () => {
+  const f = chipPage([{ label: "Turn off live captions", visible: true, attrs: {} }]);
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true)).toBe(false);
+  expect(f.clicks).toEqual([]);
+  expect(f.waits).toEqual([30000]);
+});
+test("captions: aria-checked true counts as on", async () => {
+  const f = chipPage([{ label: "Live captions", visible: true, attrs: { "aria-checked": "true" } }]);
+  await enableMeetCaptions(f.page, new AbortController().signal, () => true);
+  expect(f.clicks).toEqual([]);
+});
+const NL = String.fromCharCode(10);
+const TWIN = { videoPath: "/tmp/placeholder/twin.y4m", audioPath: "/tmp/placeholder/silence.wav" };
+function fakeChild(o: { exitOnTerm?: boolean } = {}) {
+  const exits: Array<() => void> = []; const errors: Array<() => void> = []; const data: Array<(c: unknown) => void> = []; const kills: string[] = [];
+  let code: number | null = null;
+  const exit = (): void => { code = 1; for (const f of exits.splice(0)) f(); };
+  const child: AttachedChild = {
+    get exitCode() { return code; },
+    stderr: { on: (_e: "data", l: (c: unknown) => void) => { data.push(l); return undefined; } },
+    once: (e: "exit" | "error", l: () => void) => { (e === "exit" ? exits : errors).push(l); return undefined; },
+    kill: (sig: "SIGTERM" | "SIGKILL") => { kills.push(sig); if (o.exitOnTerm !== false) exit(); return true; },
+  };
+  return { child, kills, emit: (t: string) => { for (const f of data) f(t); }, exit };
+}
+type FP = { closed: boolean; close(): Promise<void> };
+function fakeCdp(o: { grantFails?: boolean } = {}) {
+  const log: string[] = []; const grants: Array<{ perms: string[]; origin: string }> = []; const pages: FP[] = [];
+  const ctx = {
+    pages: () => pages,
+    newPage: async () => { const pg: FP = { closed: false, close: async () => { pg.closed = true; log.push("page.close"); } }; pages.push(pg); return pg; },
+    clearPermissions: async () => { log.push("clear"); },
+    grantPermissions: async (perms: string[], g: { origin: string }) => { if (o.grantFails) throw new Error("no"); grants.push({ perms, origin: g.origin }); },
+  };
+  const browser: AttachedBrowser<FP> = { contexts: () => [ctx], close: async () => { log.push("browser.close"); } };
+  return { browser, log, grants, pages };
+}
+test("twin-image: fake-device flags keep deny-permission-prompts; default args are unchanged; only the camera is ever granted", () => {
+  expect(meetChromeArgs()).toEqual(["--deny-permission-prompts"]);
+  expect(meetChromeArgs("off", TWIN)).toEqual(["--deny-permission-prompts"]);
+  expect(meetChromeArgs("twin-image", TWIN)).toEqual(["--deny-permission-prompts", "--use-fake-device-for-media-stream", "--use-file-for-fake-video-capture=/tmp/placeholder/twin.y4m", "--use-file-for-fake-audio-capture=/tmp/placeholder/silence.wav"]);
+  expect(() => meetChromeArgs("twin-image")).toThrow();
+  expect(() => meetChromeArgs("twin-image", { videoPath: "twin.y4m", audioPath: "/tmp/s.wav" })).toThrow();
+  expect(() => meetChromeArgs("twin-image", { videoPath: "/tmp/twin.mp4", audioPath: "/tmp/s.wav" })).toThrow();
+  expect(meetPermissionGrants("twin-image")).toEqual(["camera"]);
+  expect(meetPermissionGrants("off")).toEqual([]);
+  expect(meetPermissionGrants()).toEqual([]);
+  for (const m of ["off", "twin-image"] as const) expect(meetPermissionGrants(m).some((g) => /micro|audio/i.test(g))).toBe(false);
+});
+test("attached-profile: normal Chrome child with a dedicated profile and loopback DevTools, camera-only grant, stop closes tabs and ends the child", async () => {
+  const fc = fakeChild(); const cdp = fakeCdp(); const spawned: Array<{ cmd: string; args: string[] }> = []; const endpoints: string[] = [];
+  const b = await launchAttachedMeetChrome<FP>({ chromePath: "/opt/chrome", profileDir: "/tmp/ss-profile", port: 0, args: meetChromeArgs("twin-image", TWIN), grants: meetPermissionGrants("twin-image"),
+    spawn: (cmd, args) => { spawned.push({ cmd, args }); queueMicrotask(() => fc.emit("noise" + NL + "DevTools listening on ws://127.0.0.1:45678/devtools/browser/abc" + NL)); return fc.child; },
+    connect: async (ep) => { endpoints.push(ep); return cdp.browser; } });
+  expect(spawned.length).toBe(1); expect(spawned[0]?.cmd).toBe("/opt/chrome");
+  const args = spawned[0]?.args ?? [];
+  expect(args).toContain("--user-data-dir=/tmp/ss-profile"); expect(args).toContain("--remote-debugging-port=0"); expect(args).toContain("--remote-debugging-address=127.0.0.1"); expect(args).toContain("--deny-permission-prompts");
+  expect(args.some((a) => /enable-automation/.test(a))).toBe(false);
+  expect(endpoints).toEqual(["http://127.0.0.1:45678"]);
+  expect(cdp.grants).toEqual([{ perms: ["camera"], origin: "https://meet.google.com" }]);
+  expect(cdp.log).toEqual(["clear"]);
+  const ctx = await b.newContext(); await ctx.newPage();
+  await b.close(); await b.close();
+  expect(cdp.pages.every((pg) => pg.closed)).toBe(true);
+  expect(cdp.log).toEqual(["clear", "page.close", "browser.close"]);
+  expect(fc.kills).toEqual(["SIGTERM"]);
+});
+test("attached-profile: default mode grants nothing; non-loopback DevTools host, early exit and grant failure fail closed", async () => {
+  { const fc = fakeChild(); const cdp = fakeCdp();
+    const b = await launchAttachedMeetChrome<FP>({ chromePath: "/opt/chrome", profileDir: "/tmp/p", port: 0, args: meetChromeArgs(), grants: meetPermissionGrants(), spawn: () => { queueMicrotask(() => fc.emit("DevTools listening on ws://127.0.0.1:41000/devtools/browser/x" + NL)); return fc.child; }, connect: async () => cdp.browser });
+    expect(cdp.grants).toEqual([]); await b.close(); expect(fc.kills).toEqual(["SIGTERM"]); }
+  { const fc = fakeChild(); let connects = 0;
+    await expect(launchAttachedMeetChrome<FP>({ chromePath: "/opt/chrome", profileDir: "/tmp/p", port: 0, args: [], grants: [], readyTimeoutMs: 20, spawn: () => { queueMicrotask(() => fc.emit("DevTools listening on ws://0.0.0.0:41000/devtools/browser/x" + NL)); return fc.child; }, connect: async () => { connects++; return fakeCdp().browser; } })).rejects.toThrow(/timeout/);
+    expect(connects).toBe(0); expect(fc.kills).toEqual(["SIGTERM"]); }
+  { const fc = fakeChild(); let connects = 0;
+    await expect(launchAttachedMeetChrome<FP>({ chromePath: "/opt/chrome", profileDir: "/tmp/p", port: 0, args: [], grants: [], spawn: () => { queueMicrotask(() => fc.exit()); return fc.child; }, connect: async () => { connects++; return fakeCdp().browser; } })).rejects.toThrow(/exited/);
+    expect(connects).toBe(0); }
+  { const fc = fakeChild(); const cdp = fakeCdp({ grantFails: true });
+    await expect(launchAttachedMeetChrome<FP>({ chromePath: "/opt/chrome", profileDir: "/tmp/p", port: 0, args: [], grants: ["camera"], spawn: () => { queueMicrotask(() => fc.emit("DevTools listening on ws://127.0.0.1:41000/devtools/browser/x" + NL)); return fc.child; }, connect: async () => cdp.browser })).rejects.toThrow(/permission/);
+    expect(cdp.log).toContain("browser.close"); expect(fc.kills).toEqual(["SIGTERM"]); }
+  await expect(launchAttachedMeetChrome<FP>({ chromePath: "/opt/chrome", profileDir: "/tmp/p", port: 0, args: [], grants: ["microphone"], spawn: () => fakeChild().child, connect: async () => fakeCdp().browser })).rejects.toThrow(/camera/);
+});
+test("attached-profile: profile dir must be absolute and never the main Chrome profile", () => {
+  expect(resolveMeetProfileDir(undefined, "/home/u")).toBe("/home/u/.second-seat/meet-worker-profile");
+  expect(resolveMeetProfileDir("/srv/meet-profile", "/home/u")).toBe("/srv/meet-profile");
+  expect(() => resolveMeetProfileDir("relative/dir", "/home/u")).toThrow();
+  expect(() => resolveMeetProfileDir("/home/u", "/home/u")).toThrow();
+  expect(() => resolveMeetProfileDir("/home/u/.config/google-chrome", "/home/u")).toThrow();
+  expect(() => resolveMeetProfileDir("/home/u/.config/google-chrome/Default", "/home/u")).toThrow();
+  expect(() => resolveMeetProfileDir("/home/u/.config", "/home/u")).toThrow();
+  expect(() => resolveMeetProfileDir("/home/u/Library/Application Support/Google/Chrome/Profile 1", "/home/u")).toThrow();
+  expect(defaultMeetChromePath("win32", { PROGRAMFILES: "D:/PF" })).toBe(["D:", "PF", "Google", "Chrome", "Application", "chrome.exe"].join(String.fromCharCode(92)));
+  expect(defaultMeetChromePath("linux", {})).toBe("/usr/bin/google-chrome");
+});
+test("env: browser mode, profile and twin media are read and fail closed", () => {
+  expect(meetCaptureOptsFromEnv({})).toEqual({});
+  expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_BROWSER: "attached-profile", SECOND_SEAT_MEET_PROFILE_DIR: "/srv/meet-profile" })).toEqual({ browserMode: "attached-profile", profileDir: "/srv/meet-profile" });
+  expect(() => meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_BROWSER: "main-profile" })).toThrow();
+  expect(() => meetCaptureOptsFromEnv({ SECOND_SEAT_TWIN_VIDEO: "/tmp/placeholder/twin.y4m" })).toThrow();
+  expect(meetCaptureOptsFromEnv({ SECOND_SEAT_TWIN_VIDEO: TWIN.videoPath, SECOND_SEAT_TWIN_AUDIO: TWIN.audioPath })).toEqual({ cameraMode: "twin-image", twinMedia: TWIN });
+});
+test("factory attached-profile twin-image: spawns via the child launcher, grants camera only, and cleans up the child", async () => {
+  const fc = fakeChild(); const spawned: string[][] = []; const grants: string[][] = []; let browserClosed = 0;
+  const pg = fakePage();
+  const browser: AttachedBrowser<Page> = { contexts: () => [{ pages: () => [], newPage: async () => pg, clearPermissions: async () => {}, grantPermissions: async (perms: string[]) => { grants.push(perms); } }], close: async () => { browserClosed++; } };
+  const admit = vi.fn(async () => false);
+  const factory = createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", browserMode: "attached-profile", profileDir: "/tmp/ss-profile", cameraMode: "twin-image", twinMedia: TWIN, chromePath: "/opt/chrome", admit,
+    spawnChrome: (_cmd, args) => { spawned.push(args); queueMicrotask(() => fc.emit("DevTools listening on ws://127.0.0.1:45001/devtools/browser/y" + NL)); return fc.child; },
+    connectCdp: async () => browser });
+  await expect(factory(scope(() => true), new AbortController().signal)).rejects.toBeInstanceOf(MeetCaptureStartError);
+  expect(spawned.length).toBe(1);
+  expect(spawned[0]).toContain("--use-file-for-fake-video-capture=/tmp/placeholder/twin.y4m");
+  expect(grants).toEqual([["camera"]]);
+  expect(admit).toHaveBeenCalledTimes(1);
+  expect(browserClosed).toBe(1); expect(fc.kills).toEqual(["SIGTERM"]);
+  expect(() => createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", browserMode: "attached-profile", profileDir: "rel/dir" })).toThrow();
 });

@@ -468,6 +468,7 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
         clicks.push(k);
         if (k === "button:Join now" || k === "menuitem:Join here too") show("button:Leave call");
         if (k.startsWith("button:Turn off ") && !stuck.has(k)) visible.delete(k);
+        if (k === "button:Turn off microphone" && !stuck.has(k)) show("button:Turn on microphone");
         if (k === "button:Other ways to join" && !stuck.has(k)) show("menuitem:Join here too");
         return Promise.resolve();
       },
@@ -480,7 +481,7 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
     url() { return at; },
     getByRole(role: "button" | "link" | "menuitem", options?: { name?: string | RegExp }) {
       const raw = options?.name ?? "";
-      const n = typeof raw === "string" ? raw : raw.test("Sign in") ? "Sign in" : raw.test("owner@example.test") ? "owner" : "?";
+      const n = typeof raw === "string" ? raw : raw.test("Sign in") ? "Sign in" : raw.test("owner@example.test") ? "owner" : raw.test("Turn on microphone") ? "Turn on microphone" : "?";
       return mk(role + ":" + n);
     },
     getByText(text: string | RegExp) { return mk("text:" + (typeof text === "string" ? text : text.test("You can\u2019t join this video call") ? "cantjoin" : "?")); },
@@ -671,6 +672,40 @@ it("T21 mute that cannot be confirmed means no join", async () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(await p).toBe(false);
     expect(f.clicks).toEqual(["button:Turn off microphone"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T24 twin-image mode turns only the microphone off, keeps the camera on and never presses Continue without", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Join now");
+    f.show("button:Continue without microphone and camera");
+    f.show("button:Turn off microphone");
+    f.show("button:Turn off camera");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Turn off microphone", "button:Join now"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T25 twin-image mode without a confirmed microphone-off indicator does not join", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Join now");
+    f.show("button:Turn off camera");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
   } finally {
     vi.useRealTimers();
   }

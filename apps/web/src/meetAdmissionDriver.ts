@@ -15,7 +15,7 @@ export function ownerAccountNamePattern(email: string): RegExp {
   const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[\\s(<:,])${escaped}($|[\\s)>,])`, "i");
 }
-export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number; unrecognizedGraceMs?: number | undefined }) {
+export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number; unrecognizedGraceMs?: number | undefined; cameraMode?: "off" | "twin-image" | undefined }) {
   const expectedEmail = opts.expectedOwnerEmail;
   if (typeof expectedEmail !== "string" || expectedEmail.trim() === "" || expectedEmail.length > 320 || /[\x00-\x1F\x7F]/.test(expectedEmail)) {
     throw new Error("invalid expectedOwnerEmail");
@@ -24,6 +24,8 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
   if (!Number.isInteger(t)) t = 30000;
   t = Math.min(60000, Math.max(1000, t));
   const allowTransfer = opts.allowOwnerTransfer === true;
+  // twin-image: keep the camera on (fake twin video), never press "Continue without...", and only turn the microphone off.
+  const twin = opts.cameraMode === "twin-image";
   const timeout = t;
   let ownerSignInTimeoutMs = opts.ownerSignInTimeoutMs ?? timeout;
   if (!Number.isFinite(ownerSignInTimeoutMs) || !Number.isInteger(ownerSignInTimeoutMs) || ownerSignInTimeoutMs <= 0) throw new Error("invalid ownerSignInTimeoutMs");
@@ -115,12 +117,12 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
           try { vb = await ownerBtn.isVisible(); } catch { vb = false; }
           if (isApprovedUrl() && (vt || vb)) break;
         } else if (isApprovedUrl()) {
-          if (await shown(cont)) {
+          if (!twin && (await shown(cont))) {
             if (signal.aborted) return false;
             await cont.click();
             continue;
           }
-          if ((await shown(signInBtn)) || (await shown(signInLink)) || (await shown(askBtn))) lastSeen = Date.now();
+          if ((await shown(signInBtn)) || (await shown(signInLink)) || (await shown(askBtn)) || (twin && (await shown(cont)))) lastSeen = Date.now();
           else if (Date.now() - lastSeen >= graceMs) return false;
         }
         const remain = deadline - Date.now();
@@ -133,7 +135,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if (!isApprovedUrl()) return false;
       try { await Promise.any([Promise.resolve().then(() => emailLoc.or(cont).waitFor({ state: "visible", timeout })), Promise.resolve().then(() => ownerBtn.waitFor({ state: "visible", timeout }))]); } catch {}
       if (signal.aborted) return false;
-      if ((await cont.count()) === 1 && (await cont.isVisible())) {
+      if (!twin && (await cont.count()) === 1 && (await cont.isVisible())) {
         if (signal.aborted) return false;
         if (!isApprovedUrl()) return false;
         await cont.click();
@@ -153,7 +155,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       }
       if (signal.aborted) return false;
       const cont2 = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
-      if ((await cont2.count()) === 1 && (await cont2.isVisible())) {
+      if (!twin && (await cont2.count()) === 1 && (await cont2.isVisible())) {
         if (signal.aborted) return false;
         if (!isApprovedUrl()) return false;
         await cont2.click();
@@ -173,16 +175,18 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       }
       const micOff = page.getByRole("button", { name: "Turn off microphone" });
       const camOff = page.getByRole("button", { name: "Turn off camera" });
+      const micMuted = page.getByRole("button", { name: /^turn on microphone|microphone.*(blocked|problem|not (found|allowed))/i });
       if (await shown(micOff)) {
         if (signal.aborted || !isApprovedUrl()) return false;
         await micOff.click();
       }
-      if (await shown(camOff)) {
+      if (!twin && (await shown(camOff))) {
         if (signal.aborted || !isApprovedUrl()) return false;
         await camOff.click();
       }
       if (!(await pause(500))) return false;
-      if ((await shown(micOff)) || (await shown(camOff))) return false;
+      if ((await shown(micOff)) || (!twin && (await shown(camOff)))) return false;
+      if (twin && !(await shown(micMuted))) return false;
       if (signal.aborted) return false;
       let ft = false; try { ft = await ownerText.isVisible(); } catch { ft = false; }
       let fb = false; try { fb = await ownerBtn.isVisible(); } catch { fb = false; }

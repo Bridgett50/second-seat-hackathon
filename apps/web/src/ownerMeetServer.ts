@@ -5,7 +5,7 @@ import { createWebServer } from "./server.js";
 import { createOwnerMeetRuntime, type StartCapture } from "./ownerMeetRuntime.js";
 import type { createGoogleConnections } from "./googleConnections.js";
 import { createOwnerGoogleHttp } from "./ownerGoogleHttp.js";
-import { createLocalMeetCaptureFactory } from "./meetWorkerCapture.js";
+import { createLocalMeetCaptureFactory, meetCaptureOptsFromEnv } from "./meetWorkerCapture.js";
 import { WEB_ROOT } from "./loadFixtures.js";
 import { createGoogleWriteOutbox } from "./googleWriteOutbox.js";
 import { createOwnerDraftHttp } from "./ownerDraftHttp.js";
@@ -42,8 +42,7 @@ export async function startOwnerMeetServer(opts: { expectedOwnerEmail: string; p
   let startCapture: StartCapture;
   if(typeof opts.startCapture==="function") startCapture=opts.startCapture;
   else {
-    const fOpts: { expectedOwnerEmail: string; chromePath?: string }={ expectedOwnerEmail: opts.expectedOwnerEmail };
-    if(opts.chromePath!==undefined) (fOpts as Record<string,string>)["chromePath"]=opts.chromePath;
+    const fOpts: Parameters<typeof createLocalMeetCaptureFactory>[0]={ expectedOwnerEmail: opts.expectedOwnerEmail, ...meetCaptureOptsFromEnv(process.env), ...(opts.chromePath!==undefined?{ chromePath: opts.chromePath }:{}) };
     startCapture=createLocalMeetCaptureFactory(fOpts);
   }
   const checkout=resolve(WEB_ROOT,'../..');
