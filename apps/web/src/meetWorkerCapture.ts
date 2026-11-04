@@ -55,17 +55,27 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
         count = await anyRegion.count(); if (!guard()) return false; return count >= 1;
       }
       const toggle = page.getByRole("button", { name: "Captions and translation", exact: true }).or(page.getByRole("checkbox", { name: "Captions and translation", exact: true }));
-      count = await toggle.count(); if (!guard()) return false; if (count !== 1) return false;
-      if (!await toggle.isVisible()) return false; if (!guard()) return false;
-      await toggle.click(); if (!guard()) return false;
+      // Locators are strict (isVisible/click/waitFor throw on 2 matches): use the first visible match by index.
+      const firstVisibleOf = async (l: CapLoc): Promise<CapLoc | null> => {
+        const n = await l.count(); if (!guard()) return null;
+        for (let i = 0; i < Math.min(n, 8); i++) {
+          const one = l.nth(i);
+          const vis = await one.isVisible(); if (!guard()) return null;
+          if (vis) return one;
+        }
+        return null;
+      };
+      const toggleTarget = await firstVisibleOf(toggle); if (!guard()) return false;
+      if (toggleTarget === null) return false;
+      await toggleTarget.click(); if (!guard()) return false;
       const turnOn = page.getByText("Turn on captions", { exact: true });
       // Some Meet versions turn captions on straight from this button: then the Captions region shows instead of "Turn on captions".
-      const shown = await Promise.any([region.waitFor({ state: "attached", timeout: 10000 }).then(() => "region"), turnOn.waitFor({ state: "visible", timeout: 10000 }).then(() => "turnOn")]); if (!guard()) return false;
+      const shown = await Promise.any([region.nth(0).waitFor({ state: "attached", timeout: 10000 }).then(() => "region"), turnOn.nth(0).waitFor({ state: "visible", timeout: 10000 }).then(() => "turnOn")]); if (!guard()) return false;
       if (shown === "region") { count = await region.count(); if (!guard()) return false; return count >= 1; }
-      count = await turnOn.count(); if (!guard()) return false; if (count !== 1) return false;
-      if (!await turnOn.isVisible()) return false; if (!guard()) return false;
-      await turnOn.click(); if (!guard()) return false;
-      await region.waitFor({ state: "attached", timeout: 10000 }); if (!guard()) return false;
+      const turnOnTarget = await firstVisibleOf(turnOn); if (!guard()) return false;
+      if (turnOnTarget === null) return false;
+      await turnOnTarget.click(); if (!guard()) return false;
+      await region.nth(0).waitFor({ state: "attached", timeout: 10000 }); if (!guard()) return false;
       count = await region.count(); if (!guard()) return false; return count >= 1;
     } catch { return false; }
   };
@@ -237,6 +247,8 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
     if (externalSignal.aborted || !scopeCurrent()) throw new MeetCaptureStartError(true);
     let proofRef: ReturnType<typeof createMeetAdmissionProof> | null = null;
     let captionBuffer: ReturnType<typeof createMeetCaptionBuffer> | null = null;
+    // First caption read, started the moment captions are confirmed (no wait for the first bridge tick).
+    let earlyRead: ReturnType<ReturnType<typeof createMeetCaptionBuffer>["sample"]> | null = null;
     let cachedStopPromise: Promise<void> | null = null;
     let proofSignal: AbortSignal | null = null;
     let capturedPage: Page | null = null;
@@ -302,7 +314,11 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       const capOk = await enableFn(capturedPage, sigForCap, () => admittedGuard()); if (!admittedGuard()) throw new MeetCaptureStartError(true);
       if (!capOk) throw new MeetCaptureStartError(true);
       if (!admittedGuard()) throw new MeetCaptureStartError(true);
-      captionBuffer = createMeetCaptionBuffer({ page: capturedPage, meetingUrl: capturedScopeMeetingUrl, meetingId, signal: sigForCap, isCurrent: () => admittedGuard() });
+      const startedBuffer = createMeetCaptionBuffer({ page: capturedPage, meetingUrl: capturedScopeMeetingUrl, meetingId, signal: sigForCap, isCurrent: () => admittedGuard() });
+      captionBuffer = startedBuffer;
+      // Start capturing right away so the first words on screen at join are kept; the first sample() returns these rows.
+      earlyRead = startedBuffer.sample();
+      earlyRead.catch(() => {});
     } catch (e) {
       try { await localStop(); } catch { throw new MeetCaptureStartError(false); }
       if (e instanceof MeetCaptureStartError) throw e;
@@ -312,6 +328,13 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       const admittedGuard2 = (): boolean => !localStopped && !externalSignal.aborted && scopeCurrent() && proofRef!.phase() === "admitted";
       if (!admittedGuard2()) { console.warn("[meet-step] failed: capture.admitted"); localStop().catch(()=>{}); return Object.freeze([]); }
       try {
+        if (earlyRead !== null) {
+          const first = earlyRead;
+          earlyRead = null;
+          const early = await first;
+          if (!admittedGuard2()) { console.warn("[meet-step] failed: capture.admitted"); localStop().catch(()=>{}); return Object.freeze([]); }
+          return early;
+        }
         const res = await captionBuffer!.sample();
         if (!admittedGuard2()) { console.warn("[meet-step] failed: capture.admitted"); localStop().catch(()=>{}); return Object.freeze([]); }
         return res;

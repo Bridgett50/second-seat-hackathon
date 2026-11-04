@@ -7,6 +7,7 @@ export type MeetDriverLocator = {
   or(locator: MeetDriverLocator): MeetDriverLocator;
   nth?(index: number): MeetDriverLocator;
   getAttribute?(name: string, options?: { timeout?: number }): Promise<string | null>;
+  filter?(options: { visible?: boolean }): MeetDriverLocator;
 };
 export type MeetDriverPage = {
   goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
@@ -20,6 +21,13 @@ export function redactMeetMicLabel(label: string): string {
 }
 // Twin mode: a mic control whose name says the microphone is not live (never a Turn off microphone control).
 export const MEET_MIC_NOT_LIVE = /^(?!turn off microphone)(?=.*mic).*(turn on microphone|microphone is off|problem|blocked|permission|not found|not allowed)/i;
+// Playwright locators are strict: isVisible, waitFor and click throw when a locator matches more than one element.
+// Narrow to the first visible match so two matching Meet controls never read as "not shown".
+export function visibleFirst(l: MeetDriverLocator): MeetDriverLocator {
+  if (l.filter === undefined) return l;
+  const v = l.filter({ visible: true });
+  return v.nth === undefined ? v : v.nth(0);
+}
 export function ownerAccountNamePattern(email: string): RegExp {
   const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[\\s(<:,])${escaped}($|[\\s)>,])`, "i");
@@ -80,25 +88,26 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
     try {
       const signInUrl = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(approvedUrl)}`;
       await page.goto(signInUrl, { waitUntil: "domcontentloaded", timeout });
-      const emailLoc = page.getByText(expectedEmail, { exact: true });
+      const emailLoc = visibleFirst(page.getByText(expectedEmail, { exact: true }));
       const ownerText = emailLoc;
-      const ownerBtn = page.getByRole("button", { name: ownerAccountNamePattern(expectedEmail) });
-      const cont = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
+      const ownerBtn = visibleFirst(page.getByRole("button", { name: ownerAccountNamePattern(expectedEmail) }));
+      const cont = visibleFirst(page.getByRole("button", { name: "Continue without microphone and camera", exact: true }));
       const signInBtn = page.getByRole("button", { name: /^\s*sign in\b/i });
       const signInLink = page.getByRole("link", { name: /^\s*sign in\b/i });
       const askBtn = page.getByRole("button", { name: "Ask to join", exact: true });
       const cantJoin = page.getByText(/you can['\u2019]t join this video call/i);
+      // Multi-match safe: true when ANY match is visible (never isVisible on a multi-match locator).
       const shown = async (l: MeetDriverLocator): Promise<boolean> => {
-        try { return (await l.count()) > 0 && (await l.isVisible()); } catch { return false; }
+        try { const v = visibleFirst(l); return (await v.count()) > 0 && (await v.isVisible()); } catch { return false; }
       };
       const deadline = Date.now() + ownerSignInTimeoutMs;
       let lastSeen = Date.now();
       const firstVisible = (a: MeetDriverLocator, b: MeetDriverLocator, left: number): Promise<void> => {
-        const p1 = Promise.resolve().then(() => a.waitFor({ state: "visible", timeout: left }));
-        const p2 = Promise.resolve().then(() => b.waitFor({ state: "visible", timeout: left }));
+        const p1 = Promise.resolve().then(() => visibleFirst(a).waitFor({ state: "visible", timeout: left }));
+        const p2 = Promise.resolve().then(() => visibleFirst(b).waitFor({ state: "visible", timeout: left }));
         return Promise.any([p1, p2]).then(() => undefined);
       };
-      const firstOf = (ls: MeetDriverLocator[], left: number): Promise<number> => Promise.any(ls.map((l, i) => Promise.resolve().then(() => l.waitFor({ state: "visible", timeout: left })).then(() => i))).catch(() => -1);
+      const firstOf = (ls: MeetDriverLocator[], left: number): Promise<number> => Promise.any(ls.map((l, i) => Promise.resolve().then(() => visibleFirst(l).waitFor({ state: "visible", timeout: left })).then(() => i))).catch(() => -1);
       const pause = (ms: number): Promise<boolean> => {
         if (signal.aborted) return Promise.resolve(false);
         return new Promise<boolean>((resolve) => {
@@ -147,9 +156,9 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         if (!ok) return false;
       }
       if (!isApprovedUrl()) return false;
-      try { await Promise.any([Promise.resolve().then(() => emailLoc.or(cont).waitFor({ state: "visible", timeout })), Promise.resolve().then(() => ownerBtn.waitFor({ state: "visible", timeout }))]); } catch {}
+      try { await Promise.any([Promise.resolve().then(() => visibleFirst(emailLoc.or(cont)).waitFor({ state: "visible", timeout })), Promise.resolve().then(() => ownerBtn.waitFor({ state: "visible", timeout }))]); } catch {}
       if (signal.aborted) return false;
-      if (!twin && (await cont.count()) === 1 && (await cont.isVisible())) {
+      if (!twin && (await shown(cont))) {
         if (signal.aborted) return false;
         if (!isApprovedUrl()) return fail("urlRecheck");
         step = "cont.click";
@@ -160,32 +169,32 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       let mb = false; try { mb = await ownerBtn.isVisible(); } catch { mb = false; }
       if (!mt && !mb) return fail("ownerCheck");
       if (signal.aborted) return false;
-      let joinBtn = page.getByRole("button", { name: "Join now", exact: true });
+      let joinBtn = visibleFirst(page.getByRole("button", { name: "Join now", exact: true }));
       let viaJoinHere = false;
-      const switchBtn = page.getByRole("button", { name: "Switch here", exact: true });
-      const otherWays = page.getByRole("button", { name: "Other ways to join", exact: true });
+      const switchBtn = visibleFirst(page.getByRole("button", { name: "Switch here", exact: true }));
+      const otherWays = visibleFirst(page.getByRole("button", { name: "Other ways to join", exact: true }));
       step = "joinOptions.wait";
       if (allowTransfer) {
-        await joinBtn.or(switchBtn).waitFor({ state: "visible", timeout });
+        await visibleFirst(joinBtn.or(switchBtn)).waitFor({ state: "visible", timeout });
       } else {
         // An already expanded join list (Join here too) or a collapsed one (Other ways to join) also counts as ready.
-        const joinHereMenu = page.getByRole("menuitem", { name: "Join here too", exact: true });
-        const joinHereButton = page.getByRole("button", { name: "Join here too", exact: true });
+        const joinHereMenu = visibleFirst(page.getByRole("menuitem", { name: "Join here too", exact: true }));
+        const joinHereButton = visibleFirst(page.getByRole("button", { name: "Join here too", exact: true }));
         if ((await firstOf([joinBtn, switchBtn, joinHereMenu, joinHereButton, otherWays], timeout)) < 0) return fail("joinOptions.wait");
       }
       if (signal.aborted) return false;
-      const cont2 = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
-      if (!twin && (await cont2.count()) === 1 && (await cont2.isVisible())) {
+      const cont2 = visibleFirst(page.getByRole("button", { name: "Continue without microphone and camera", exact: true }));
+      if (!twin && (await shown(cont2))) {
         if (signal.aborted) return false;
         if (!isApprovedUrl()) return fail("urlRecheck");
         step = "cont2.click";
         await cont2.click({ timeout: clickMs });
       }
-      if ((await joinBtn.count()) !== 1 || !(await joinBtn.isVisible())) {
+      if (!(await shown(joinBtn))) {
         if (allowTransfer === true && (await shown(switchBtn))) {
           joinBtn = switchBtn;
         } else {
-          const joinHere = page.getByRole("menuitem", { name: "Join here too", exact: true }).or(page.getByRole("button", { name: "Join here too", exact: true }));
+          const joinHere = visibleFirst(page.getByRole("menuitem", { name: "Join here too", exact: true }).or(page.getByRole("button", { name: "Join here too", exact: true })));
           // Meet can show a "Switch the call here" tip over the join list; dismiss only that tip's own "Got it" button.
           const switchTip = page.getByText("Switch the call here", { exact: false });
           const gotIt = page.getByRole("button", { name: "Got it", exact: true });
@@ -209,21 +218,25 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
           viaJoinHere = true;
         }
       }
-      const micOff = page.getByRole("button", { name: "Turn off microphone" });
-      const camOff = page.getByRole("button", { name: "Turn off camera" });
-      const micMuted = page.getByRole("button", { name: /^turn on microphone|microphone.*(blocked|problem|permission needed|not (found|allowed))/i });
+      const micOff = visibleFirst(page.getByRole("button", { name: "Turn off microphone" }));
+      const camOff = visibleFirst(page.getByRole("button", { name: "Turn off camera" }));
+      // Twin mode needs the camera ON (fake twin video); "Turn on camera" means it is off.
+      const camOn = visibleFirst(page.getByRole("button", { name: "Turn on camera" }));
+      const micMuted = visibleFirst(page.getByRole("button", { name: /^turn on microphone|microphone.*(blocked|problem|permission needed|not (found|allowed))/i }));
       // With the mic permission blocked, Meet shows the Allow microphone and camera card and its Turn off microphone control is not actionable.
-      const micPermission = page.getByText("Permission needed", { exact: false });
-      const micProblem = page.getByRole("button", { name: /microphone.*(blocked|problem|permission needed|not (found|allowed))/i });
-      const allowAv = page.getByRole("button", { name: "Allow microphone and camera", exact: true });
-      const avPrompt = page.getByText("Do you want people to see and hear you?", { exact: false });
+      const micPermission = visibleFirst(page.getByText("Permission needed", { exact: false }));
+      const micProblem = visibleFirst(page.getByRole("button", { name: /microphone.*(blocked|problem|permission needed|not (found|allowed))/i }));
+      // Never clicked: only read as a "mic blocked" signal.
+      const allowAv = visibleFirst(page.getByRole("button", { name: "Allow microphone and camera", exact: true }));
+      const avPrompt = visibleFirst(page.getByText("Do you want people to see and hear you?", { exact: false }));
       const micBlocked = async (): Promise<boolean> => (await shown(micPermission)) || (await shown(micProblem)) || (await shown(allowAv)) || (await shown(avPrompt));
-      const micNotLive = page.getByRole("button", { name: MEET_MIC_NOT_LIVE });
-      // On a failed mic-off confirmation, log the mic-related control labels (redacted) so the live label can be matched.
-      const logMicControls = async (): Promise<void> => {
+      const micNotLive = visibleFirst(page.getByRole("button", { name: MEET_MIC_NOT_LIVE }));
+      // On a failed mic-off or camera-on confirmation, log the related control labels (redacted) so the live label can be matched.
+      const logMicControls = (): Promise<void> => logControls(/mic/i, "mic");
+      const logControls = async (re: RegExp, what: string): Promise<void> => {
         const names: string[] = [];
         try {
-          const all = page.getByRole("button", { name: /mic/i });
+          const all = page.getByRole("button", { name: re });
           const n = Math.min(await all.count(), 8);
           for (let i = 0; i < n; i++) {
             if (all.nth === undefined) break;
@@ -235,7 +248,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         } catch {
           names.push("(unavailable)");
         }
-        console.warn("[meet-step] mic controls: " + (names.length === 0 ? "none" : names.join(" | ")));
+        console.warn("[meet-step] " + what + " controls: " + (names.length === 0 ? "none" : names.join(" | ")));
       };
       let micTreatedOff = false;
       const micStillOn = async (): Promise<boolean> => (await shown(micOff)) && !(micTreatedOff && (await micBlocked()));
@@ -261,9 +274,15 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         step = "camOff.click";
         await camOff.click({ timeout: clickMs });
       }
+      if (twin && !(await shown(camOff)) && (await shown(camOn))) {
+        if (signal.aborted || !isApprovedUrl()) return false;
+        step = "camOn.click";
+        await camOn.click({ timeout: clickMs });
+      }
       if (!(await pause(500))) return false;
       if ((await micStillOn()) || (!twin && (await shown(camOff)))) { await logMicControls(); return fail("micOff.confirm"); }
       if (twin && !(micTreatedOff && (await micBlocked())) && !(await shown(micMuted)) && !(await shown(micNotLive)) && !(!(await shown(micOff)) && (await shown(micPermission)))) { await logMicControls(); return fail("micOff.confirm"); }
+      if (twin && !(await shown(camOff))) { await logControls(/camera/i, "camera"); return fail("camOn.confirm"); }
       if (signal.aborted) return false;
       let ft = false; try { ft = await ownerText.isVisible(); } catch { ft = false; }
       let fb = false; try { fb = await ownerBtn.isVisible(); } catch { fb = false; }
@@ -305,7 +324,8 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
           if (!et && !eb) return fail("ownerCheck");
           if (!isApprovedUrl()) return fail("urlRecheck");
           if ((await micStillOn()) || (!twin && (await shown(camOff)))) { await logMicControls(); return fail("micOff.confirm"); }
-          const leaveNow = page.getByRole("button", { name: "Leave call", exact: true });
+          if (twin && !(await shown(camOff))) { await logControls(/camera/i, "camera"); return fail("camOn.confirm"); }
+          const leaveNow = visibleFirst(page.getByRole("button", { name: "Leave call", exact: true }));
           if (!(await shown(leaveNow))) {
             if (signal.aborted) return false;
             if (joinBtn.press === undefined) return fail("joinHere.enter");
@@ -317,7 +337,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         step = "joinHere.click";
         await joinBtn.click({ timeout: clickMs });
       }
-      const leaveBtn = page.getByRole("button", { name: "Leave call", exact: true });
+      const leaveBtn = visibleFirst(page.getByRole("button", { name: "Leave call", exact: true }));
       step = "leave.wait";
       await leaveBtn.waitFor({ state: "visible", timeout });
       if (signal.aborted) return false;

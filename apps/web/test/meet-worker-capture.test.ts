@@ -533,3 +533,48 @@ test("guest join: env is read, names without AI twin are refused, and captions a
   expect(enableCaptions).toHaveBeenCalledTimes(1);
   expect(b.close).toHaveBeenCalledTimes(1);
 });
+test("captions: two Captions and translation controls (strict multi-match) click the first visible one; two attached regions count as on", async () => {
+  const clicks: string[] = [];
+  let regions = 0;
+  const strictError = (): Error => new Error("strict mode violation");
+  const many = (key: string, n: () => number, vis: (i: number) => boolean, onClick: () => void): FL => {
+    const at = (i: number): FL => {
+      const one: FL = {
+        count: async () => (i < n() ? 1 : 0),
+        isVisible: async () => i < n() && vis(i),
+        click: async () => { clicks.push(key + "#" + String(i)); onClick(); },
+        waitFor: async () => { if (i >= n()) throw new Error("timeout"); },
+        getAttribute: async () => null,
+        or: () => one,
+        nth: () => one,
+      };
+      return one;
+    };
+    const all: FL = {
+      count: async () => n(),
+      isVisible: async () => { if (n() > 1) throw strictError(); return n() === 1 && vis(0); },
+      click: async () => { if (n() > 1) throw strictError(); clicks.push(key); onClick(); },
+      waitFor: async () => { if (n() > 1) throw strictError(); if (n() === 0) throw new Error("timeout"); },
+      getAttribute: async () => { if (n() > 1) throw strictError(); return null; },
+      or: () => all,
+      nth: (i: number) => at(i),
+    };
+    return all;
+  };
+  const none = many("none", () => 0, () => false, () => {});
+  const toggle = many("toggle", () => 2, (i) => i === 1, () => { regions = 2; });
+  const region = many("region", () => regions, () => false, () => {});
+  const page: MeetCaptionsPage = {
+    getByRole(role, options) {
+      if (role === "region") return region;
+      if (role === "button" && options.name === "Captions and translation") return toggle;
+      return none;
+    },
+    getByText() { return none; },
+    locator() { return none; },
+  };
+  const onFail = vi.fn(async () => {});
+  expect(await enableMeetCaptions(page, new AbortController().signal, () => true, onFail)).toBe(true);
+  expect(clicks).toEqual(["toggle#1"]);
+  expect(onFail).not.toHaveBeenCalled();
+});

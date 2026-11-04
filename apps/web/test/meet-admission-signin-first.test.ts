@@ -972,7 +972,7 @@ it("T35 Permission needed shown after a failed trial click counts the microphone
 });
 function micLabelFake(labels: string[], live: boolean): { page: MeetDriverPage; clicks: string[] } {
   const clicks: string[] = [];
-  const visible = new Set<string>(["text:owner@example.test", "button:Join now", ...labels]);
+  const visible = new Set<string>(["text:owner@example.test", "button:Join now", "button:Turn off camera", ...labels]);
   const nameOf = (k: string): string => k.slice(k.indexOf(":") + 1);
   const matching = (role: string, name: string | RegExp | undefined, exact: boolean): string[] => [...visible].filter((k) => {
     if (!k.startsWith(role + ":")) return false;
@@ -1241,4 +1241,150 @@ it("guest join: abort while waiting in the lobby cleans up the browser", async (
     await vi.advanceTimersByTimeAsync(0);
     expect(closeCalls).toBe(1);
   } finally { vi.useRealTimers(); }
+});
+// Strict fake: like Playwright, isVisible, waitFor and click reject when the locator matches more than one element.
+// Keys ending in ~N are duplicate controls with the same accessible name.
+function strictFake(labels: string[], o: { micFlips: boolean; camFlips: boolean }): { page: MeetDriverPage; clicks: string[] } {
+  const clicks: string[] = [];
+  const visible = new Set<string>(["text:owner@example.test", "text:owner@example.test~2", "button:Join now", "button:Join now~2", ...labels]);
+  const roleOf = (k: string): string => k.slice(0, k.indexOf(":"));
+  const nameOf = (k: string): string => k.slice(k.indexOf(":") + 1).replace(/~[0-9]+$/, "");
+  const matching = (role: string, name: string | RegExp | undefined, exact: boolean): string[] => [...visible].filter((k) => {
+    if (roleOf(k) !== role || name === undefined) return false;
+    const n = nameOf(k);
+    if (typeof name !== "string") return name.test(n);
+    return exact ? n === name : n.toLowerCase().includes(name.toLowerCase());
+  });
+  const swap = (from: string, to: string): void => {
+    for (const k of [...visible]) if (roleOf(k) === "button" && nameOf(k) === from) visible.delete(k);
+    visible.add("button:" + to);
+  };
+  const strictError = (ks: string[]): Error | null => (ks.length > 1 ? new Error("strict mode violation: " + String(ks.length) + " elements") : null);
+  const keysOf = new Map<MeetDriverLocator, () => string[]>();
+  const mk = (keys: () => string[]): MeetDriverLocator => {
+    const loc: MeetDriverLocator = {
+      waitFor() {
+        const ks = keys(); const e = strictError(ks);
+        if (e !== null) return Promise.reject(e);
+        return ks.length === 1 ? Promise.resolve() : Promise.reject(new Error("hidden"));
+      },
+      count() { return Promise.resolve(keys().length); },
+      isVisible() {
+        const ks = keys(); const e = strictError(ks);
+        return e !== null ? Promise.reject(e) : Promise.resolve(ks.length === 1);
+      },
+      click(c?: { timeout?: number; trial?: boolean }) {
+        const ks = keys(); const e = strictError(ks);
+        if (e !== null) return Promise.reject(e);
+        const k = ks[0];
+        if (k === undefined) return Promise.reject(new Error("hidden"));
+        if (c?.trial === true) return Promise.resolve();
+        const n = roleOf(k) + ":" + nameOf(k);
+        clicks.push(n);
+        if (n === "button:Turn off microphone" && o.micFlips) swap("Turn off microphone", "Turn on microphone");
+        else if (n === "button:Turn off camera") swap("Turn off camera", "Turn on camera");
+        else if (n === "button:Turn on camera" && o.camFlips) swap("Turn on camera", "Turn off camera");
+        else if (n === "button:Join now") { visible.add("button:Leave call"); visible.add("button:Leave call~2"); }
+        return Promise.resolve();
+      },
+      or(other: MeetDriverLocator) {
+        const otherKeys = keysOf.get(other);
+        return mk(() => [...new Set([...keys(), ...(otherKeys === undefined ? [] : otherKeys())])]);
+      },
+      nth(i: number) { return mk(() => keys().slice(i, i + 1)); },
+      filter() { return mk(keys); },
+      getAttribute(name: string) { const k = keys()[0]; return Promise.resolve(k === undefined || name !== "aria-label" ? null : nameOf(k)); },
+    };
+    keysOf.set(loc, keys);
+    return loc;
+  };
+  const page: MeetDriverPage = {
+    goto() { return Promise.resolve(); },
+    url() { return A; },
+    getByRole(role: "button" | "link" | "menuitem", options?: { name?: string | RegExp; exact?: boolean }) { return mk(() => matching(role, options?.name, options?.exact === true)); },
+    getByText(text: string | RegExp, options?: { exact?: boolean }) { return mk(() => matching("text", text, options?.exact === true)); },
+  };
+  return { page, clicks };
+}
+it("T41 twin mode with two matching not-live mic controls (live 3:41 PM labels) confirms mic off and joins", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Microphone problem. Show more info", "button:Microphone: Permission needed", "text:Permission needed", "text:Permission needed~2", "button:Turn off camera", "button:Turn off camera~2"], { micFlips: false, camFlips: false });
+    await expect(f.page.getByRole("button", { name: MEET_MIC_NOT_LIVE }).isVisible()).rejects.toThrow(/strict mode/);
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Join now"]);
+    expect(warn).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T42 two matching owner, Join now, Turn off microphone, Turn off camera and Leave call controls still join in the default mode", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn off microphone", "button:Turn off microphone~2", "button:Turn off camera", "button:Turn off camera~2"], { micFlips: true, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Turn off microphone", "button:Turn off camera", "button:Join now"]);
+    expect(warn).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T43 twin mode turns the camera on when it is off (two Turn on camera controls), never clicks Allow, and joins", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = strictFake(["button:Turn on microphone", "button:Turn on microphone~2", "button:Turn on camera", "button:Turn on camera~2", "button:Allow microphone and camera"], { micFlips: false, camFlips: true });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Turn on camera", "button:Join now"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T44 twin mode whose camera never turns on refuses at camOn.confirm without clicking Allow, Switch here, Gemini or Translate", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn on microphone", "button:Turn on camera", "button:Turn on camera~2", "button:Allow microphone and camera", "button:Switch here"], { micFlips: false, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual(["button:Turn on camera"]);
+    const logged = warn.mock.calls.map((c) => c.map(String).join(" "));
+    expect(logged[logged.length - 1]).toBe("[meet-step] failed: camOn.confirm");
+    expect(logged.some((l) => l.startsWith("[meet-step] camera controls: "))).toBe(true);
+    expect(f.clicks.filter((k) => /allow|switch here|gemini|translate/i.test(k))).toEqual([]);
+  } finally {
+    warn.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T45 twin mode with two live Turn off microphone controls that never flip still refuses at micOff.confirm", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn off microphone", "button:Turn off microphone~2", "button:Turn off camera"], { micFlips: false, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual(["button:Turn off microphone"]);
+    const logged = warn.mock.calls.map((c) => c.map(String).join(" "));
+    expect(logged[logged.length - 1]).toBe("[meet-step] failed: micOff.confirm");
+  } finally {
+    warn.mockRestore();
+    vi.useRealTimers();
+  }
 });

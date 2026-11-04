@@ -3,6 +3,9 @@ import { chromium, type Page } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { readMeetCaptionRows } from "../src/meetCaptionReader.js";
 import { createMeetCaptionBuffer } from "../src/meetCaptionBuffer.js";
+import { createMeetingRoomService } from "../src/meetingRoom.js";
+import { createMeetWorkerBridge } from "../src/meetWorkerBridge.js";
+import { createLocalMeetCaptureFactory } from "../src/meetWorkerCapture.js";
 const CANONICAL = "https://meet.google.com/abc-defg-hij";
 const CODE_MEET = "https://meet.google.com/def-ghij-klm";
 function html() {
@@ -159,6 +162,46 @@ test("caption region with zero rows logs one redacted role/name snapshot; query 
     expect(await readMeetCaptionRows(page, { meetingUrl: CANONICAL }, signal, () => true)).toEqual([{ rowIndex: 0, speaker: "Dana", text: "structural caption", verified: false }]);
   } finally {
     spy.mockRestore();
+    await browser.close();
+  }
+}, 30000);
+test("capture starts right after join: the first caption row on screen is ingested by the first sample (two Leave call buttons)", async () => {
+  let executablePath: string | undefined;
+  if (process.env.PLAYWRIGHT_CHROME_PATH) executablePath = process.env.PLAYWRIGHT_CHROME_PATH;
+  else if (existsSync("/usr/bin/google-chrome")) executablePath = "/usr/bin/google-chrome";
+  const browser = await chromium.launch(executablePath ? { executablePath } : {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const page = await browser.newPage();
+    const body = '<!doctype html><meta charset="utf-8"><button aria-label="Leave call">Leave</button><button aria-label="Leave call">Leave</button><div role="region" aria-label="Captions"><div class="nMcdL"><div class="adE6rb"><div class="KcIKyf">Bridgett</div></div><div class="ygicle">first words</div></div></div>';
+    await page.route("**/*", (route) => route.fulfill({ status: 200, contentType: "text/html", body }));
+    const headers: Record<string, string> = { host: "127.0.0.1:4174" };
+    const svc = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "1" }, conversationInput: true, candidateAutoDispatch: false, sessionPolicy: true, now: () => 1000 });
+    const key = "owner-browser";
+    const room = svc.open("", headers, key).roomId;
+    let joinedAt = 0;
+    let readyAt = 0;
+    let markReady: () => void = () => {};
+    const ready = new Promise<void>((r) => { markReady = r; });
+    const factory = createLocalMeetCaptureFactory({
+      expectedOwnerEmail: "owner@example.test",
+      launch: async () => ({ newContext: async () => ({ newPage: async () => page }), close: async () => {} }),
+      admit: async (p) => { await p.goto(CANONICAL); joinedAt = Date.now(); return true; },
+    });
+    const bridge = createMeetWorkerBridge({ service: svc, now: () => 1000, startCapture: (scope, signal) => factory(scope, signal).then((cap) => { readyAt = Date.now(); markReady(); return cap; }, (e: unknown) => { markReady(); throw e; }) });
+    expect(bridge.connect(key, room, CANONICAL, "Second Seat AI twin (test)").status).toBe(202);
+    await ready;
+    for (let i = 0; i < 20 && bridge.status(key, room).body.status !== "listening"; i++) await Promise.resolve();
+    expect(bridge.status(key, room).body.status).toBe("listening");
+    expect(joinedAt).toBeGreaterThan(0);
+    expect(readyAt - joinedAt).toBeLessThan(3000);
+    const first = await bridge.sample(key, room);
+    expect(first.status).toBe(200);
+    expect(first.body.accepted).toBe(1);
+    expect(warn.mock.calls.map((c) => c.map(String).join(" ")).filter((l) => l.includes("failed"))).toEqual([]);
+    expect((await bridge.stop(key, room)).body.status).toBe("stopped");
+  } finally {
+    warn.mockRestore();
     await browser.close();
   }
 }, 30000);

@@ -73,9 +73,12 @@ const leaveBtn=page.getByRole("button",{name:"Leave call",exact:true});
 if(!guard())return fail();
 const leaveCount=await leaveBtn.count();
 if(!guard())return fail();
-if(leaveCount!==1)return fail();
+if(leaveCount<1)return fail();
 if(!guard())return fail();
-const leaveVisible=await leaveBtn.isVisible();
+// Meet can render more than one Leave call button; a strict isVisible would throw, so check each match by index.
+let leaveVisible=false;
+if(leaveCount===1)leaveVisible=await leaveBtn.isVisible();
+else for(let i=0;i<Math.min(leaveCount,8)&&!leaveVisible;i++){leaveVisible=await leaveBtn.nth(i).isVisible();if(!guard())return fail();}
 if(!guard())return fail();
 if(!leaveVisible)return fail();
 if(!guard())return fail();
