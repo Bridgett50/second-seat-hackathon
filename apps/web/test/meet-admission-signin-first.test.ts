@@ -791,7 +791,6 @@ it("T27 pre-join clicks use a 5 s timeout and Allow microphone and camera is nev
   try {
     const f = makeTimedFake();
     f.show("text:owner@example.test");
-    f.show("button:Switch here");
     f.show("menuitem:Join here too");
     f.show("text:Switch the call here");
     f.show("button:Got it");
@@ -813,7 +812,6 @@ it("T28 a failing pre-join click logs its step tag and no email", async () => {
   try {
     const f = makeTimedFake();
     f.show("text:owner@example.test");
-    f.show("button:Switch here");
     f.show("menuitem:Join here too");
     f.show("text:Switch the call here");
     f.show("button:Got it");
@@ -828,6 +826,25 @@ it("T28 a failing pre-join click logs its step tag and no email", async () => {
     expect(f.clicks).toEqual([]);
   } finally {
     warn.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T29 only Join here too visible (no Join now or Switch here) joins without waiting out the timeout", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("menuitem:Join here too");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(settled).toBe(true);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["menuitem:Join here too"]);
+    expect(f.clicks).not.toContain("button:Switch here");
+    expect(f.clicks).not.toContain("button:Allow microphone and camera");
+  } finally {
     vi.useRealTimers();
   }
 });

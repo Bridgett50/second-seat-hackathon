@@ -158,7 +158,10 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if (allowTransfer) {
         await joinBtn.or(switchBtn).waitFor({ state: "visible", timeout });
       } else {
-        await firstVisible(joinBtn, switchBtn, timeout);
+        // An already expanded join list (Join here too) or a collapsed one (Other ways to join) also counts as ready.
+        const joinHereMenu = page.getByRole("menuitem", { name: "Join here too", exact: true });
+        const joinHereButton = page.getByRole("button", { name: "Join here too", exact: true });
+        if ((await firstOf([joinBtn, switchBtn, joinHereMenu, joinHereButton, otherWays], timeout)) < 0) return fail("joinOptions.wait");
       }
       if (signal.aborted) return false;
       const cont2 = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
