@@ -81,12 +81,13 @@ it("synthetic admission with redirect regression", async () => {
 
 it("regression: email wait that navigates to different meeting must not join", async () => {
   let url = "";
+  let gotoCount = 0;
   let joinClicks = 0;
   const fakePage = {
-    goto: async () => { url = A; },
-    url: () => url,
+    goto: async (u: string) => { gotoCount += 1; url = u; },
+    url: () => gotoCount === 1 ? "https://meet.google.com/" : url,
     getByText: () => ({
-      waitFor: async () => { url = B; },
+      waitFor: async () => { if (gotoCount >= 2) url = B; },
       isVisible: async () => true,
     }),
     getByRole: (_role: string, opts: { name: string; exact: boolean }) => {
@@ -103,9 +104,11 @@ it("regression: email wait that navigates to different meeting must not join", a
 });
 it('regression: explicit owner transfer permission required to click Switch here', async () => {
   let clicks = 0;
-  const makePage = () => ({
-    goto: async () => {},
-    url: () => A,
+  const makePage = () => {
+    let gotoCount = 0;
+    return ({
+      goto: async () => { gotoCount += 1; },
+      url: () => gotoCount <= 1 ? "https://meet.google.com/" : A,
     getByText: () => ({ waitFor: async () => {}, isVisible: () => true }),
     getByRole: (_r: unknown, o?: { name?: string }) => {
       if (o?.name === 'Switch here') return { count: () => 1, isVisible: () => true, click: async () => { clicks++; } } as unknown as ReturnType<Page['getByRole']>;
@@ -115,6 +118,7 @@ it('regression: explicit owner transfer permission required to click Switch here
       return { count: () => 0 } as unknown as ReturnType<Page['getByRole']>;
     },
   }) as unknown as Page;
+  };
   const scope = { meetingUrl: A, displayName: 'Owner' };
   const signal = new AbortController().signal;
   const def = createAuthenticatedMeetDriver({ expectedOwnerEmail: 'owner@example.test' });
@@ -131,9 +135,10 @@ it('blocks on Join ready before counting or clicking', async () => {
   const sawWaitPromise = new Promise<void>((r) => (sawWait = r));
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
+  let gotoCount = 0;
   const page = {
-    goto: async () => {},
-    url: () => A,
+    goto: async () => { gotoCount += 1; },
+    url: () => gotoCount <= 1 ? "https://meet.google.com/" : A,
     getByText: (text: string, _opts?: { exact?: boolean }) => ({
       waitFor: async () => {},
       isVisible: async () => true,
@@ -174,9 +179,10 @@ it('allows only google meet pli=1 without authuser/hash/cross-meeting', async ()
   ];
   for (const [currentCase, expected] of cases) {
     let clicks = 0;
+    let gotoCount = 0;
     const fake = {
-      goto: async () => {},
-      url: () => currentCase,
+      goto: async () => { gotoCount += 1; },
+      url: () => gotoCount <= 1 ? "https://meet.google.com/" : currentCase,
       getByText: (_t: string) => ({ waitFor: async () => {}, isVisible: async () => true }),
       getByRole: (role: string, opts?: { name?: string; exact?: boolean }) => {
         const name = opts?.name ?? '';

@@ -59,12 +59,52 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
     try {
       await page.goto("https://meet.google.com/", { waitUntil: "domcontentloaded", timeout });
       const emailLoc = page.getByText(expectedEmail, { exact: true });
-      const signedIn = await waitOrAbort(emailLoc.waitFor({ state: "visible", timeout: ownerSignInTimeoutMs }));
-      if (!signedIn) return false;
-      if (signal.aborted) return false;
-      if (!(await emailLoc.isVisible())) return false;
-      const homeUrl = new URL(page.url());
-      if (homeUrl.origin !== "https://meet.google.com" || homeUrl.username || homeUrl.password || homeUrl.port) return false;
+      const ownerText = emailLoc;
+      const ownerBtn = page.getByRole("button", { name: expectedEmail });
+      const onMeetHome = (): boolean => {
+        const u = new URL(page.url());
+        return u.origin === "https://meet.google.com" && !u.username && !u.password && !u.port && (u.pathname === "/" || u.pathname === "/landing");
+      };
+      const deadline = Date.now() + ownerSignInTimeoutMs;
+      const firstVisible = (a: MeetDriverLocator, b: MeetDriverLocator, left: number): Promise<void> => {
+        const p1 = Promise.resolve().then(() => a.waitFor({ state: "visible", timeout: left }));
+        const p2 = Promise.resolve().then(() => b.waitFor({ state: "visible", timeout: left }));
+        return Promise.any([p1, p2]).then(() => undefined);
+      };
+      const pause = (ms: number): Promise<boolean> => {
+        if (signal.aborted) return Promise.resolve(false);
+        return new Promise<boolean>((resolve) => {
+          const t = setTimeout(() => {
+            signal.removeEventListener("abort", onAbort);
+            resolve(true);
+          }, ms);
+          const onAbort = (): void => {
+            clearTimeout(t);
+            signal.removeEventListener("abort", onAbort);
+            resolve(false);
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
+      };
+      while (true) {
+        if (signal.aborted) return false;
+        const left = deadline - Date.now();
+        if (left <= 0) return false;
+        const seen = await waitOrAbort(firstVisible(ownerText, ownerBtn, left));
+        if (!seen) return false;
+        if (signal.aborted) return false;
+        let vt = false;
+        try { vt = await ownerText.isVisible(); } catch { vt = false; }
+        let vb = false;
+        try { vb = await ownerBtn.isVisible(); } catch { vb = false; }
+        if (onMeetHome() && (vt || vb)) break;
+        const remain = deadline - Date.now();
+        if (remain <= 0) return false;
+        if (signal.aborted) return false;
+        const ms = Math.min(250, Math.max(1, remain));
+        const ok = await pause(ms);
+        if (!ok) return false;
+      }
       await page.goto(approvedUrl, { waitUntil: "domcontentloaded", timeout });
       if (!isApprovedUrl()) return false;
       const cont = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
