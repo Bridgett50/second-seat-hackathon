@@ -394,7 +394,9 @@ export function createWebServer(deps?: WebServerDeps) {
         "cache-control": "no-store",
       };
       if (storeKey === null) {
-        headers["set-cookie"] = meetingRoomSetCookie(key, req.headers);
+        headers["set-cookie"] = meetingRoomSetCookie(key, req.headers).replace("SameSite=Strict", deps?.googleHttp ? "SameSite=Lax" : "SameSite=Strict");
+      } else if (deps?.googleHttp) {
+        headers["set-cookie"] = meetingRoomSetCookie(key, req.headers).replace("SameSite=Strict", "SameSite=Lax");
       }
       res.writeHead(200, headers);
       res.end(html);
