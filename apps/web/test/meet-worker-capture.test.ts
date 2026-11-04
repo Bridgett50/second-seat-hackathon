@@ -177,7 +177,7 @@ test("9 readiness modal forces decline before identity", async()=>{
     const owner=mk("owner"),hw=mk("hw"),join=mk("join"),leave=mk("leave"),dum=mk("dum");
     const fake={goto,url:()=>home?"https://meet.google.com/":URL_S,getByText:vi.fn((t:string)=>t===exp?owner:dum),getByRole:vi.fn((r:string,o:{name?:string|RegExp})=>o?.name==="Continue without microphone and camera"?hw:o?.name==="Join now"?join:o?.name==="Leave call"?leave:(o?.name instanceof RegExp&&o.name.test(exp))?failOwnerBtn():dum)} as unknown as Page;
     const b=mkBrowser(fake as unknown as Page);const enableCaptions=vi.fn(async()=>true);
-    const factory=createLocalMeetCaptureFactory({expectedOwnerEmail:exp,launch:async()=>b.browser,enableCaptions});
+    const factory=createLocalMeetCaptureFactory({expectedOwnerEmail:exp,launch:async()=>b.browser,enableCaptions,ownerUnrecognizedGraceMs:100});
     const ac=new AbortController();const p=factory(scope(()=>true),ac.signal);p.catch(()=>{});
     await entered.promise;if(mode==="abort") ac.abort();modal=true;reveal.resolve(undefined);
     let h:Awaited<ReturnType<typeof factory>>|null=null,err:unknown=null;try{h=await p;}catch(e){err=e;}

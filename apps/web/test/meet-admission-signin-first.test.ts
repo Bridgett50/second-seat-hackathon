@@ -1,4 +1,4 @@
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { createAuthenticatedMeetDriver, type MeetDriverPage, type MeetDriverLocator } from "../src/meetAdmissionDriver.js";
 import { createMeetAdmissionBrowser } from "../src/meetAdmissionBrowser.js";
 const A = "https://meet.google.com/abc-defg-hij";
@@ -306,7 +306,7 @@ it("T6 meeting aria-label for a different email refuses", async () => {
       return l;
     }
   };
-  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 5000 });
+  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 5000, unrecognizedGraceMs: 100 });
   const r = await driver(page, { meetingUrl: Aurl, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(false);
   expect(gotos).toEqual([Aurl]);
@@ -439,6 +439,115 @@ it("T10 Continue modal shown first is dismissed without waiting out the owner po
   expect(gotos).toEqual([A]);
   expect(clicks).toEqual(["Continue without microphone and camera", "Join now"]);
 }, 3000);
+function makeTimedFake(): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void } {
+  const gotos: string[] = [];
+  const clicks: string[] = [];
+  const visible = new Set<string>();
+  const waiters: Array<() => void> = [];
+  const mk = (k: string): MeetDriverLocator => {
+    const loc: MeetDriverLocator = {
+      waitFor(o?: { timeout?: number }) {
+        if (visible.has(k)) return Promise.resolve();
+        return new Promise<void>((res, rej) => {
+          const t = setTimeout(() => rej(new Error("timeout")), o?.timeout ?? 1000);
+          waiters.push(() => { if (visible.has(k)) { clearTimeout(t); res(); } });
+        });
+      },
+      count() { return Promise.resolve(visible.has(k) ? 1 : 0); },
+      isVisible() { return Promise.resolve(visible.has(k)); },
+      click() { clicks.push(k); return Promise.resolve(); },
+      or(o: MeetDriverLocator) { return loc; },
+    };
+    return loc;
+  };
+  const page: MeetDriverPage = {
+    goto(url: string) { gotos.push(url); return Promise.resolve(); },
+    url() { return gotos[gotos.length - 1] ?? ""; },
+    getByRole(role: "button" | "link", options?: { name?: string | RegExp }) {
+      const raw = options?.name ?? "";
+      const n = typeof raw === "string" ? raw : raw.test("Sign in") ? "Sign in" : raw.test("owner@example.test") ? "owner" : "?";
+      return mk(role + ":" + n);
+    },
+    getByText(text: string) { return mk("text:" + text); },
+  };
+  return { page, clicks, gotos, show: (k: string) => { visible.add(k); for (const w of waiters.splice(0)) w(); } };
+}
+it("T11 Getting ready spinner then Ask to join keeps waiting signed out past the grace period", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    const ac = new AbortController();
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, ac.signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(settled).toBe(false);
+    f.show("button:Ask to join");
+    await vi.advanceTimersByTimeAsync(40000);
+    expect(settled).toBe(false);
+    expect(f.clicks).toEqual([]);
+    ac.abort();
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+    expect(f.gotos).toEqual([A]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T12 Sign in rendered as a link counts as signed out and keeps waiting", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("link:Sign in");
+    const ac = new AbortController();
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, ac.signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(40000);
+    expect(settled).toBe(false);
+    ac.abort();
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+    expect(f.gotos).toEqual([A]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T13 unknown page is refused only after the grace period", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(19000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(settled).toBe(true);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T14 abort during the grace period closes cleanly", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    const ac = new AbortController();
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, unrecognizedGraceMs: 30000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, ac.signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(settled).toBe(false);
+    ac.abort();
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+    expect(f.gotos).toEqual([A]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it("T4 owner text on meeting page joins", async () => {
   const exp = "owner@example.test";
   const Aurl = A;

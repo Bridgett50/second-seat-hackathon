@@ -8,14 +8,14 @@ export type MeetDriverLocator = {
 export type MeetDriverPage = {
   goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
   url(): string;
-  getByRole(role: "button", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
+  getByRole(role: "button" | "link", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
   getByText(text: string, options?: { exact?: boolean }): MeetDriverLocator;
 };
 export function ownerAccountNamePattern(email: string): RegExp {
   const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[\\s(<:,])${escaped}($|[\\s)>,])`, "i");
 }
-export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number }) {
+export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number; unrecognizedGraceMs?: number | undefined }) {
   const expectedEmail = opts.expectedOwnerEmail;
   if (typeof expectedEmail !== "string" || expectedEmail.trim() === "" || expectedEmail.length > 320 || /[\x00-\x1F\x7F]/.test(expectedEmail)) {
     throw new Error("invalid expectedOwnerEmail");
@@ -28,6 +28,8 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
   let ownerSignInTimeoutMs = opts.ownerSignInTimeoutMs ?? timeout;
   if (!Number.isFinite(ownerSignInTimeoutMs) || !Number.isInteger(ownerSignInTimeoutMs) || ownerSignInTimeoutMs <= 0) throw new Error("invalid ownerSignInTimeoutMs");
   ownerSignInTimeoutMs = Math.min(300000, ownerSignInTimeoutMs);
+  const graceMs = opts.unrecognizedGraceMs ?? 20000;
+  if (!Number.isInteger(graceMs) || graceMs <= 0 || graceMs > 300000) throw new Error("invalid unrecognizedGraceMs");
   const scopeRe = /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
   return async (page: MeetDriverPage, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal): Promise<boolean> => {
     const approvedUrl = scope.meetingUrl;
@@ -67,11 +69,13 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       const ownerBtn = page.getByRole("button", { name: ownerAccountNamePattern(expectedEmail) });
       const cont = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
       const signInBtn = page.getByRole("button", { name: /^\s*sign in\b/i });
+      const signInLink = page.getByRole("link", { name: /^\s*sign in\b/i });
       const askBtn = page.getByRole("button", { name: "Ask to join", exact: true });
       const shown = async (l: MeetDriverLocator): Promise<boolean> => {
         try { return (await l.count()) > 0 && (await l.isVisible()); } catch { return false; }
       };
       const deadline = Date.now() + ownerSignInTimeoutMs;
+      let lastSeen = Date.now();
       const firstVisible = (a: MeetDriverLocator, b: MeetDriverLocator, left: number): Promise<void> => {
         const p1 = Promise.resolve().then(() => a.waitFor({ state: "visible", timeout: left }));
         const p2 = Promise.resolve().then(() => b.waitFor({ state: "visible", timeout: left }));
@@ -98,7 +102,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         const left = deadline - Date.now();
         if (left <= 0) return false;
         let won = -1;
-        await waitOrAbort(firstOf([ownerText, ownerBtn, cont, signInBtn, askBtn], Math.min(left, 2000)).then((i) => { won = i; }));
+        await waitOrAbort(firstOf([ownerText, ownerBtn, cont, signInBtn, askBtn, signInLink], Math.min(left, 2000)).then((i) => { won = i; }));
         if (signal.aborted) return false;
         if (won === 0 || won === 1) {
           let vt = false;
@@ -112,7 +116,8 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
             await cont.click();
             continue;
           }
-          if (!(await shown(signInBtn)) && !(await shown(askBtn))) return false;
+          if ((await shown(signInBtn)) || (await shown(signInLink)) || (await shown(askBtn))) lastSeen = Date.now();
+          else if (Date.now() - lastSeen >= graceMs) return false;
         }
         const remain = deadline - Date.now();
         if (remain <= 0) return false;
