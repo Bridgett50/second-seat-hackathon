@@ -490,3 +490,13 @@ Muse Code 1.4.14 via existing supplied Baseten meta-models/muse-spark-open-1026 
 
 ### Nov 3, 2026 — Google HTTP provenance
 Muse authored googleHttp.ts and google-http.test.ts; Codex roles same. Unwired HTTP contract around real existing state/URL/exchange/connection controller; browser/purpose binding, CSRF/method/body guards, no-secret status, replay/wrong-browser rejection, held disconnect callback discarded. Five new HTTP-contract tests with fake fetch only; total 38 focused tests across 8 files and TypeScript pass. No actual OAuth grant/token API, Gmail/Calendar/Docs connection, send, live AI, production route or deploy proven. Mis-typed/invented-API proposals rejected/corrected by Muse before acceptance. No frozen/sealed/Grok or paid application runs; coding billing/balance unverified.
+
+### Nov 3, 2026 build provenance
+
+Muse Code 1.4.14 using the supplied Baseten `meta-models/muse-spark-open-1026` authored `meetAdmissionDriver.ts` and `meet-admission-driver.test.ts` in bounded one-step small/medium/low sessions. Codex supplied requirements, review, mechanical application, tests, and Git; commit author was Muse, committer Codex — Muse did not execute Git.
+
+Verification was 26 focused tests across four files plus TypeScript passing on Windows, using real Chrome against synthetic pages for normal, wrong-account, different-target, and pre-abort cases, plus narrow fake-Page regression tests. Two regressions failed as `AssertionError` before source fixes: changing the meeting URL during the awaited identity lookup, and explicit transfer requiring opt-in. Default `Switch here` was refused here: transfer disabled by default.
+
+Rejected test proposals with incorrect API call shapes that passed spuriously were corrected before the accepted failing-first proof; no claim all first drafts worked.
+
+A separate operator-triggered UI transfer on real Google Meet with manual owner login was observed admitted as Bridgett Sanders, mic/camera off, with local supervisor stop acknowledged `browserConnected=false`. That transfer did not execute this automated driver, so automated admission, caption-to-twin, disclosure, and email remain unproven. No Google auth storage/profile copying, no paid-application inference, no Grok/frozen/sealed changes. Coding token usage logged; dollar billing/balance unverified. Unwired/local-only, not deployed.
