@@ -239,7 +239,7 @@ export function createGuestMeetDriver(opts: { guestName?: string; timeoutMs?: nu
     const code = target.pathname.slice(1);
     if (target.href !== scope.meetingUrl || target.origin !== "https://meet.google.com" || target.username !== "" || target.password !== "" || target.search !== "" || target.hash !== "" || !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(code)) return false;
     const onMeet = (): boolean => {
-      try { const u = new URL(page.url()); return u.origin === "https://meet.google.com" && u.username === "" && u.password === "" && u.pathname === "/" + code; } catch { return false; }
+      try { const u = new URL(page.url()); return u.origin === "https://meet.google.com" && u.username === "" && u.password === "" && (u.pathname === "/" + code || u.pathname === "/meet/" + code); } catch { return false; }
     };
     const shown = async (l: MeetGuestLocator): Promise<boolean> => {
       try { return await l.isVisible(); } catch { return false; }

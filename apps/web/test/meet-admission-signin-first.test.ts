@@ -838,6 +838,15 @@ it("guest join: opens the meeting directly, types the name, mutes, and clicks on
   expect(f.clicks).toEqual(["Turn off microphone", "Ask to join"]);
   expect(forbidden(f.names)).toEqual([]);
 });
+it("guest join: a /meet/ path for the same code is accepted and another code is refused", async () => {
+  const f = guestFake("admit");
+  const page: MeetGuestPage = { ...f.page, url: () => "https://meet.google.com/meet/abc-defg-hij" };
+  expect(await createGuestMeetDriver({})(page, { meetingUrl: A, displayName: "x" }, new AbortController().signal)).toBe(true);
+  const g = guestFake("admit");
+  const other: MeetGuestPage = { ...g.page, url: () => "https://meet.google.com/meet/xyz-defg-hij" };
+  expect(await createGuestMeetDriver({})(other, { meetingUrl: A, displayName: "x" }, new AbortController().signal)).toBe(false);
+  expect(g.clicks).toEqual([]);
+});
 it("guest join: a can't-join page is refused without asking to join", async () => {
   const f = guestFake("admit", true);
   expect(await createGuestMeetDriver({})(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal)).toBe(false);

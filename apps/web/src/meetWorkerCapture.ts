@@ -50,7 +50,9 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
       if (!await toggle.isVisible()) return false; if (!guard()) return false;
       await toggle.click(); if (!guard()) return false;
       const turnOn = page.getByText("Turn on captions", { exact: true });
-      await turnOn.waitFor({ state: "visible", timeout: 10000 }); if (!guard()) return false;
+      // Some Meet versions turn captions on straight from this button: then the Captions region shows instead of "Turn on captions".
+      const shown = await Promise.any([region.waitFor({ state: "visible", timeout: 10000 }).then(() => "region"), turnOn.waitFor({ state: "visible", timeout: 10000 }).then(() => "turnOn")]); if (!guard()) return false;
+      if (shown === "region") { count = await region.count(); if (!guard()) return false; if (count !== 1) return false; const v1 = await region.isVisible(); if (!guard()) return false; return v1; }
       count = await turnOn.count(); if (!guard()) return false; if (count !== 1) return false;
       if (!await turnOn.isVisible()) return false; if (!guard()) return false;
       await turnOn.click(); if (!guard()) return false;
