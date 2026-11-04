@@ -77,6 +77,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         const p2 = Promise.resolve().then(() => b.waitFor({ state: "visible", timeout: left }));
         return Promise.any([p1, p2]).then(() => undefined);
       };
+      const firstOf = (ls: MeetDriverLocator[], left: number): Promise<number> => Promise.any(ls.map((l, i) => Promise.resolve().then(() => l.waitFor({ state: "visible", timeout: left })).then(() => i))).catch(() => -1);
       const pause = (ms: number): Promise<boolean> => {
         if (signal.aborted) return Promise.resolve(false);
         return new Promise<boolean>((resolve) => {
@@ -96,9 +97,10 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         if (signal.aborted) return false;
         const left = deadline - Date.now();
         if (left <= 0) return false;
-        const seen = await waitOrAbort(firstVisible(ownerText, ownerBtn, Math.min(left, 10000)));
+        let won = -1;
+        await waitOrAbort(firstOf([ownerText, ownerBtn, cont, signInBtn, askBtn], Math.min(left, 2000)).then((i) => { won = i; }));
         if (signal.aborted) return false;
-        if (seen) {
+        if (won === 0 || won === 1) {
           let vt = false;
           try { vt = await ownerText.isVisible(); } catch { vt = false; }
           let vb = false;

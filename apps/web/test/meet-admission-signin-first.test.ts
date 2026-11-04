@@ -389,6 +389,56 @@ it("T9 abort while waiting on the signed-out page closes cleanly", async () => {
   expect(fake.gotos).toEqual([A]);
   expect(fake.clicks).toEqual([]);
 });
+it("T10 Continue modal shown first is dismissed without waiting out the owner poll", async () => {
+  const exp = "owner@example.test";
+  const clicks: string[] = [];
+  const gotos: string[] = [];
+  const releases: Array<() => void> = [];
+  let declined = false;
+  let leaveVisible = false;
+  const mk = (name: string, visible: () => boolean, onClick?: () => void): MeetDriverLocator => {
+    const l: MeetDriverLocator = {
+      waitFor() { return visible() ? Promise.resolve() : Promise.reject(new Error("hidden")); },
+      count() { return Promise.resolve(visible() ? 1 : 0); },
+      isVisible() { return Promise.resolve(visible()); },
+      click() { clicks.push(name); if (onClick) onClick(); return Promise.resolve(); },
+      or(o: MeetDriverLocator) { return l; },
+    };
+    return l;
+  };
+  const ownerText = mk(exp, () => declined);
+  const owner: MeetDriverLocator = {
+    waitFor() {
+      if (declined) return Promise.resolve();
+      return new Promise<void>((resolve) => { releases.push(resolve); });
+    },
+    count() { return ownerText.count(); },
+    isVisible() { return ownerText.isVisible(); },
+    click() { return ownerText.click(); },
+    or(o: MeetDriverLocator) { return owner; },
+  };
+  const decline = (): void => { declined = true; for (const r of releases) r(); };
+  const page: MeetDriverPage = {
+    goto(url: string) { gotos.push(url); return Promise.resolve(); },
+    url() { return A; },
+    getByRole(role: "button", options?: { name?: string | RegExp }) {
+      const raw = options?.name ?? "";
+      const name = typeof raw === "string" ? raw : "pattern";
+      if (name === "Continue without microphone and camera") return mk(name, () => !declined, decline);
+      if (name === "Join now") return mk(name, () => declined && !leaveVisible, () => { leaveVisible = true; });
+      if (name === "Leave call") return mk(name, () => leaveVisible);
+      return mk(name, () => false);
+    },
+    getByText(text: string) { return text === exp ? owner : mk(text, () => false); },
+  };
+  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+  const t0 = Date.now();
+  const r = await driver(page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+  expect(r).toBe(true);
+  expect(Date.now() - t0).toBeLessThan(1000);
+  expect(gotos).toEqual([A]);
+  expect(clicks).toEqual(["Continue without microphone and camera", "Join now"]);
+}, 3000);
 it("T4 owner text on meeting page joins", async () => {
   const exp = "owner@example.test";
   const Aurl = A;
