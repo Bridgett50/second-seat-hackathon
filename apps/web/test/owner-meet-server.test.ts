@@ -1,4 +1,7 @@
-import { test, expect, afterEach } from "vitest";
+import { test, expect, afterEach, vi } from "vitest";
+import { createMeetingRoomService } from "../src/meetingRoom.js";
+import { createCandidateApprovalBroker } from "../src/candidateApproval.js";
+import { createCandidateApprovalApi } from "../src/candidateApprovalApi.js";
 import { createServer } from "node:net";
 import { request } from "node:http";
 import { startOwnerMeetServer, assertOwnerMeetCliEnvironment } from "../src/ownerMeetServer.js";
@@ -137,4 +140,41 @@ test("D cleanup failure after connect", async () => {
   await expect(p1).rejects.toThrow(/Owner Meet cleanup unconfirmed/);
   try { await p1; } catch (e) { expect((e as Error).message).not.toMatch(/do-not-leak/); expect((e as Error).cause).toBeUndefined(); }
   expect(h.server.listening).toBe(false);
+});
+
+test("injected candidateApprovalApi forwarded to routes", async () => {
+  const service = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "0" }, conversationInput: true, candidateAutoDispatch: false, sessionPolicy: true });
+  const broker = createCandidateApprovalBroker({ isCurrent: (b) => service.candidateIsCurrent(b) });
+  const api = createCandidateApprovalApi(service, broker);
+  const readSpy = vi.spyOn(api, "read");
+  let allowed = false;
+  const fake: StartCapture = async () => ({ sample: async () => [], stop: async () => {} });
+  const port = await freePort();
+  const options = { expectedOwnerEmail: "owner@example.test", port, startCapture: fake, candidateRuntime: { meetingRoom: service, candidateApprovalApi: api }, canPrepare: () => allowed };
+  const h = await startOwnerMeetServer(options);
+  handles.push(h);
+  expect(h.runtime.meetingRoom === service).toBe(true);
+  expect(h.runtime.candidateApprovalApi === api).toBe(true);
+  const res = await httpReq({ port, method: "GET", path: "/meeting-room" });
+  expect(res.status).toBe(200);
+  expect(res.body.includes('data-ai-drafting="1"')).toBe(true);
+  const roomId = res.body.match(/data-room-id="([^"]+)"/)?.[1] as string;
+  const setCookie = res.headers["set-cookie"];
+  const rawCookie = Array.isArray(setCookie) ? setCookie.find((c) => c.startsWith("mr_store")) : typeof setCookie === "string" && setCookie.startsWith("mr_store") ? setCookie : undefined;
+  if (typeof rawCookie !== "string") throw new Error("missing cookie");
+  const cookie = rawCookie.split(";")[0];
+  if (!cookie) throw new Error("missing cookie");
+  const key = cookie.slice("mr_store=".length);
+  const ctx = await httpReq({ port, method: "GET", path: "/api/meeting-room/candidate-context?roomId=" + encodeURIComponent(roomId), cookie });
+  expect(ctx.status).toBe(404);
+  expect(readSpy).toHaveBeenCalledWith(key, roomId);
+  expect((await postConnect(port, roomId, cookie)).status).toBe(202);
+  const r = await h.runtime.bridge.stop(key, roomId);
+  expect(r.body.status).toBe("stopped");
+  const status = (p: string) => httpReq({ port, method: "GET", path: "/api/meeting-room/worker/status?roomId=" + encodeURIComponent(roomId), cookie: p });
+  expect((JSON.parse((await status(cookie)).body) as { canPrepare: boolean; phase: string }).canPrepare).toBe(false);
+  allowed = true;
+  const s2 = JSON.parse((await httpReq({ port, method: "GET", path: "/api/meeting-room/worker/status?roomId=" + encodeURIComponent(roomId), cookie })).body) as { canPrepare: boolean; phase: string };
+  expect(s2.canPrepare).toBe(true);
+  expect(s2.phase).toBe("stopped");
 });
