@@ -227,6 +227,87 @@ it("T3 abort while on accounts stays closed", async () => {
   expect(gotos).toEqual(["https://meet.google.com/"]);
   expect(joins).toBe(0);
 });
+it("T5 aria-label-only on home and meeting joins", async () => {
+  const exp = "owner@example.test";
+  const Aurl = A;
+  let loc = "";
+  const gotos: string[] = [];
+  let joins = 0;
+  let leaveVisible = false;
+  const page: MeetDriverPage = {
+    goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
+    url() { return loc; },
+    getByRole(role: "button", opts?: { name?: string }) {
+      const name = opts?.name ?? "";
+      if (name === exp) {
+        const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(true); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } };
+        return l;
+      }
+      if (name === "Continue without microphone and camera") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l; }
+      if (name === "Join now") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(!leaveVisible); }, click() { joins += 1; leaveVisible = true; return Promise.resolve(); }, or(other: MeetDriverLocator) { const self = l; return { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(true); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return self; } }; } }; return l; }
+      if (name === "Leave call") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(leaveVisible); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l; }
+      if (name === "Switch here") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l; }
+      const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l;
+    },
+    getByText(text: string) {
+      if (text === exp) {
+        const l: MeetDriverLocator = { waitFor() { return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { const s = l; return { waitFor() { return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(x: MeetDriverLocator) { return s; } }; } };
+        return l;
+      }
+      const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } };
+      return l;
+    }
+  };
+  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 5000 });
+  const r = await driver(page, { meetingUrl: Aurl, displayName: "x" }, new AbortController().signal);
+  expect(r).toBe(true);
+  expect(gotos).toEqual(["https://meet.google.com/", Aurl]);
+  expect(joins).toBe(1);
+});
+it("T6 meeting aria-label for a different email refuses", async () => {
+  const exp = "owner@example.test";
+  const other = "other@example.test";
+  const Aurl = A;
+  let loc = "";
+  const gotos: string[] = [];
+  let joins = 0;
+  let leaveVisible = false;
+  const page: MeetDriverPage = {
+    goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
+    url() { return loc; },
+    getByRole(role: "button", opts?: { name?: string }) {
+      const name = opts?.name ?? "";
+      if (name === exp) {
+        const l: MeetDriverLocator = { waitFor() { return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } };
+        return l;
+      }
+      if (name === other) {
+        const onHome = (): boolean => loc === "https://meet.google.com/";
+        const l: MeetDriverLocator = { waitFor() { if (onHome()) return Promise.reject(new Error("hidden")); return Promise.resolve(); }, count() { return Promise.resolve(onHome() ? 0 : 1); }, isVisible() { return Promise.resolve(!onHome()); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } };
+        return l;
+      }
+      if (name === "Continue without microphone and camera") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l; }
+      if (name === "Join now") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(!leaveVisible); }, click() { joins += 1; leaveVisible = true; return Promise.resolve(); }, or(otherBtn: MeetDriverLocator) { const self = l; return { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(true); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return self; } }; } }; return l; }
+      if (name === "Leave call") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(leaveVisible); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l; }
+      if (name === "Switch here") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l; }
+      const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l;
+    },
+    getByText(text: string) {
+      if (text === exp) {
+        const onHome = (): boolean => loc === "https://meet.google.com/";
+        const l: MeetDriverLocator = { waitFor() { if (onHome()) return Promise.resolve(); return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(onHome() ? 1 : 0); }, isVisible() { return Promise.resolve(onHome()); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { const s = l; return { waitFor() { if (onHome()) return Promise.resolve(); return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(onHome() ? 1 : 0); }, isVisible() { return Promise.resolve(onHome()); }, click() { return Promise.resolve(); }, or(x: MeetDriverLocator) { return s; } }; } };
+        return l;
+      }
+      const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } };
+      return l;
+    }
+  };
+  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 5000 });
+  const r = await driver(page, { meetingUrl: Aurl, displayName: "x" }, new AbortController().signal);
+  expect(r).toBe(false);
+  expect(gotos).toEqual(["https://meet.google.com/", Aurl]);
+  expect(joins).toBe(0);
+});
 it("T4 aria-label-only on home still joins", async () => {
   const exp = "owner@example.test";
   const Aurl = A;

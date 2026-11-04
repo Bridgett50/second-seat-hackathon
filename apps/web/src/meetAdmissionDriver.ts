@@ -108,15 +108,17 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       await page.goto(approvedUrl, { waitUntil: "domcontentloaded", timeout });
       if (!isApprovedUrl()) return false;
       const cont = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
-      try { await emailLoc.or(cont).waitFor({ state: "visible", timeout }); } catch {}
+      try { await Promise.any([Promise.resolve().then(() => emailLoc.or(cont).waitFor({ state: "visible", timeout })), Promise.resolve().then(() => ownerBtn.waitFor({ state: "visible", timeout }))]); } catch {}
       if (signal.aborted) return false;
       if ((await cont.count()) === 1 && (await cont.isVisible())) {
         if (signal.aborted) return false;
         if (!isApprovedUrl()) return false;
         await cont.click();
       }
-      if (!(await waitOrAbort(emailLoc.waitFor({ state: "visible", timeout })))) return false;
-      if (!(await emailLoc.isVisible())) return false;
+      if (!(await waitOrAbort(firstVisible(ownerText, ownerBtn, timeout)))) return false;
+      let mt = false; try { mt = await ownerText.isVisible(); } catch { mt = false; }
+      let mb = false; try { mb = await ownerBtn.isVisible(); } catch { mb = false; }
+      if (!mt && !mb) return false;
       if (signal.aborted) return false;
       let joinBtn = page.getByRole("button", { name: "Join now", exact: true });
       const switchBtn = page.getByRole("button", { name: "Switch here", exact: true });
@@ -139,7 +141,9 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         joinBtn = switchBtn;
       }
       if (signal.aborted) return false;
-      if (!(await emailLoc.isVisible()) || signal.aborted) return false;
+      let ft = false; try { ft = await ownerText.isVisible(); } catch { ft = false; }
+      let fb = false; try { fb = await ownerBtn.isVisible(); } catch { fb = false; }
+      if ((!ft && !fb) || signal.aborted) return false;
       if (!isApprovedUrl()) return false;
       await joinBtn.click();
       const leaveBtn = page.getByRole("button", { name: "Leave call", exact: true });
