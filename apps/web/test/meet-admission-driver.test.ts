@@ -13,7 +13,7 @@ function html(email: string): string {
 it("synthetic admission with redirect regression", async () => {
   const browser = await chromium.launch({ headless: true, timeout: 10000, ...(chromePath !== undefined ? { executablePath: chromePath } : {}) });
   try {
-    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000 });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 10000, ownerSignInTimeoutMs: 3000 });
     const scope = { meetingUrl: A, displayName: "Bridgett AI twin" };
     const correct = html("owner@example.test");
     const wrong = html("wrong@example.test");
@@ -96,7 +96,7 @@ it("owner account button: token-bounded name pattern", () => {
 it("real chromium: owner account aria-label is token-bounded", async () => {
   const browser = await chromium.launch({ headless: true, timeout: 10000, ...(chromePath !== undefined ? { executablePath: chromePath } : {}) });
   try {
-    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000 });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 10000, ownerSignInTimeoutMs: 3000 });
     const scope = { meetingUrl: A, displayName: "Bridgett AI twin" };
     const acct = (label: string): string => `<!doctype html><html><body data-joins="0"><button id="j">Join now</button><button aria-label="${label}">B</button><script>const b=document.getElementById("j");b&&b.addEventListener("click",()=>{document.body.dataset.joins="1";const n=document.createElement("button");n.textContent="Leave call";document.body.appendChild(n)});<\/script></body></html>`;
     const bad = acct("Google Account: X (bowner@example.test)");

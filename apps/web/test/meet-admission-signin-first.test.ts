@@ -445,11 +445,12 @@ it("T10 Continue modal shown first is dismissed without waiting out the owner po
   expect(gotos).toEqual([SA]);
   expect(clicks).toEqual(["Continue without microphone and camera", "Join now"]);
 }, 3000);
-function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void; go: (u: string) => void } {
+function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void; go: (u: string) => void; stick: (k: string) => void } {
   const gotos: string[] = [];
   let at = "";
   const clicks: string[] = [];
   const visible = new Set<string>();
+  const stuck = new Set<string>();
   const waiters: Array<() => void> = [];
   const show = (k: string): void => { visible.add(k); for (const w of waiters.splice(0)) w(); };
   const mk = (k: string): MeetDriverLocator => {
@@ -463,7 +464,13 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
       },
       count() { return Promise.resolve(visible.has(k) ? 1 : 0); },
       isVisible() { return Promise.resolve(visible.has(k)); },
-      click() { clicks.push(k); if (k === "button:Join now") show("button:Leave call"); return Promise.resolve(); },
+      click() {
+        clicks.push(k);
+        if (k === "button:Join now" || k === "menuitem:Join here too") show("button:Leave call");
+        if (k.startsWith("button:Turn off ") && !stuck.has(k)) visible.delete(k);
+        if (k === "button:Other ways to join" && !stuck.has(k)) show("menuitem:Join here too");
+        return Promise.resolve();
+      },
       or(o: MeetDriverLocator) { return loc; },
     };
     return loc;
@@ -471,14 +478,14 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
   const page: MeetDriverPage = {
     goto(url: string) { gotos.push(url); at = pass ? land(url) : "https://accounts.google.com/signin"; return Promise.resolve(); },
     url() { return at; },
-    getByRole(role: "button" | "link", options?: { name?: string | RegExp }) {
+    getByRole(role: "button" | "link" | "menuitem", options?: { name?: string | RegExp }) {
       const raw = options?.name ?? "";
       const n = typeof raw === "string" ? raw : raw.test("Sign in") ? "Sign in" : raw.test("owner@example.test") ? "owner" : "?";
       return mk(role + ":" + n);
     },
     getByText(text: string | RegExp) { return mk("text:" + (typeof text === "string" ? text : text.test("You can\u2019t join this video call") ? "cantjoin" : "?")); },
   };
-  return { page, clicks, gotos, show, go: (u: string) => { at = u; } };
+  return { page, clicks, gotos, show, go: (u: string) => { at = u; }, stick: (k: string) => { stuck.add(k); } };
 }
 it("T11 Getting ready spinner then Ask to join keeps waiting signed out past the grace period", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -630,6 +637,75 @@ it("T19 abort on the accounts page closes cleanly", async () => {
     expect(await p).toBe(false);
     expect(f.clicks).toEqual([]);
     expect(f.gotos).toEqual([SA]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T20 mic and camera on at pre-join are turned off before Join", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Join now");
+    f.show("button:Turn off microphone");
+    f.show("button:Turn off camera");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Turn off microphone", "button:Turn off camera", "button:Join now"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T21 mute that cannot be confirmed means no join", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Join now");
+    f.show("button:Turn off microphone");
+    f.stick("button:Turn off microphone");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual(["button:Turn off microphone"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T22 Switch-here-only page joins via Other ways to join then Join here too", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Switch here");
+    f.show("button:Other ways to join");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Other ways to join", "menuitem:Join here too"]);
+    expect(f.clicks).not.toContain("button:Switch here");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T23 Switch-here-only page without Join here too is refused and Switch here is never clicked", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Switch here");
+    f.show("button:Other ways to join");
+    f.stick("button:Other ways to join");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual(["button:Other ways to join"]);
+    expect(f.clicks).not.toContain("button:Switch here");
   } finally {
     vi.useRealTimers();
   }

@@ -68,8 +68,8 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
     externalSignal.addEventListener("abort", onExternalAbort, { once: true });
     if (externalSignal.aborted || !scopeCurrent()) { await localStop(); throw new MeetCaptureStartError(true); }
     const launchFn: () => Promise<MeetProofBrowser<Page>> = capturedLaunch ?? (() => {
-      if (capturedChromePath !== undefined) return chromium.launch({ headless: false, executablePath: capturedChromePath } as never) as Promise<MeetProofBrowser<Page>>;
-      return chromium.launch({ headless: false, channel: "chrome" } as never) as Promise<MeetProofBrowser<Page>>;
+      if (capturedChromePath !== undefined) return chromium.launch({ headless: false, executablePath: capturedChromePath, args: ["--deny-permission-prompts"] } as never) as Promise<MeetProofBrowser<Page>>;
+      return chromium.launch({ headless: false, channel: "chrome", args: ["--deny-permission-prompts"] } as never) as Promise<MeetProofBrowser<Page>>;
     });
     const wrappedAdmit = async (page: Page, s: Readonly<{ meetingUrl: string; displayName: string }>, sig: AbortSignal): Promise<boolean> => {
       capturedPage = page; proofSignal = sig;

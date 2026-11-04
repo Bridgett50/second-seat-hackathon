@@ -8,7 +8,7 @@ export type MeetDriverLocator = {
 export type MeetDriverPage = {
   goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
   url(): string;
-  getByRole(role: "button" | "link", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
+  getByRole(role: "button" | "link" | "menuitem", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
   getByText(text: string | RegExp, options?: { exact?: boolean }): MeetDriverLocator;
 };
 export function ownerAccountNamePattern(email: string): RegExp {
@@ -145,10 +145,11 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if (signal.aborted) return false;
       let joinBtn = page.getByRole("button", { name: "Join now", exact: true });
       const switchBtn = page.getByRole("button", { name: "Switch here", exact: true });
+      const otherWays = page.getByRole("button", { name: "Other ways to join", exact: true });
       if (allowTransfer) {
         await joinBtn.or(switchBtn).waitFor({ state: "visible", timeout });
       } else {
-        await joinBtn.waitFor({ state: "visible", timeout });
+        await firstVisible(joinBtn, switchBtn, timeout);
       }
       if (signal.aborted) return false;
       const cont2 = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
@@ -158,11 +159,30 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         await cont2.click();
       }
       if ((await joinBtn.count()) !== 1 || !(await joinBtn.isVisible())) {
-        if (allowTransfer !== true) return false;
-        if ((await switchBtn.count()) !== 1) return false;
-        if (!(await switchBtn.isVisible())) return false;
-        joinBtn = switchBtn;
+        if (allowTransfer === true && (await shown(switchBtn))) {
+          joinBtn = switchBtn;
+        } else {
+          if (!(await shown(otherWays))) return false;
+          if (signal.aborted || !isApprovedUrl()) return false;
+          await otherWays.click();
+          const joinHere = page.getByRole("menuitem", { name: "Join here too", exact: true }).or(page.getByRole("button", { name: "Join here too", exact: true }));
+          if (!(await waitOrAbort(joinHere.waitFor({ state: "visible", timeout })))) return false;
+          if (!(await shown(joinHere))) return false;
+          joinBtn = joinHere;
+        }
       }
+      const micOff = page.getByRole("button", { name: "Turn off microphone" });
+      const camOff = page.getByRole("button", { name: "Turn off camera" });
+      if (await shown(micOff)) {
+        if (signal.aborted || !isApprovedUrl()) return false;
+        await micOff.click();
+      }
+      if (await shown(camOff)) {
+        if (signal.aborted || !isApprovedUrl()) return false;
+        await camOff.click();
+      }
+      if (!(await pause(500))) return false;
+      if ((await shown(micOff)) || (await shown(camOff))) return false;
       if (signal.aborted) return false;
       let ft = false; try { ft = await ownerText.isVisible(); } catch { ft = false; }
       let fb = false; try { fb = await ownerBtn.isVisible(); } catch { fb = false; }
