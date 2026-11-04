@@ -284,6 +284,9 @@ export type MeetingRoomService = {
     event: unknown,
   ): { status: number; body: MeetingRoomActionResult };
   finishConversationAs(callerKey: string | null, roomId: unknown): { status: number; body: MeetingRoomActionResult };
+  approvedGoogleDraftAs(callerKey: string | null, roomId: unknown): Readonly<{ identity: string; body: string }> | null;
+  workerBindingAs(callerKey: string | null, roomId: unknown): Readonly<{ roomId: string; ownerId: string; meetingId: string; epoch: number }> | null;
+  correctConversationAs(callerKey: string | null, roomId: unknown, utteranceId: unknown, expectedRevision: unknown, text: unknown): { status: number; body: MeetingRoomActionResult };
   candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null;
   candidateIsCurrent(binding: CandidateCurrentBinding): boolean;
   sentBodies(): readonly string[];
@@ -437,6 +440,8 @@ export function createMeetingRoomService(opts?: {
     latestCorrection: null | { utteranceId: string; revision: number };
   };
   const conversationByRoom = new WeakMap<TwinRoom, Map<string, ConversationState>>();
+const workerEpochByRoom = new WeakMap<TwinRoom, number>();
+const googleExportEpochByRoom = new WeakMap<TwinRoom, number>();
 
   function getConversationState(room: TwinRoom, meetingId: string): ConversationState {
     let byMeeting = conversationByRoom.get(room);
@@ -1115,6 +1120,10 @@ export function createMeetingRoomService(opts?: {
             };
           }
           invalidateCandidate(entry);
+          {
+            const r = (entry as unknown as { room?: TwinRoom }).room;
+            if (r) workerEpochByRoom.set(r, (workerEpochByRoom.get(r) ?? 0) + 1);
+          }
           break;
         }
         case "stream-next":
@@ -1135,10 +1144,18 @@ export function createMeetingRoomService(opts?: {
         case "takeover":
           entry.room.takeOver();
           invalidateCandidate(entry);
+          {
+            const r = (entry as unknown as { room?: TwinRoom }).room;
+            if (r) workerEpochByRoom.set(r, (workerEpochByRoom.get(r) ?? 0) + 1);
+          }
           break;
         case "resume":
           entry.room.resume();
           invalidateCandidate(entry);
+          {
+            const r = (entry as unknown as { room?: TwinRoom }).room;
+            if (r) workerEpochByRoom.set(r, (workerEpochByRoom.get(r) ?? 0) + 1);
+          }
           break;
         case "edit-draft":
           entry.room.editDraft(text as string);
@@ -1149,15 +1166,19 @@ export function createMeetingRoomService(opts?: {
           break;
         case "run-plugins":
           entry.room.runPlugins();
+          googleExportEpochByRoom.set(entry.room as unknown as TwinRoom, (googleExportEpochByRoom.get(entry.room as unknown as TwinRoom) ?? 0) + 1);
           break;
         case "plugin-include":
           entry.room.approvePluginOutput(id as string);
+          googleExportEpochByRoom.set(entry.room as unknown as TwinRoom, (googleExportEpochByRoom.get(entry.room as unknown as TwinRoom) ?? 0) + 1);
           break;
         case "plugin-exclude":
           entry.room.rejectPluginOutput(id as string);
+          googleExportEpochByRoom.set(entry.room as unknown as TwinRoom, (googleExportEpochByRoom.get(entry.room as unknown as TwinRoom) ?? 0) + 1);
           break;
         case "plugin-refresh":
           entry.room.refreshPluginOutput(id as string);
+          googleExportEpochByRoom.set(entry.room as unknown as TwinRoom, (googleExportEpochByRoom.get(entry.room as unknown as TwinRoom) ?? 0) + 1);
           break;
         case "compare":
           break;
@@ -1457,6 +1478,51 @@ export function createMeetingRoomService(opts?: {
       dispatchCandidate(entry, roomId, true);
       return { status: 202, body: { snapshot: snap(roomId, entry, entry.room.view()), announcements: ['Preparing redacted meeting context for review.'] } };
     },
+approvedGoogleDraftAs(callerKey: string | null, roomId: unknown): Readonly<{identity: string; body: string}> | null {
+    if (opts?.conversationInput !== true) return null;
+    if (opts?.candidateAutoDispatch !== false) return null;
+    if (typeof callerKey !== 'string' || callerKey.length === 0) return null;
+    if (typeof roomId !== 'string') return null;
+    const entry = boundEntry(callerKey, roomId);
+    if (!entry || entry.demo !== null) return null;
+    const view = entry.room.view();
+    if (view.draft.approved !== true || view.draft.sendState !== "unsent") return null;
+    const identity = JSON.stringify([view.ownerId, view.selectedMeetingId, view.draft.sha256, conversationByRoom.get(entry.room)?.get(view.selectedMeetingId)?.contextRevision ?? 0, getPolicyGeneration(view.ownerId, view.selectedMeetingId), candidateByRoom.get(entry.room)?.epoch ?? 0, workerEpochByRoom.get(entry.room) ?? 0, googleExportEpochByRoom.get(entry.room) ?? 0]);
+    return Object.freeze({ identity, body: view.draft.body });
+  },
+  workerBindingAs(callerKey: string | null, roomId: unknown): Readonly<{ roomId: string; ownerId: string; meetingId: string; epoch: number }> | null {
+    if (opts?.conversationInput !== true) return null;
+    if (opts?.candidateAutoDispatch !== false) return null;
+    if (typeof callerKey !== 'string' || callerKey.length === 0) return null;
+    if (typeof roomId !== 'string') return null;
+    const entry = boundEntry(callerKey, roomId);
+    if (!entry || entry.demo !== null) return null;
+    const view = entry.room.view();
+    if (view.twinStatus !== 'active' || view.draft.sendState !== 'unsent') return null;
+    return Object.freeze({ roomId, ownerId: view.ownerId, meetingId: view.selectedMeetingId, epoch: workerEpochByRoom.get(entry.room) ?? 0 });
+  },
+  correctConversationAs(callerKey: string | null, roomId: unknown, utteranceId: unknown, expectedRevision: unknown, text: unknown): { status: number; body: MeetingRoomActionResult } {
+    if (typeof roomId !== "string") return notFound();
+    const entry = boundEntry(callerKey, roomId);
+    if (!entry || entry.demo !== null) return notFound();
+    if (opts?.conversationInput !== true || opts?.candidateAutoDispatch !== false) return notFound();
+    const view = entry.room.view();
+    const snapshot = snap(roomId, entry, view);
+    if (view.draft.sendState !== "unsent") return { status: 409, body: { snapshot, announcements: [] } };
+    if (typeof utteranceId !== "string" || utteranceId.length === 0) return { status: 400, body: { snapshot, announcements: [] } };
+    if (typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) return { status: 400, body: { snapshot, announcements: [] } };
+    if (typeof text !== "string") return { status: 400, body: { snapshot, announcements: [] } };
+    if (text.trim().length === 0) return { status: 400, body: { snapshot, announcements: [] } };
+    if (text.indexOf(String.fromCharCode(0)) >= 0) return { status: 400, body: { snapshot, announcements: [] } };
+    if (text.length > 2000) return { status: 413, body: { snapshot, announcements: [] } };
+    const conv = conversationByRoom.get(entry.room)?.get(view.selectedMeetingId);
+    const stored = conv?.utterances.get(utteranceId);
+    if (!stored) return { status: 404, body: { snapshot, announcements: [] } };
+    if (stored.revision !== expectedRevision) return { status: 409, body: { snapshot, announcements: ["Transcript changed. Review it again."] } };
+    if (stored.text === text) return { status: 200, body: { snapshot, announcements: [] } };
+    const event = { version: 1, meetingId: view.selectedMeetingId, utteranceId, sequence: stored.sequence, revision: stored.revision + 1, speaker: stored.speaker, text };
+    return service.ingestConversationAs(callerKey, roomId, event);
+  },
   candidateBindingAs(callerKey: string | null, roomId: unknown): (CandidateCurrentBinding & { readonly epoch: number }) | null {
       if (!isCandidateActive()) return null;
       const entry = boundEntry(callerKey, roomId);
