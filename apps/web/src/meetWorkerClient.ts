@@ -170,23 +170,26 @@ if(!canPrepare())return;var g=++gen;inflight=true;syncButtons();
 try{var d=await doFetch('/api/meeting-room/worker/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roomId:capturedRoomId})},g);
 if(!d||g!==gen||dead||!isAlive())return;render(d);}finally{if(g===gen)inflight=false;syncButtons();schedulePoll();}
 }
+function getHost(){var h=document.getElementById('mr-integration-plugins');if(h)return h;h=document.createElement('section');h.id='mr-integration-plugins';h.style.cssText='display:flex;flex-wrap:wrap;gap:0.5rem;margin:0.5rem 0';var t=document.createElement('h2');t.textContent='Integration plugins';t.style.cssText='width:100%;font-size:1rem;margin:0 0 0.25rem';h.appendChild(t);root.parentNode.insertBefore(h,root);return h;}
 function buildControls(){
-var sec=document.createElement('section');sec.id='mr-meet-controls';
-var h=document.createElement('h2');h.textContent='Meeting worker';sec.appendChild(h);
-var d1=document.createElement('p');d1.textContent='Local Chrome worker. Sign in yourself when asked. Captions may mishear words. Nothing is emailed automatically.';sec.appendChild(d1);
+var sec=document.createElement('section');sec.id='mr-meet-controls';sec.style.cssText='padding:0.5rem;border:1px solid #ddd;border-radius:6px;flex:1 1 280px;min-width:240px';
+var h=document.createElement('h2');h.textContent='Meeting worker';h.style.cssText='font-size:1rem;margin:0 0 0.25rem';sec.appendChild(h);
+var det=document.createElement('details');var sum=document.createElement('summary');sum.textContent='Meet permissions';det.appendChild(sum);
+var d1=document.createElement('p');d1.textContent='Local Chrome worker. Sign in yourself when asked. Captions may mishear words. Nothing is emailed automatically.';d1.style.margin='0.25rem 0';det.appendChild(d1);
+sec.appendChild(det);
 var lb1=document.createElement('label');lb1.textContent='Meeting URL';lb1.htmlFor='mr-meet-url';sec.appendChild(lb1);
 var inpUrl=document.createElement('input');inpUrl.id='mr-meet-url';inpUrl.type='url';inpUrl.placeholder='https://meet.google.com/aaa-bbbb-ccc';sec.appendChild(inpUrl);
 var lb2=document.createElement('label');lb2.textContent='Worker label, not your Google account name.';lb2.htmlFor='mr-meet-name';sec.appendChild(lb2);
 var inpName=document.createElement('input');inpName.id='mr-meet-name';inpName.type='text';inpName.value='Second Seat AI twin (test)';inpName.maxLength=80;sec.appendChild(inpName);
-var exp=document.createElement('p');exp.textContent='Worker label, not your Google account name.';sec.appendChild(exp);
+var exp=document.createElement('p');exp.textContent='Worker label, not your Google account name.';exp.style.cssText='font-size:0.8rem;margin:0.15rem 0';sec.appendChild(exp);
 var btnC=document.createElement('button');btnC.id='mr-meet-connect';btnC.type='button';btnC.textContent='Connect my local twin';sec.appendChild(btnC);
 var btnS=document.createElement('button');btnS.id='mr-meet-stop';btnS.type='button';btnS.textContent='Finish and review transcript';sec.appendChild(btnS);
-var st=document.createElement('p');st.id='mr-meet-status';st.setAttribute('role','status');st.setAttribute('aria-live','polite');st.textContent='Idle.';sec.appendChild(st);
+var st=document.createElement('p');st.id='mr-meet-status';st.setAttribute('role','status');st.setAttribute('aria-live','polite');st.textContent='Idle.';st.style.margin='0.25rem 0';sec.appendChild(st);
 els={sec:sec,inpUrl:inpUrl,inpName:inpName,btnC:btnC,btnS:btnS,st:st};
 return sec;
 }
 var sec=buildControls();
-root.parentNode.insertBefore(sec,root);
+getHost().appendChild(sec);
 els.btnC.addEventListener('click',onConnect);
 els.btnS.addEventListener('click',onStop);
 els.inpUrl.addEventListener('input',syncButtons);

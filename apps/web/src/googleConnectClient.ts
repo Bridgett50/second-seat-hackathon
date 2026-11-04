@@ -86,23 +86,27 @@ export const GOOGLE_CONNECT_CLIENT_JS = String.raw`
       apply([]);
     }).catch(function (e) { if (!isCurrent()) return; if (e === 0) return; var s = document.getElementById('mr-google-status'); if (s) s.textContent = 'Google connection is unavailable. Please try again.'; });
   }
+  function getHost(){var h=document.getElementById('mr-integration-plugins');if(h)return h;h=document.createElement('section');h.id='mr-integration-plugins';h.style.cssText='display:flex;flex-wrap:wrap;gap:0.5rem;margin:0.5rem 0';var t=document.createElement('h2');t.textContent='Integration plugins';t.style.cssText='width:100%;font-size:1rem;margin:0 0 0.25rem';h.appendChild(t);ownRoot.parentNode.insertBefore(h,ownRoot);return h;}
   var sec = document.createElement('section');
-  sec.id = 'mr-google-connect';
-  var h = document.createElement('h2'); h.textContent = 'Google Connect'; sec.appendChild(h);
-  var desc = document.createElement('p'); desc.textContent = 'Choose access for this session. Google will ask you to sign in and consent. No email is sent automatically.'; sec.appendChild(desc);
+  sec.id = 'mr-google-connect';sec.style.cssText='padding:0.5rem;border:1px solid #ddd;border-radius:6px;flex:1 1 280px;min-width:240px';
+  var h = document.createElement('h2'); h.textContent = 'Google Connect';h.style.cssText='font-size:1rem;margin:0 0 0.25rem';sec.appendChild(h);
+  var wrap=document.createElement('div');wrap.style.cssText='display:flex;flex-wrap:wrap;gap:0.4rem;margin:0.25rem 0';sec.appendChild(wrap);
   var purposes = [
     { p: 'calendar-read', b: 'mr-google-calendar', l: 'Connect Calendar' },
     { p: 'gmail-draft', b: 'mr-google-gmail-draft', l: 'Connect Gmail drafts' },
     { p: 'docs-create', b: 'mr-google-docs', l: 'Connect Docs' }
   ];
   for (var i = 0; i < purposes.length; i++) (function (it) {
-    var row = document.createElement('div'); row.dataset.purpose = it.p; var btn = document.createElement('button'); btn.type = 'button'; btn.id = it.b; btn.textContent = it.l; btn.addEventListener('click', function () { if (!isCurrent()) return; connect(it.p); }); row.appendChild(btn);
-    var st = document.createElement('span'); st.className = 'mr-google-purpose-status'; st.textContent = 'Not connected for this session'; row.appendChild(st); sec.appendChild(row);
+    var row = document.createElement('div'); row.dataset.purpose = it.p;row.style.cssText='border:1px solid #e0e0e0;border-radius:4px;padding:0.3rem;flex:1 1 120px';var btn = document.createElement('button'); btn.type = 'button'; btn.id = it.b; btn.textContent = it.l; btn.addEventListener('click', function () { if (!isCurrent()) return; connect(it.p); }); row.appendChild(btn);
+    var st = document.createElement('span'); st.className = 'mr-google-purpose-status'; st.textContent = 'Not connected for this session'; row.appendChild(st); wrap.appendChild(row);
   })(purposes[i]);
+  var det=document.createElement('details');var sum=document.createElement('summary');sum.textContent='Google permissions and session details';det.appendChild(sum);
+  var desc = document.createElement('p'); desc.textContent = 'Choose access for this session. Google will ask you to sign in and consent. No email is sent automatically.'; det.appendChild(desc);
+  var note = document.createElement('p'); note.textContent = 'Disconnect clears this session only; it does not revoke your Google grant.'; det.appendChild(note);
+  sec.appendChild(det);
   var disc = document.createElement('button'); disc.type = 'button'; disc.id = 'mr-google-disconnect'; disc.textContent = 'Disconnect this session'; disc.addEventListener('click', function () { if (!isCurrent()) return; disconnect(); }); sec.appendChild(disc);
-  var note = document.createElement('p'); note.textContent = 'Disconnect clears this session only; it does not revoke your Google grant.'; sec.appendChild(note);
   var live = document.createElement('div'); live.id = 'mr-google-status'; live.setAttribute('role', 'status'); live.setAttribute('aria-live', 'polite'); sec.appendChild(live);
-  ownRoot.parentNode.insertBefore(sec, ownRoot);
+  getHost().appendChild(sec);
   status();
   window.addEventListener('pagehide', function () { dead = true; gen++; ac.abort(); });
   new MutationObserver(function () {
