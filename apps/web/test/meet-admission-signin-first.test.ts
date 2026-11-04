@@ -470,6 +470,7 @@ function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; g
         if (k.startsWith("button:Turn off ") && !stuck.has(k)) visible.delete(k);
         if (k === "button:Turn off microphone" && !stuck.has(k)) show("button:Turn on microphone");
         if (k === "button:Other ways to join" && !stuck.has(k)) show("menuitem:Join here too");
+        if (k === "button:Got it") { visible.delete("button:Got it"); visible.delete("text:Switch the call here"); }
         return Promise.resolve();
       },
       or(o: MeetDriverLocator) { return loc; },
@@ -741,6 +742,57 @@ it("T23 Switch-here-only page without Join here too is refused and Switch here i
     expect(await p).toBe(false);
     expect(f.clicks).toEqual(["button:Other ways to join"]);
     expect(f.clicks).not.toContain("button:Switch here");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T24 already expanded join list clicks Join here too without Other ways to join", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Switch here");
+    f.show("menuitem:Join here too");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["menuitem:Join here too"]);
+    expect(f.clicks).not.toContain("button:Switch here");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T25 Switch the call here tip is dismissed with Got it only, then Join here too", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Switch here");
+    f.show("menuitem:Join here too");
+    f.show("text:Switch the call here");
+    f.show("button:Got it");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Got it", "menuitem:Join here too"]);
+    expect(f.clicks).not.toContain("button:Switch here");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T26 neither Join here too nor Other ways to join is refused without clicking anything", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:owner@example.test");
+    f.show("button:Switch here");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000, ownerSignInTimeoutMs: 300000 });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
   } finally {
     vi.useRealTimers();
   }

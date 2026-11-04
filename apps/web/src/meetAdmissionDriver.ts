@@ -164,18 +164,30 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         if (allowTransfer === true && (await shown(switchBtn))) {
           joinBtn = switchBtn;
         } else {
-          if (!(await shown(otherWays))) return false;
-          if (signal.aborted || !isApprovedUrl()) return false;
-          await otherWays.click();
           const joinHere = page.getByRole("menuitem", { name: "Join here too", exact: true }).or(page.getByRole("button", { name: "Join here too", exact: true }));
-          if (!(await waitOrAbort(joinHere.waitFor({ state: "visible", timeout })))) return false;
+          // Meet can show a "Switch the call here" tip over the join list; dismiss only that tip's own "Got it" button.
+          const switchTip = page.getByText("Switch the call here", { exact: false });
+          const gotIt = page.getByRole("button", { name: "Got it", exact: true });
+          if ((await shown(switchTip)) && (await gotIt.count()) === 1 && (await gotIt.isVisible())) {
+            if (signal.aborted || !isApprovedUrl()) return false;
+            await gotIt.click();
+          }
+          if (signal.aborted) return false;
+          // Meet can remember the expanded join list ("Show fewer options"); then Join here too is already visible.
+          if (!(await shown(joinHere))) {
+            if (!(await shown(otherWays))) return false;
+            if (signal.aborted || !isApprovedUrl()) return false;
+            await otherWays.click();
+            if (!(await waitOrAbort(joinHere.waitFor({ state: "visible", timeout })))) return false;
+          }
           if (!(await shown(joinHere))) return false;
+          if (signal.aborted || !isApprovedUrl()) return false;
           joinBtn = joinHere;
         }
       }
       const micOff = page.getByRole("button", { name: "Turn off microphone" });
       const camOff = page.getByRole("button", { name: "Turn off camera" });
-      const micMuted = page.getByRole("button", { name: /^turn on microphone|microphone.*(blocked|problem|not (found|allowed))/i });
+      const micMuted = page.getByRole("button", { name: /^turn on microphone|microphone.*(blocked|problem|permission needed|not (found|allowed))/i });
       if (await shown(micOff)) {
         if (signal.aborted || !isApprovedUrl()) return false;
         await micOff.click();

@@ -24,6 +24,10 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
       if (!guard()) return false;
       if (count === 1) { const vis = await region.isVisible(); if (!guard()) return false; if (vis) return true; }
       if (!guard()) return false;
+      // After joining, Meet can show an onboarding tip over the controls; dismiss only a single visible exact "Got it" button.
+      const gotIt = page.getByRole("button", { name: "Got it", exact: true });
+      const gotItCount = await gotIt.count(); if (!guard()) return false;
+      if (gotItCount === 1) { const gv = await gotIt.isVisible(); if (!guard()) return false; if (gv) { await gotIt.click(); if (!guard()) return false; } }
       const live = /live captions/i;
       const chip = page.getByRole("button", { name: live }).or(page.getByRole("checkbox", { name: live })).or(page.getByRole("switch", { name: live }));
       const chipCount = await chip.count(); if (!guard()) return false;

@@ -191,11 +191,12 @@ test("9 readiness modal forces decline before identity", async()=>{
 });
 
 type FL = { count(): Promise<number>; isVisible(): Promise<boolean>; click(): Promise<void>; waitFor(o: { state: "visible"; timeout: number }): Promise<void>; getAttribute(n: string): Promise<string | null>; or(o: FL): FL; nth(i: number): FL };
-function capPage(init: { chip?: { role: string; attr: string; on: boolean }; oldUi?: boolean; regionOn?: boolean; noRegion?: boolean; directToggle?: boolean }): { page: MeetCaptionsPage; clicks: string[]; asked: string[] } {
+function capPage(init: { chip?: { role: string; attr: string; on: boolean }; oldUi?: boolean; regionOn?: boolean; noRegion?: boolean; directToggle?: boolean; gotIt?: boolean }): { page: MeetCaptionsPage; clicks: string[]; asked: string[] } {
   const clicks: string[] = [];
   const asked: string[] = [];
   let regionOn = init.regionOn === true;
   let menuOpen = false;
+  let gotItOn = init.gotIt === true;
   const chip = init.chip;
   const orL = (a: FL, b: FL): FL => {
     const l: FL = {
@@ -244,6 +245,7 @@ function capPage(init: { chip?: { role: string; attr: string; on: boolean }; old
       }
       if (name === "Captions and translation") return loc(role + ":" + name, () => init.oldUi === true && role === "button", () => ({}), () => { if (init.directToggle === true) regionOn = true; else menuOpen = true; });
       if (name === "Let Gemini take notes" || name === "Translate speech") return loc(role + ":" + name, () => true);
+      if (name === "Got it") return loc(role + ":" + name, () => gotItOn && role === "button", () => ({}), () => { gotItOn = false; });
       return loc(role + ":" + name, () => false);
     },
     getByText(text: string) {
@@ -280,6 +282,11 @@ test("captions: Captions and translation that turns captions on directly succeed
   expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true, onFail)).toBe(true);
   expect(f.clicks).toEqual(["button:Captions and translation"]);
   expect(onFail).not.toHaveBeenCalled();
+});
+test("captions: an onboarding Got it tip is dismissed first, then the old path turns captions on", async () => {
+  const f = capPage({ oldUi: true, gotIt: true });
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true)).toBe(true);
+  expect(f.clicks).toEqual(["button:Got it", "button:Captions and translation", "text:Turn on captions"]);
 });
 test("captions: Captions region already visible returns true without clicking", async () => {
   const f = capPage({ oldUi: true, regionOn: true });
