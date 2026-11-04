@@ -320,6 +320,53 @@ test("captions: diagnostic lists only role and name, redacts emails, and skips c
   expect(out).not.toContain("@");
   expect(out).not.toContain("secret caption");
 });
+function preOnPage(o: { regionAttached: boolean; settings: boolean; attachOnToggle: boolean }): { page: MeetCaptionsPage; clicks: string[] } {
+  const clicks: string[] = [];
+  let attached = o.regionAttached;
+  const loc = (key: string, n: () => number, vis: () => boolean, onClick: () => void = () => {}): FL => {
+    const l: FL = {
+      count: async () => n(),
+      isVisible: async () => vis(),
+      click: async () => { clicks.push(key); onClick(); },
+      waitFor: async () => { if (n() === 0) throw new Error("timeout"); },
+      getAttribute: async () => null,
+      or: () => l,
+      nth: () => l,
+    };
+    return l;
+  };
+  const page: MeetCaptionsPage = {
+    getByRole(role: "button" | "checkbox" | "switch" | "region", options: { name: string | RegExp; exact?: boolean }) {
+      const name = options.name;
+      if (role === "region" && name === "Captions") return loc("region:Captions", () => (attached ? 1 : 0), () => false);
+      if (name instanceof RegExp) return loc(role + ":?", () => 0, () => false);
+      if (role === "button" && (name === "Open caption settings" || name === "Jump to most recent captions")) return loc(role + ":" + name, () => (o.settings ? 1 : 0), () => o.settings);
+      if (role === "button" && (name === "Captions and translation" || name === "Let Gemini take notes" || name === "Translate speech")) return loc(role + ":" + name, () => 1, () => true, () => { if (name === "Captions and translation" && o.attachOnToggle) attached = true; });
+      return loc(role + ":" + name, () => 0, () => false);
+    },
+    getByText(text: string) { return loc("text:" + text, () => 0, () => false); },
+    locator(selector: string) { return loc("css:" + selector, () => 0, () => false); },
+  };
+  return { page, clicks };
+}
+test("captions: already on with an attached zero-size Captions region returns true without clicking", async () => {
+  const f = preOnPage({ regionAttached: true, settings: true, attachOnToggle: false });
+  const onFail = vi.fn(async () => {});
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true, onFail)).toBe(true);
+  expect(f.clicks).toEqual([]);
+  expect(onFail).not.toHaveBeenCalled();
+});
+test("captions: Open caption settings without a region counts as on and nothing is clicked", async () => {
+  const f = preOnPage({ regionAttached: false, settings: true, attachOnToggle: false });
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true)).toBe(true);
+  expect(f.clicks).toEqual([]);
+});
+test("captions: off means one Captions and translation click, then an attached (not yet visible) region is accepted", async () => {
+  const f = preOnPage({ regionAttached: false, settings: false, attachOnToggle: true });
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true)).toBe(true);
+  expect(f.clicks).toEqual(["button:Captions and translation"]);
+  expect(f.clicks.some((c) => /gemini|translate/i.test(c))).toBe(false);
+});
 type Chip = { label: string; visible: boolean; attrs: Record<string, string> };
 function chipPage(chips: Chip[]): { page: MeetCaptionsPage; clicks: string[]; waits: number[] } {
   const clicks: string[] = []; const waits: number[] = []; let regionOn = false;

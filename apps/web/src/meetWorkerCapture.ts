@@ -12,7 +12,7 @@ type FactoryOpts = { expectedOwnerEmail: string; chromePath?: string; allowOwner
 type Scope = { meetingUrl: string; displayName: string; binding: MeetWorkerBinding; isCurrent: () => boolean; };
 type CaptureHandle = Readonly<{ sample: ReturnType<typeof createMeetCaptionBuffer>["sample"]; stop: () => Promise<void>; }>;
 export class MeetCaptureStartError extends Error { readonly cleanupConfirmed: boolean; constructor(cleanupConfirmed: boolean) { super(cleanupConfirmed ? "Meet capture unavailable" : "Meet proof cleanup unconfirmed"); this.cleanupConfirmed = cleanupConfirmed; this.name = "MeetCaptureStartError"; } }
-type CapLoc = { count(): Promise<number>; isVisible(): Promise<boolean>; click(): Promise<void>; waitFor(options: { state: "visible"; timeout: number }): Promise<void>; getAttribute(name: string): Promise<string | null>; or(other: CapLoc): CapLoc; nth(index: number): CapLoc };
+type CapLoc = { count(): Promise<number>; isVisible(): Promise<boolean>; click(): Promise<void>; waitFor(options: { state: "visible" | "attached"; timeout: number }): Promise<void>; getAttribute(name: string): Promise<string | null>; or(other: CapLoc): CapLoc; nth(index: number): CapLoc };
 export type MeetCaptionsPage = { getByRole(role: "button" | "checkbox" | "switch" | "region", options: { name: string | RegExp; exact?: boolean }): CapLoc; getByText(text: string, options: { exact: boolean }): CapLoc; locator(selector: string): CapLoc };
 export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSignal, isCurrent: () => boolean, onFail: () => Promise<void> = async () => {}): Promise<boolean> {
   const run = async (): Promise<boolean> => {
@@ -22,8 +22,13 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
       const region = page.getByRole("region", { name: "Captions", exact: true });
       let count = await region.count();
       if (!guard()) return false;
-      if (count === 1) { const vis = await region.isVisible(); if (!guard()) return false; if (vis) return true; }
-      if (!guard()) return false;
+      // Captions can already be on (persisted in the profile): the region is attached but has no size while nobody speaks.
+      if (count >= 1) return true;
+      const settings = page.getByRole("button", { name: "Open caption settings", exact: true });
+      const jump = page.getByRole("button", { name: "Jump to most recent captions", exact: true });
+      const settingsCount = await settings.count(); if (!guard()) return false;
+      const jumpCount = await jump.count(); if (!guard()) return false;
+      if (settingsCount >= 1 || jumpCount >= 1) return true;
       // After joining, Meet can show an onboarding tip over the controls; dismiss only a single visible exact "Got it" button.
       const gotIt = page.getByRole("button", { name: "Got it", exact: true });
       const gotItCount = await gotIt.count(); if (!guard()) return false;
@@ -46,7 +51,7 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
         const alreadyOn = pressed === "true" || checked === "true" || /turn off live captions/i.test(targetLabel);
         if (!alreadyOn) { await target.click(); if (!guard()) return false; }
         const anyRegion = page.locator(MEET_CAPTION_REGION_SELECTOR).or(page.locator(MEET_CAPTION_REGION_ALT_SELECTOR));
-        await anyRegion.nth(0).waitFor({ state: "visible", timeout: 30000 }); if (!guard()) return false;
+        await anyRegion.nth(0).waitFor({ state: "attached", timeout: 30000 }); if (!guard()) return false;
         count = await anyRegion.count(); if (!guard()) return false; return count >= 1;
       }
       const toggle = page.getByRole("button", { name: "Captions and translation", exact: true }).or(page.getByRole("checkbox", { name: "Captions and translation", exact: true }));
@@ -55,18 +60,17 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
       await toggle.click(); if (!guard()) return false;
       const turnOn = page.getByText("Turn on captions", { exact: true });
       // Some Meet versions turn captions on straight from this button: then the Captions region shows instead of "Turn on captions".
-      const shown = await Promise.any([region.waitFor({ state: "visible", timeout: 10000 }).then(() => "region"), turnOn.waitFor({ state: "visible", timeout: 10000 }).then(() => "turnOn")]); if (!guard()) return false;
-      if (shown === "region") { count = await region.count(); if (!guard()) return false; if (count !== 1) return false; const v1 = await region.isVisible(); if (!guard()) return false; return v1; }
+      const shown = await Promise.any([region.waitFor({ state: "attached", timeout: 10000 }).then(() => "region"), turnOn.waitFor({ state: "visible", timeout: 10000 }).then(() => "turnOn")]); if (!guard()) return false;
+      if (shown === "region") { count = await region.count(); if (!guard()) return false; return count >= 1; }
       count = await turnOn.count(); if (!guard()) return false; if (count !== 1) return false;
       if (!await turnOn.isVisible()) return false; if (!guard()) return false;
       await turnOn.click(); if (!guard()) return false;
-      await region.waitFor({ state: "visible", timeout: 10000 }); if (!guard()) return false;
-      count = await region.count(); if (!guard()) return false; if (count !== 1) return false;
-      const v2 = await region.isVisible(); if (!guard()) return false; return v2;
+      await region.waitFor({ state: "attached", timeout: 10000 }); if (!guard()) return false;
+      count = await region.count(); if (!guard()) return false; return count >= 1;
     } catch { return false; }
   };
   const ok = await run();
-  if (!ok && !signal.aborted) { try { await onFail(); } catch {} }
+  if (!ok && !signal.aborted) { console.warn("[meet-step] failed: captions.enable"); try { await onFail(); } catch {} }
   return ok;
 }
 export type MeetBrowserMode = "launch" | "attached-profile";
@@ -306,12 +310,13 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
     }
     const sample = async (): Promise<readonly Readonly<{ event: Readonly<{ version: 1; meetingId: string; utteranceId: string; sequence: number; revision: number; speaker: string; text: string }>; verified: false }>[]> => {
       const admittedGuard2 = (): boolean => !localStopped && !externalSignal.aborted && scopeCurrent() && proofRef!.phase() === "admitted";
-      if (!admittedGuard2()) { localStop().catch(()=>{}); return Object.freeze([]); }
+      if (!admittedGuard2()) { console.warn("[meet-step] failed: capture.admitted"); localStop().catch(()=>{}); return Object.freeze([]); }
       try {
         const res = await captionBuffer!.sample();
-        if (!admittedGuard2()) { localStop().catch(()=>{}); return Object.freeze([]); }
+        if (!admittedGuard2()) { console.warn("[meet-step] failed: capture.admitted"); localStop().catch(()=>{}); return Object.freeze([]); }
         return res;
       } catch {
+        console.warn("[meet-step] failed: capture.sample");
         localStop().catch(()=>{});
         return Object.freeze([]);
       }

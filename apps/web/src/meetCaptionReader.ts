@@ -15,6 +15,10 @@ return `https://meet.google.com/${code}`;
 }catch{return null;}
 }
 export const MEET_CAPTION_REGION_SELECTOR='[role="region"][aria-label="Captions"]';
+// Several caption regions can be attached; read the first visible one (an attached zero-size region means nobody is speaking yet).
+export const MEET_CAPTION_REGION_PICK=" >> visible=true >> nth=0";
+const meetStepLogged=new Set<string>();
+function logMeetStepOnce(tag:string):void{if(meetStepLogged.has(tag))return;meetStepLogged.add(tag);console.warn("[meet-step] failed: "+tag);}
 export const MEET_CAPTION_REGION_ALT_SELECTOR='[role="region"][aria-label*="captions" i]:not([aria-label*="translat" i]):not([aria-label*="gemini" i])';
 type DiagLoc={getAttribute(name:string):Promise<string|null>;innerText():Promise<string>};
 export type MeetDiagPage={locator(selector:string):{all():Promise<DiagLoc[]>}};
@@ -75,12 +79,15 @@ const leaveVisible=await leaveBtn.isVisible();
 if(!guard())return fail();
 if(!leaveVisible)return fail();
 if(!guard())return fail();
-let region=page.locator(MEET_CAPTION_REGION_SELECTOR);
+let regionSel=MEET_CAPTION_REGION_SELECTOR;
+let region=page.locator(regionSel);
 if(!guard())return fail();
 let regionCount=await region.count();
 if(!guard())return fail();
-if(regionCount===0){region=page.locator(MEET_CAPTION_REGION_ALT_SELECTOR);regionCount=await region.count();if(!guard())return fail();}
-if(regionCount!==1){void logMeetUiDiagnosticOnce(page);return fail();}
+if(regionCount===0){regionSel=MEET_CAPTION_REGION_ALT_SELECTOR;region=page.locator(regionSel);regionCount=await region.count();if(!guard())return fail();}
+if(regionCount===0){logMeetStepOnce("captions.reader.regionCount");void logMeetUiDiagnosticOnce(page);return fail();}
+region=page.locator(regionSel+MEET_CAPTION_REGION_PICK);
+const pickedCount=await region.count();
 if(!guard())return fail();
 const regionVisible=await region.isVisible();
 if(!guard())return fail();
@@ -89,7 +96,7 @@ zeroRowReads+=1;
 if(zeroRowReads===20)await logMeetUiDiagnosticOnce(page,undefined,"zero-rows");
 return empty();
 };
-if(!regionVisible)return zeroRows();
+if(pickedCount===0||!regionVisible)return zeroRows();
 if(!guard())return fail();
 const raw=await region.evaluate((regionEl: CapsuleNode)=>{
 type StyleBag={readonly display:string;readonly visibility:string};
