@@ -543,3 +543,5 @@ Default/public cookie behavior remains `Strict` with `HttpOnly`/`Secure` policy.
 Human Google retry and real Gmail draft creation are still pending. No cookie-value upgrade test or broader browser behavior beyond what was observed is claimed.
 
 Codex was used for requirements, review, mechanical application, tests, and Git; Muse did not execute Git. No frozen, sealed, Grok, or application AI runs occurred. Coding usage was recorded; billing is unverified. No codes or secret values are included.
+
+Entry 1: Architecture, requirements and review for the optional ownerMeetServer candidateRuntime/canPrepare and API forwarding were supplied by Codex; the changed source and new regression test were authored by Muse Code via Baseten meta-models/muse-spark-open-1026. Verification on the new tree passed eleven focused tests and strict noEmit, while the genuine old-tree ignored-injection regression failed as expected and the new tree passed. Rejected test proposals were not applied. The live CLI remains default off, and no first-try success is claimed.

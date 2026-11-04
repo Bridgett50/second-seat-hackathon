@@ -35,7 +35,7 @@ function parseArgs(argv: string[]): { email: string; port?: number } {
   if(port===undefined) return {email};
   return {email,port};
 }
-export async function startOwnerMeetServer(opts: { expectedOwnerEmail: string; port?: number; chromePath?: string; startCapture?: StartCapture; googleConnections?: ReturnType<typeof createGoogleConnections>; googleJournalPath?: string; googleDraftFetch?: typeof fetch }): Promise<{ url: string; server: import("node:http").Server; runtime: ReturnType<typeof createOwnerMeetRuntime>; stop: () => Promise<void> }> {
+export async function startOwnerMeetServer(opts: { expectedOwnerEmail: string; port?: number; chromePath?: string; startCapture?: StartCapture; googleConnections?: ReturnType<typeof createGoogleConnections>; googleJournalPath?: string; googleDraftFetch?: typeof fetch; candidateRuntime?: Parameters<typeof createOwnerMeetRuntime>[0]["candidateRuntime"]; canPrepare?: Parameters<typeof createOwnerMeetRuntime>[0]["canPrepare"] }): Promise<{ url: string; server: import("node:http").Server; runtime: ReturnType<typeof createOwnerMeetRuntime>; stop: () => Promise<void> }> {
   validateEmail(opts.expectedOwnerEmail);
   const port=validatePort(opts.port);
   const origin="http://localhost:"+String(port);
@@ -60,7 +60,7 @@ export async function startOwnerMeetServer(opts: { expectedOwnerEmail: string; p
     journalPath=resolvedJournal;
   }
   let runtime: ReturnType<typeof createOwnerMeetRuntime>;
-  try{ runtime=createOwnerMeetRuntime({origin,startCapture}); }catch{ throw new Error("Owner Meet start failed"); }
+  try{ runtime=createOwnerMeetRuntime({origin,startCapture,...(opts.candidateRuntime!==undefined ? {candidateRuntime: opts.candidateRuntime} : {}),...(opts.canPrepare!==undefined ? {canPrepare: opts.canPrepare} : {})}); }catch{ throw new Error("Owner Meet start failed"); }
   let server: import("node:http").Server;
   try{
     let googleDraftHttp: ReturnType<typeof createOwnerDraftHttp> | undefined;
@@ -72,7 +72,7 @@ export async function startOwnerMeetServer(opts: { expectedOwnerEmail: string; p
       const outbox=createGoogleWriteOutbox({journalPath});
       googleDraftHttp=createOwnerDraftHttp({origin,service:runtime.meetingRoom,connections:opts.googleConnections,outbox,fetcher:opts.googleDraftFetch??fetch});
     }
-    const googleHttp=opts.googleConnections!==undefined ? createOwnerGoogleHttp({origin,connections:opts.googleConnections}) : undefined; server=createWebServer({meetingRoom:runtime.meetingRoom,meetWorkerHttp:runtime.meetWorkerHttp,...(googleHttp!==undefined ? {googleHttp} : {}),...(googleDraftHttp!==undefined ? {googleDraftHttp} : {})}); }catch{ let cleanupFailed=false; try{ await runtime.dispose(); }catch{ cleanupFailed=true; } throw new Error(cleanupFailed ? "Owner Meet cleanup unconfirmed" : "Owner Meet start failed"); }
+    const googleHttp=opts.googleConnections!==undefined ? createOwnerGoogleHttp({origin,connections:opts.googleConnections}) : undefined; server=createWebServer({meetingRoom:runtime.meetingRoom,meetWorkerHttp:runtime.meetWorkerHttp,...(googleHttp!==undefined ? {googleHttp} : {}),...(googleDraftHttp!==undefined ? {googleDraftHttp} : {}),...(runtime.candidateApprovalApi!==undefined ? {candidateApprovalApi: runtime.candidateApprovalApi} : {})}); }catch{ let cleanupFailed=false; try{ await runtime.dispose(); }catch{ cleanupFailed=true; } throw new Error(cleanupFailed ? "Owner Meet cleanup unconfirmed" : "Owner Meet start failed"); }
   try{
     await new Promise<void>((resolve,reject)=>{
       const onL=()=>{ server.off("error",onE); resolve(); };
