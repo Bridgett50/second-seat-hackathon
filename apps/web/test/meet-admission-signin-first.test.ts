@@ -2,6 +2,9 @@ import { it, expect, vi } from "vitest";
 import { createAuthenticatedMeetDriver, type MeetDriverPage, type MeetDriverLocator } from "../src/meetAdmissionDriver.js";
 import { createMeetAdmissionBrowser } from "../src/meetAdmissionBrowser.js";
 const A = "https://meet.google.com/abc-defg-hij";
+const SA = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(A)}`;
+const land = (u: string): string => (u === SA ? A : u);
+const hidden = (): MeetDriverLocator => { const l: MeetDriverLocator = { waitFor() { return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l; };
 function makeFake(signedEmail: string, opts?: { failVisible?: boolean; hang?: boolean; onWaitFor?: () => void }): { page: MeetDriverPage; gotos: string[]; joins: { n: number } } {
   const gotos: string[] = [];
   const joins = { n: 0 };
@@ -12,7 +15,7 @@ function makeFake(signedEmail: string, opts?: { failVisible?: boolean; hang?: bo
       return Promise.resolve();
     },
     url() {
-      return gotos[gotos.length - 1] ?? "";
+      return land(gotos[gotos.length - 1] ?? "");
     },
     getByRole(role: "button", options?: { name?: string | RegExp }) {
       const raw = options?.name ?? "";
@@ -89,7 +92,7 @@ it("meeting URL opened directly in the same isolated context", async () => {
   const signal = new AbortController().signal;
   const ok = await transport.join(Aurl, "Bridgett AI twin (test)", signal);
   expect(ok).toBe(true);
-  expect(fake.gotos).toEqual([Aurl]);
+  expect(fake.gotos).toEqual([SA]);
   expect(ctxCalls).toBe(1);
   expect(fake.joins.n).toBe(1);
   await transport.leave();
@@ -100,7 +103,7 @@ it("wrong owner on pre-join is refused", async () => {
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000, ownerSignInTimeoutMs: 1000 });
   const r = await driver(fake.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(false);
-  expect(fake.gotos).toEqual([A]);
+  expect(fake.gotos).toEqual([SA]);
   expect(fake.joins.n).toBe(0);
 });
 it("abort while waiting for the owner closes cleanly", async () => {
@@ -115,7 +118,7 @@ it("abort while waiting for the owner closes cleanly", async () => {
   controller.abort();
   const r = await p;
   expect(r).toBe(false);
-  expect(fake.gotos).toEqual([A]);
+  expect(fake.gotos).toEqual([SA]);
   expect(fake.joins.n).toBe(0);
 });
 it("T1 sign-in via accounts then back on meeting proceeds", async () => {
@@ -127,7 +130,7 @@ it("T1 sign-in via accounts then back on meeting proceeds", async () => {
   let isVisibleCalls = 0;
   const gotos: string[] = [];
   const page: MeetDriverPage = {
-    goto(url: string) { gotos.push(url); loc = url === Aurl ? "https://accounts.google.com/" : url; return Promise.resolve(); },
+    goto(url: string) { gotos.push(url); loc = url === SA ? "https://accounts.google.com/" : url; return Promise.resolve(); },
     url() { return loc; },
     getByRole(role: "button", options?: { name?: string | RegExp }) {
       const raw = options?.name ?? "";
@@ -142,7 +145,8 @@ it("T1 sign-in via accounts then back on meeting proceeds", async () => {
       if (name === "Switch here") { const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l; }
       const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } }; return l;
     },
-    getByText(text: string) {
+    getByText(text: string | RegExp) {
+      if (typeof text !== "string") return hidden();
       const loc2: MeetDriverLocator = {
         waitFor() { return Promise.resolve(); },
         count() { return Promise.resolve(1); },
@@ -163,7 +167,7 @@ it("T1 sign-in via accounts then back on meeting proceeds", async () => {
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 5000 });
   const r = await driver(page, { meetingUrl: Aurl, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(true);
-  expect(gotos).toEqual([Aurl]);
+  expect(gotos).toEqual([SA]);
   expect(joins).toBe(1);
 });
 it("T2 timeout on accounts never joins", async () => {
@@ -181,7 +185,8 @@ it("T2 timeout on accounts never joins", async () => {
       const l: MeetDriverLocator = { waitFor() { return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(other: MeetDriverLocator) { return l; } };
       return l;
     },
-    getByText(_t: string) {
+    getByText(_t: string | RegExp) {
+      if (typeof _t !== "string") return hidden();
       const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(true); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { const s = l; return { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(true); }, click() { return Promise.resolve(); }, or(x: MeetDriverLocator) { return s; } }; } };
       return l;
     }
@@ -189,7 +194,7 @@ it("T2 timeout on accounts never joins", async () => {
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 200 });
   const r = await driver(page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(false);
-  expect(gotos).toEqual([A]);
+  expect(gotos).toEqual([SA]);
   expect(joins).toBe(0);
 });
 it("T3 abort while on accounts stays closed", async () => {
@@ -207,7 +212,8 @@ it("T3 abort while on accounts stays closed", async () => {
       const l: MeetDriverLocator = { waitFor() { return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(other: MeetDriverLocator) { return l; } };
       return l;
     },
-    getByText(_t: string) {
+    getByText(_t: string | RegExp) {
+      if (typeof _t !== "string") return hidden();
       let calls = 0;
       const l: MeetDriverLocator = {
         waitFor() { return Promise.resolve(); },
@@ -226,7 +232,7 @@ it("T3 abort while on accounts stays closed", async () => {
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 10000 });
   const r = await driver(page, { meetingUrl: A, displayName: "x" }, controller.signal);
   expect(r).toBe(false);
-  expect(gotos).toEqual([A]);
+  expect(gotos).toEqual([SA]);
   expect(joins).toBe(0);
 });
 it("T5 aria-label-only on meeting joins", async () => {
@@ -237,7 +243,7 @@ it("T5 aria-label-only on meeting joins", async () => {
   let joins = 0;
   let leaveVisible = false;
   const page: MeetDriverPage = {
-    goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
+    goto(url: string) { gotos.push(url); loc = land(url); return Promise.resolve(); },
     url() { return loc; },
     getByRole(role: "button", opts?: { name?: string | RegExp }) {
       const raw = opts?.name ?? "";
@@ -264,7 +270,7 @@ it("T5 aria-label-only on meeting joins", async () => {
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 5000 });
   const r = await driver(page, { meetingUrl: Aurl, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(true);
-  expect(gotos).toEqual([Aurl]);
+  expect(gotos).toEqual([SA]);
   expect(joins).toBe(1);
 });
 it("T6 meeting aria-label for a different email refuses", async () => {
@@ -276,7 +282,7 @@ it("T6 meeting aria-label for a different email refuses", async () => {
   let joins = 0;
   let leaveVisible = false;
   const page: MeetDriverPage = {
-    goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
+    goto(url: string) { gotos.push(url); loc = land(url); return Promise.resolve(); },
     url() { return loc; },
     getByRole(role: "button", opts?: { name?: string | RegExp }) {
       const raw = opts?.name ?? "";
@@ -309,7 +315,7 @@ it("T6 meeting aria-label for a different email refuses", async () => {
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 5000, unrecognizedGraceMs: 100 });
   const r = await driver(page, { meetingUrl: Aurl, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(false);
-  expect(gotos).toEqual([Aurl]);
+  expect(gotos).toEqual([SA]);
   expect(joins).toBe(0);
 });
 function signedOutFake(signInAfter: number, onOwnerWait?: (n: number) => void): { page: MeetDriverPage; gotos: string[]; clicks: string[]; ownerWaits: () => number } {
@@ -347,7 +353,7 @@ function signedOutFake(signInAfter: number, onOwnerWait?: (n: number) => void): 
   };
   const guest = (): boolean => !signedIn && loc === A;
   const page: MeetDriverPage = {
-    goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
+    goto(url: string) { gotos.push(url); loc = land(url); return Promise.resolve(); },
     url() { return loc; },
     getByRole(role: "button", options?: { name?: string | RegExp }) {
       const raw = options?.name ?? "";
@@ -366,7 +372,7 @@ it("T7 signed-out meeting page waits for the owner and never joins as guest", as
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000, ownerSignInTimeoutMs: 600 });
   const r = await driver(fake.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(false);
-  expect(fake.gotos).toEqual([A]);
+  expect(fake.gotos).toEqual([SA]);
   expect(fake.clicks).toEqual([]);
   expect(fake.ownerWaits()).toBeGreaterThanOrEqual(2);
 });
@@ -375,7 +381,7 @@ it("T8 owner signs in from the signed-out meeting page then joins once", async (
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000, ownerSignInTimeoutMs: 5000 });
   const r = await driver(fake.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(true);
-  expect(fake.gotos).toEqual([A]);
+  expect(fake.gotos).toEqual([SA]);
   expect(fake.clicks).toEqual(["Join now"]);
 });
 it("T9 abort while waiting on the signed-out page closes cleanly", async () => {
@@ -386,7 +392,7 @@ it("T9 abort while waiting on the signed-out page closes cleanly", async () => {
   const r = await driver(fake.page, { meetingUrl: A, displayName: "x" }, controller.signal);
   expect(r).toBe(false);
   expect(Date.now() - t0).toBeLessThan(5000);
-  expect(fake.gotos).toEqual([A]);
+  expect(fake.gotos).toEqual([SA]);
   expect(fake.clicks).toEqual([]);
 });
 it("T10 Continue modal shown first is dismissed without waiting out the owner poll", async () => {
@@ -436,14 +442,16 @@ it("T10 Continue modal shown first is dismissed without waiting out the owner po
   const r = await driver(page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(true);
   expect(Date.now() - t0).toBeLessThan(1000);
-  expect(gotos).toEqual([A]);
+  expect(gotos).toEqual([SA]);
   expect(clicks).toEqual(["Continue without microphone and camera", "Join now"]);
 }, 3000);
-function makeTimedFake(): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void } {
+function makeTimedFake(pass = true): { page: MeetDriverPage; clicks: string[]; gotos: string[]; show: (k: string) => void; go: (u: string) => void } {
   const gotos: string[] = [];
+  let at = "";
   const clicks: string[] = [];
   const visible = new Set<string>();
   const waiters: Array<() => void> = [];
+  const show = (k: string): void => { visible.add(k); for (const w of waiters.splice(0)) w(); };
   const mk = (k: string): MeetDriverLocator => {
     const loc: MeetDriverLocator = {
       waitFor(o?: { timeout?: number }) {
@@ -455,22 +463,22 @@ function makeTimedFake(): { page: MeetDriverPage; clicks: string[]; gotos: strin
       },
       count() { return Promise.resolve(visible.has(k) ? 1 : 0); },
       isVisible() { return Promise.resolve(visible.has(k)); },
-      click() { clicks.push(k); return Promise.resolve(); },
+      click() { clicks.push(k); if (k === "button:Join now") show("button:Leave call"); return Promise.resolve(); },
       or(o: MeetDriverLocator) { return loc; },
     };
     return loc;
   };
   const page: MeetDriverPage = {
-    goto(url: string) { gotos.push(url); return Promise.resolve(); },
-    url() { return gotos[gotos.length - 1] ?? ""; },
+    goto(url: string) { gotos.push(url); at = pass ? land(url) : "https://accounts.google.com/signin"; return Promise.resolve(); },
+    url() { return at; },
     getByRole(role: "button" | "link", options?: { name?: string | RegExp }) {
       const raw = options?.name ?? "";
       const n = typeof raw === "string" ? raw : raw.test("Sign in") ? "Sign in" : raw.test("owner@example.test") ? "owner" : "?";
       return mk(role + ":" + n);
     },
-    getByText(text: string) { return mk("text:" + text); },
+    getByText(text: string | RegExp) { return mk("text:" + (typeof text === "string" ? text : text.test("You can\u2019t join this video call") ? "cantjoin" : "?")); },
   };
-  return { page, clicks, gotos, show: (k: string) => { visible.add(k); for (const w of waiters.splice(0)) w(); } };
+  return { page, clicks, gotos, show, go: (u: string) => { at = u; } };
 }
 it("T11 Getting ready spinner then Ask to join keeps waiting signed out past the grace period", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -489,7 +497,7 @@ it("T11 Getting ready spinner then Ask to join keeps waiting signed out past the
     ac.abort();
     expect(await p).toBe(false);
     expect(f.clicks).toEqual([]);
-    expect(f.gotos).toEqual([A]);
+    expect(f.gotos).toEqual([SA]);
   } finally {
     vi.useRealTimers();
   }
@@ -508,7 +516,7 @@ it("T12 Sign in rendered as a link counts as signed out and keeps waiting", asyn
     ac.abort();
     expect(await p).toBe(false);
     expect(f.clicks).toEqual([]);
-    expect(f.gotos).toEqual([A]);
+    expect(f.gotos).toEqual([SA]);
   } finally {
     vi.useRealTimers();
   }
@@ -543,7 +551,85 @@ it("T14 abort during the grace period closes cleanly", async () => {
     ac.abort();
     expect(await p).toBe(false);
     expect(f.clicks).toEqual([]);
-    expect(f.gotos).toEqual([A]);
+    expect(f.gotos).toEqual([SA]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T15 sign-in URL is ServiceLogin continuing to the approved meeting only", () => {
+  expect(SA).toBe("https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij");
+});
+it("T16 waits on accounts past the grace period then joins with the right owner", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake(false);
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(settled).toBe(false);
+    expect(f.clicks).toEqual([]);
+    f.go(A);
+    f.show("text:owner@example.test");
+    f.show("button:Join now");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(settled).toBe(true);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Join now"]);
+    expect(f.gotos).toEqual([SA]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T17 wrong owner on the meeting page is refused without clicking", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:other@example.test");
+    f.show("button:Join now");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(22000);
+    expect(settled).toBe(true);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+    expect(f.gotos).toEqual([SA]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T18 can't join this video call page is refused at once", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake();
+    f.show("text:cantjoin");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(settled).toBe(true);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+    expect(f.gotos).toEqual([SA]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T19 abort on the accounts page closes cleanly", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = makeTimedFake(false);
+    const ac = new AbortController();
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000 });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, ac.signal).then((r) => { settled = true; return r; });
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(settled).toBe(false);
+    ac.abort();
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+    expect(f.gotos).toEqual([SA]);
   } finally {
     vi.useRealTimers();
   }
@@ -556,7 +642,7 @@ it("T4 owner text on meeting page joins", async () => {
   let joins = 0;
   let leaveVisible = false;
   const page: MeetDriverPage = {
-    goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
+    goto(url: string) { gotos.push(url); loc = land(url); return Promise.resolve(); },
     url() { return loc; },
     getByRole(role: "button", opts?: { name?: string | RegExp }) {
       const raw = opts?.name ?? "";
@@ -585,6 +671,6 @@ it("T4 owner text on meeting page joins", async () => {
   const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: exp, timeoutMs: 1000, ownerSignInTimeoutMs: 5000 });
   const r = await driver(page, { meetingUrl: Aurl, displayName: "x" }, new AbortController().signal);
   expect(r).toBe(true);
-  expect(gotos).toEqual([Aurl]);
+  expect(gotos).toEqual([SA]);
   expect(joins).toBe(1);
 });

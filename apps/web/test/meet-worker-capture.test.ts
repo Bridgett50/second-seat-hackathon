@@ -182,8 +182,8 @@ test("9 readiness modal forces decline before identity", async()=>{
     await entered.promise;if(mode==="abort") ac.abort();modal=true;reveal.resolve(undefined);
     let h:Awaited<ReturnType<typeof factory>>|null=null,err:unknown=null;try{h=await p;}catch(e){err=e;}
     try{
-      if(mode==="owner"){expect(err).toBeNull();expect(dc).toBe(1);expect(jc).toBe(1);expect(verified).toBe(true);expect(enableCaptions).toHaveBeenCalledTimes(1);expect(goto.mock.calls.map(c=>c[0])).toEqual([URL_S]);}
-      else {expect(err).toBeInstanceOf(MeetCaptureStartError);expect((err as MeetCaptureStartError).cleanupConfirmed).toBe(true);expect(jc).toBe(0);expect(enableCaptions).not.toHaveBeenCalled();if(mode==="abort") expect(dc).toBe(0);else expect(goto.mock.calls.map(c=>c[0])).toEqual([URL_S]);}
+      if(mode==="owner"){expect(err).toBeNull();expect(dc).toBe(1);expect(jc).toBe(1);expect(verified).toBe(true);expect(enableCaptions).toHaveBeenCalledTimes(1);expect(goto.mock.calls.map(c=>c[0])).toEqual([`https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(URL_S)}`]);}
+      else {expect(err).toBeInstanceOf(MeetCaptureStartError);expect((err as MeetCaptureStartError).cleanupConfirmed).toBe(true);expect(jc).toBe(0);expect(enableCaptions).not.toHaveBeenCalled();if(mode==="abort") expect(dc).toBe(0);else expect(goto.mock.calls.map(c=>c[0])).toEqual([`https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(URL_S)}`]);}
     }finally{if(h) await h.stop();expect(b.close).toHaveBeenCalledTimes(1);}
   }
 });

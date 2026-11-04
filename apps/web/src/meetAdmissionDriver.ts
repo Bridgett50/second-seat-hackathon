@@ -9,7 +9,7 @@ export type MeetDriverPage = {
   goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
   url(): string;
   getByRole(role: "button" | "link", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
-  getByText(text: string, options?: { exact?: boolean }): MeetDriverLocator;
+  getByText(text: string | RegExp, options?: { exact?: boolean }): MeetDriverLocator;
 };
 export function ownerAccountNamePattern(email: string): RegExp {
   const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -63,7 +63,8 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       });
     };
     try {
-      await page.goto(approvedUrl, { waitUntil: "domcontentloaded", timeout });
+      const signInUrl = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(approvedUrl)}`;
+      await page.goto(signInUrl, { waitUntil: "domcontentloaded", timeout });
       const emailLoc = page.getByText(expectedEmail, { exact: true });
       const ownerText = emailLoc;
       const ownerBtn = page.getByRole("button", { name: ownerAccountNamePattern(expectedEmail) });
@@ -71,6 +72,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       const signInBtn = page.getByRole("button", { name: /^\s*sign in\b/i });
       const signInLink = page.getByRole("link", { name: /^\s*sign in\b/i });
       const askBtn = page.getByRole("button", { name: "Ask to join", exact: true });
+      const cantJoin = page.getByText(/you can['\u2019]t join this video call/i);
       const shown = async (l: MeetDriverLocator): Promise<boolean> => {
         try { return (await l.count()) > 0 && (await l.isVisible()); } catch { return false; }
       };
@@ -101,9 +103,11 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         if (signal.aborted) return false;
         const left = deadline - Date.now();
         if (left <= 0) return false;
+        if (!isApprovedUrl()) lastSeen = Date.now();
         let won = -1;
-        await waitOrAbort(firstOf([ownerText, ownerBtn, cont, signInBtn, askBtn, signInLink], Math.min(left, 2000)).then((i) => { won = i; }));
+        await waitOrAbort(firstOf([ownerText, ownerBtn, cont, signInBtn, askBtn, signInLink, cantJoin], Math.min(left, 2000)).then((i) => { won = i; }));
         if (signal.aborted) return false;
+        if (await shown(cantJoin)) return false;
         if (won === 0 || won === 1) {
           let vt = false;
           try { vt = await ownerText.isVisible(); } catch { vt = false; }

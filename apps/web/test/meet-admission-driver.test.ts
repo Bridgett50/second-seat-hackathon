@@ -4,6 +4,8 @@ import { existsSync } from "node:fs";
 import { createAuthenticatedMeetDriver, ownerAccountNamePattern } from "../src/meetAdmissionDriver.js";
 const A = "https://meet.google.com/abc-defg-hij";
 const B = "https://meet.google.com/xxx-yyyy-zzz";
+const SA = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(A)}`;
+const hop = `<!doctype html><html><body><script>location.replace(${JSON.stringify(A)})</script></body></html>`;
 const chromePath = process.env.PLAYWRIGHT_CHROME_PATH ?? (existsSync("/usr/bin/google-chrome") ? "/usr/bin/google-chrome" : undefined);
 function html(email: string): string {
   return `<!doctype html><html><body data-joins="0"><span>${email}</span><button>Join now</button><script>const b=document.querySelector("button");b&&b.addEventListener("click",()=>{document.body.dataset.joins="1";const n=document.createElement("button");n.textContent="Leave call";document.body.appendChild(n)});<\/script></body></html>`;
@@ -24,6 +26,7 @@ it("synthetic admission with redirect regression", async () => {
       await page.route("**/*", async (route) => {
         const u = route.request().url();
         traces.push(u);
+        if (u === SA) { await route.fulfill({ status: 200, contentType: "text/html", body: hop }); return; }
         if (u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: correct }); return; }
         if (u === "https://meet.google.com/") { await route.fulfill({ status: 200, contentType: "text/html", body: `<!doctype html><html><body><span>owner@example.test</span></body></html>` }); return; }
         await route.abort();
@@ -41,12 +44,13 @@ it("synthetic admission with redirect regression", async () => {
       await page.route("**/*", async (route) => {
         const u = route.request().url();
         traces.push(u);
+        if (u === SA) { await route.fulfill({ status: 200, contentType: "text/html", body: hop }); return; }
         if (u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: wrong }); return; }
         if (u === "https://meet.google.com/") { await route.fulfill({ status: 200, contentType: "text/html", body: `<!doctype html><html><body><span>wrong@example.test</span></body></html>` }); return; }
         await route.abort();
       });
       const r2 = await driver(page, scope, new AbortController().signal);
-      expect(r2).toBe(false); expect(traces).toEqual([A]); expect(page.url()).toBe(A);
+      expect(r2).toBe(false); expect(traces).toEqual([SA, A]); expect(page.url()).toBe(A);
       await ctx.close();
     }
     ctx = await browser.newContext();
@@ -57,13 +61,14 @@ it("synthetic admission with redirect regression", async () => {
       await page.route("**/*", async (route) => {
         const u = route.request().url();
         traces.push(u);
+        if (u === SA) { await route.fulfill({ status: 200, contentType: "text/html", body: hop }); return; }
         if (u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: correctWithRedirect }); return; }
         if (u === "https://meet.google.com/") { await route.fulfill({ status: 200, contentType: "text/html", body: `<!doctype html><html><body><span>owner@example.test</span></body></html>` }); return; }
         await route.abort();
       });
       const r3 = await driver(page, scope, new AbortController().signal);
       const joins3 = await page.locator("body").getAttribute("data-joins");
-      expect(r3).toBe(false); expect(joins3).toBe("0"); expect(traces).toEqual([A]); expect(page.url()).toBe(B);
+      expect(r3).toBe(false); expect(joins3).toBe("0"); expect(traces).toEqual([SA, A]); expect(page.url()).toBe(B);
       await ctx.close();
     }
     ctx = await browser.newContext();
@@ -103,11 +108,12 @@ it("real chromium: owner account aria-label is token-bounded", async () => {
       await page.route("**/*", async (route) => {
         const u = route.request().url();
         traces.push(u);
+        if (u === SA) { await route.fulfill({ status: 200, contentType: "text/html", body: hop }); return; }
         if (u === "https://meet.google.com/" || u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: bad }); return; }
         await route.abort();
       });
       const r = await driver(page, scope, new AbortController().signal);
-      expect(r).toBe(false); expect(traces).toEqual([A]); expect(page.url()).toBe(A);
+      expect(r).toBe(false); expect(traces).toEqual([SA, A]); expect(page.url()).toBe(A);
       await ctx.close();
     }
     {
@@ -117,12 +123,13 @@ it("real chromium: owner account aria-label is token-bounded", async () => {
       await page.route("**/*", async (route) => {
         const u = route.request().url();
         traces.push(u);
+        if (u === SA) { await route.fulfill({ status: 200, contentType: "text/html", body: hop }); return; }
         if (u === "https://meet.google.com/" || u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: good }); return; }
         await route.abort();
       });
       const r = await driver(page, scope, new AbortController().signal);
       const joins = await page.locator("body").getAttribute("data-joins");
-      expect(r).toBe(true); expect(joins).toBe("1"); expect(traces).toEqual([A]);
+      expect(r).toBe(true); expect(joins).toBe("1"); expect(traces).toEqual([SA, A]);
       await ctx.close();
     }
   } finally { await browser.close(); }
@@ -139,6 +146,7 @@ it("real chromium: signed-out meeting page waits and never joins as guest", asyn
     await page.route("**/*", async (route) => {
       const u = route.request().url();
       traces.push(u);
+      if (u === SA) { await route.fulfill({ status: 200, contentType: "text/html", body: hop }); return; }
       if (u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: guest }); return; }
       await route.abort();
     });
@@ -148,7 +156,7 @@ it("real chromium: signed-out meeting page waits and never joins as guest", asyn
     const asks = await page.locator("body").getAttribute("data-asks");
     const signins = await page.locator("body").getAttribute("data-signins");
     const typed = await page.getByLabel("Your name").inputValue();
-    expect(r).toBe(false); expect(asks).toBe("0"); expect(signins).toBe("0"); expect(typed).toBe(""); expect(traces).toEqual([A]); expect(page.url()).toBe(A);
+    expect(r).toBe(false); expect(asks).toBe("0"); expect(signins).toBe("0"); expect(typed).toBe(""); expect(traces).toEqual([SA, A]); expect(page.url()).toBe(A);
     expect(waited).toBeGreaterThanOrEqual(1000);
     await ctx.close();
   } finally { await browser.close(); }
