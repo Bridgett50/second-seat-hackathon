@@ -24,11 +24,14 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       await page.goto(approvedUrl, { waitUntil: "domcontentloaded", timeout });
       if (!isApprovedUrl()) return false;
       const cont = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
+      const emailLoc = page.getByText(expectedEmail, { exact: true });
+      try { await emailLoc.or(cont).waitFor({ state: "visible", timeout }); } catch {}
+      if (signal.aborted) return false;
       if ((await cont.count()) === 1 && (await cont.isVisible())) {
         if (signal.aborted) return false;
+        if (!isApprovedUrl()) return false;
         await cont.click();
       }
-      const emailLoc = page.getByText(expectedEmail, { exact: true });
       await emailLoc.waitFor({ state: "visible", timeout });
       if (!(await emailLoc.isVisible())) return false;
       if (signal.aborted) return false;
@@ -43,6 +46,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       const cont2 = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
       if ((await cont2.count()) === 1 && (await cont2.isVisible())) {
         if (signal.aborted) return false;
+        if (!isApprovedUrl()) return false;
         await cont2.click();
       }
       if ((await joinBtn.count()) !== 1 || !(await joinBtn.isVisible())) {

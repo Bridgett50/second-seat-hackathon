@@ -80,8 +80,6 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
         const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: capturedEmail, timeoutMs: 60000, allowOwnerTransfer: capturedAllowTransfer });
         fn = async (p, sc, sg): Promise<boolean> => {
           if (!admitGuard()) return false;
-          await p.goto(sc.meetingUrl, { waitUntil: "domcontentloaded", timeout: 120000 }); if (!admitGuard()) return false;
-          await p.getByText(capturedEmail, { exact: true }).waitFor({ state: "visible", timeout: 120000 }); if (!admitGuard()) return false;
           return driver(p, sc, sg);
         };
       }
