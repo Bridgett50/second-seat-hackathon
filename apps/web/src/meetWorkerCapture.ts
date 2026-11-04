@@ -2,13 +2,13 @@ import { chromium, type Page } from "@playwright/test";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep, win32 } from "node:path";
-import { createAuthenticatedMeetDriver } from "./meetAdmissionDriver.js";
+import { createAuthenticatedMeetDriver, createGuestMeetDriver, resolveMeetGuestName } from "./meetAdmissionDriver.js";
 import { createMeetAdmissionBrowser, type MeetProofBrowser } from "./meetAdmissionBrowser.js";
 import { createMeetAdmissionProof, type MeetAdmissionTransport } from "./meetAdmissionProof.js";
 import { createMeetCaptionBuffer } from "./meetCaptionBuffer.js";
 import { logMeetUiDiagnosticOnce, MEET_CAPTION_REGION_SELECTOR, MEET_CAPTION_REGION_ALT_SELECTOR } from "./meetCaptionReader.js";
 import type { MeetWorkerBinding } from "./meetWorkerPairing.js";
-type FactoryOpts = { expectedOwnerEmail: string; chromePath?: string; allowOwnerTransfer?: boolean; ownerUnrecognizedGraceMs?: number; launch?: () => Promise<MeetProofBrowser<Page>>; admit?: (page: Page, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal) => Promise<boolean>; enableCaptions?: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean>; browserMode?: MeetBrowserMode; profileDir?: string; debugPort?: number; cameraMode?: MeetCameraMode; twinMedia?: TwinMedia; spawnChrome?: (command: string, args: string[]) => AttachedChild; connectCdp?: (endpoint: string) => Promise<AttachedBrowser<Page>>; };
+type FactoryOpts = { expectedOwnerEmail: string; chromePath?: string; allowOwnerTransfer?: boolean; ownerUnrecognizedGraceMs?: number; launch?: () => Promise<MeetProofBrowser<Page>>; admit?: (page: Page, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal) => Promise<boolean>; enableCaptions?: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean>; browserMode?: MeetBrowserMode; profileDir?: string; debugPort?: number; cameraMode?: MeetCameraMode; twinMedia?: TwinMedia; spawnChrome?: (command: string, args: string[]) => AttachedChild; connectCdp?: (endpoint: string) => Promise<AttachedBrowser<Page>>; joinMode?: MeetJoinMode; guestName?: string; };
 type Scope = { meetingUrl: string; displayName: string; binding: MeetWorkerBinding; isCurrent: () => boolean; };
 type CaptureHandle = Readonly<{ sample: ReturnType<typeof createMeetCaptionBuffer>["sample"]; stop: () => Promise<void>; }>;
 export class MeetCaptureStartError extends Error { readonly cleanupConfirmed: boolean; constructor(cleanupConfirmed: boolean) { super(cleanupConfirmed ? "Meet capture unavailable" : "Meet proof cleanup unconfirmed"); this.cleanupConfirmed = cleanupConfirmed; this.name = "MeetCaptureStartError"; } }
@@ -65,6 +65,7 @@ export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSi
 }
 export type MeetBrowserMode = "launch" | "attached-profile";
 export type MeetCameraMode = "off" | "twin-image";
+export type MeetJoinMode = "owner" | "guest";
 export type TwinMedia = Readonly<{ videoPath: string; audioPath: string }>;
 export const MEET_PERMISSION_ORIGIN = "https://meet.google.com";
 const hasControlChar = (s: string): boolean => Array.from(s).some((ch) => { const c = ch.charCodeAt(0); return c < 32 || c === 127; });
@@ -172,8 +173,9 @@ export async function launchAttachedMeetChrome<P extends { close(): Promise<unkn
   return { newContext: () => Promise.resolve({ newPage: () => ctx.newPage() }), close };
 }
 // Reads the optional worker browser settings from the environment. Unknown values fail closed.
-export function meetCaptureOptsFromEnv(env: Readonly<Record<string, string | undefined>>): { browserMode?: MeetBrowserMode; profileDir?: string; cameraMode?: MeetCameraMode; twinMedia?: TwinMedia } {
-  const out: { browserMode?: MeetBrowserMode; profileDir?: string; cameraMode?: MeetCameraMode; twinMedia?: TwinMedia } = {};
+type MeetEnvOpts = { browserMode?: MeetBrowserMode; profileDir?: string; cameraMode?: MeetCameraMode; twinMedia?: TwinMedia; joinMode?: MeetJoinMode; guestName?: string };
+export function meetCaptureOptsFromEnv(env: Readonly<Record<string, string | undefined>>): MeetEnvOpts {
+  const out: MeetEnvOpts = {};
   const mode = env["SECOND_SEAT_MEET_BROWSER"];
   if (mode === "attached-profile") out.browserMode = "attached-profile";
   else if (mode !== undefined && mode !== "" && mode !== "launch") throw new Error("invalid SECOND_SEAT_MEET_BROWSER");
@@ -183,6 +185,12 @@ export function meetCaptureOptsFromEnv(env: Readonly<Record<string, string | und
   const hasV = video !== undefined && video !== ""; const hasA = audio !== undefined && audio !== "";
   if (hasV !== hasA) throw new Error("twin-image needs both SECOND_SEAT_TWIN_VIDEO and SECOND_SEAT_TWIN_AUDIO");
   if (hasV && hasA) { const twinMedia = { videoPath: video, audioPath: audio }; meetChromeArgs("twin-image", twinMedia); out.cameraMode = "twin-image"; out.twinMedia = twinMedia; }
+  const join = env["SECOND_SEAT_MEET_JOIN"];
+  if (join === "guest") out.joinMode = "guest";
+  else if (join !== undefined && join !== "" && join !== "owner") throw new Error("invalid SECOND_SEAT_MEET_JOIN");
+  const guestName = env["SECOND_SEAT_MEET_GUEST_NAME"];
+  if (guestName !== undefined && guestName !== "") out.guestName = resolveMeetGuestName(guestName);
+  if (out.joinMode === "guest" && (out.browserMode === "attached-profile" || out.cameraMode === "twin-image")) throw new Error("guest join uses a fresh browser; unset SECOND_SEAT_MEET_BROWSER and SECOND_SEAT_TWIN_*");
   return out;
 }
 export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope, externalSignal: AbortSignal) => Promise<CaptureHandle> {
@@ -204,6 +212,10 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
   const capturedSpawn = opts.spawnChrome ?? ((command: string, args: string[]): AttachedChild => spawn(command, args, { stdio: ["ignore", "ignore", "pipe"] }));
   const capturedConnect = opts.connectCdp ?? ((endpoint: string): Promise<AttachedBrowser<Page>> => chromium.connectOverCDP(endpoint));
   const attachedChromePath = capturedChromePath ?? (process.env["PLAYWRIGHT_CHROME_PATH"] || defaultMeetChromePath());
+  // Guest join: fresh isolated browser (no profile, no sign-in) with microphone and camera prompts denied and nothing granted.
+  const guestMode = opts.joinMode === "guest";
+  if (guestMode && (capturedBrowserMode === "attached-profile" || capturedCameraMode === "twin-image")) throw new Error("guest join uses a fresh browser with camera and microphone blocked");
+  const capturedGuestName = guestMode ? resolveMeetGuestName(opts.guestName) : "";
   return async (scope: Scope, externalSignal: AbortSignal): Promise<CaptureHandle> => {
     const capturedScopeMeetingUrl = scope.meetingUrl;
     const capturedScopeDisplayName = scope.displayName;
@@ -235,7 +247,7 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       const b = await chromium.launch({ headless: false, args: capturedArgs, ...(capturedChromePath !== undefined ? { executablePath: capturedChromePath } : { channel: "chrome" }) });
       return { newContext: async () => { const ctx = await b.newContext(); try { await ctx.grantPermissions([...capturedGrants], { origin: MEET_PERMISSION_ORIGIN }); } catch (e) { await ctx.close().catch(() => {}); throw e; } return ctx; }, close: () => b.close() };
     };
-    const launchFn: () => Promise<MeetProofBrowser<Page>> = capturedLaunch ?? (capturedBrowserMode === "attached-profile" ? () => launchAttachedMeetChrome<Page>({ chromePath: attachedChromePath, profileDir: capturedProfileDir, port: capturedPort, args: capturedArgs, grants: capturedGrants, spawn: capturedSpawn, connect: capturedConnect }) : capturedCameraMode === "twin-image" ? launchTwin : () => {
+    const launchFn: () => Promise<MeetProofBrowser<Page>> = capturedLaunch ?? (!guestMode && capturedBrowserMode === "attached-profile" ? () => launchAttachedMeetChrome<Page>({ chromePath: attachedChromePath, profileDir: capturedProfileDir, port: capturedPort, args: capturedArgs, grants: capturedGrants, spawn: capturedSpawn, connect: capturedConnect }) : !guestMode && capturedCameraMode === "twin-image" ? launchTwin : () => {
       if (capturedChromePath !== undefined) return chromium.launch({ headless: false, executablePath: capturedChromePath, args: ["--deny-permission-prompts"] } as never) as Promise<MeetProofBrowser<Page>>;
       return chromium.launch({ headless: false, channel: "chrome", args: ["--deny-permission-prompts"] } as never) as Promise<MeetProofBrowser<Page>>;
     });
@@ -245,7 +257,13 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       if (!admitGuard()) return false;
       let fn: (p: Page, sc: Readonly<{ meetingUrl: string; displayName: string }>, sg: AbortSignal) => Promise<boolean>;
       if (capturedAdmit) fn = capturedAdmit;
-      else {
+      else if (guestMode) {
+        const guest = createGuestMeetDriver({ guestName: capturedGuestName });
+        fn = async (p, sc, sg): Promise<boolean> => {
+          if (!admitGuard()) return false;
+          return guest(p, sc, sg);
+        };
+      } else {
         const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: capturedEmail, timeoutMs: 60000, allowOwnerTransfer: capturedAllowTransfer, ownerSignInTimeoutMs: 300000, unrecognizedGraceMs: capturedGrace, cameraMode: capturedCameraMode });
         fn = async (p, sc, sg): Promise<boolean> => {
           if (!admitGuard()) return false;

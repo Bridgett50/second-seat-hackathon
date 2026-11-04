@@ -1,5 +1,5 @@
 import { it, expect, vi } from "vitest";
-import { createAuthenticatedMeetDriver, type MeetDriverPage, type MeetDriverLocator } from "../src/meetAdmissionDriver.js";
+import { createAuthenticatedMeetDriver, type MeetDriverPage, type MeetDriverLocator, createGuestMeetDriver, resolveMeetGuestName, type MeetGuestPage, type MeetGuestLocator } from "../src/meetAdmissionDriver.js";
 import { createMeetAdmissionBrowser } from "../src/meetAdmissionBrowser.js";
 const A = "https://meet.google.com/abc-defg-hij";
 const SA = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(A)}`;
@@ -784,4 +784,97 @@ it("T4 owner text on meeting page joins", async () => {
   expect(r).toBe(true);
   expect(gotos).toEqual([SA]);
   expect(joins).toBe(1);
+});
+type GuestLobby = "admit" | "refuse" | "hang";
+function guestFake(lobby: GuestLobby, cantJoin = false) {
+  const gotos: string[] = []; const filled: string[] = []; const clicks: string[] = []; const names: string[] = []; const lobbyTimeouts: number[] = [];
+  let micOn = true; let asked = false;
+  const loc = (visible: () => boolean, onClick: () => void, wait?: (ms: number) => Promise<void>): MeetGuestLocator => ({
+    waitFor(o) {
+      if (o?.state === "hidden") return visible() ? Promise.reject(new Error("still visible")) : Promise.resolve();
+      if (visible()) return Promise.resolve();
+      if (wait) return wait(o?.timeout ?? 0);
+      return Promise.reject(new Error("hidden"));
+    },
+    isVisible() { return Promise.resolve(visible()); },
+    click() { onClick(); return Promise.resolve(); },
+    fill(v: string) { filled.push(v); return Promise.resolve(); },
+  });
+  const page: MeetGuestPage = {
+    goto(url: string) { gotos.push(url); return Promise.resolve(); },
+    url() { return gotos[gotos.length - 1] ?? ""; },
+    getByRole(role, o) {
+      const n = typeof o.name === "string" ? o.name : o.name.source;
+      names.push(n);
+      if (role === "textbox") return loc(() => !cantJoin, () => { clicks.push("name box"); });
+      if (n === "Turn off microphone") return loc(() => micOn, () => { clicks.push(n); micOn = false; });
+      if (n === "Ask to join") return loc(() => !cantJoin, () => { clicks.push(n); asked = true; });
+      if (n === "Leave call") return loc(() => asked && lobby === "admit", () => { clicks.push(n); }, (ms) => {
+        lobbyTimeouts.push(ms);
+        if (lobby !== "hang") return Promise.reject(new Error("hidden"));
+        return new Promise<void>((_res, rej) => { setTimeout(() => rej(new Error("timeout")), ms); });
+      });
+      return loc(() => false, () => { clicks.push(n); });
+    },
+    getByText() { return loc(() => cantJoin || (asked && lobby === "refuse"), () => {}); },
+  };
+  return { page, gotos, filled, clicks, names };
+}
+const forbidden = (names: string[]): string[] => names.filter((n) => /join now|switch here|sign in|gemini/i.test(n));
+it("guest join: names without AI twin are refused", () => {
+  expect(resolveMeetGuestName()).toBe("Bridgett's AI twin");
+  expect(resolveMeetGuestName("  Bridgett's ai TWIN ")).toBe("Bridgett's ai TWIN");
+  expect(() => resolveMeetGuestName("Bridgett")).toThrow(/AI twin/);
+  expect(() => resolveMeetGuestName("AI twin" + String.fromCharCode(10))).not.toThrow();
+  expect(() => resolveMeetGuestName("AI" + String.fromCharCode(7) + " twin")).toThrow();
+  expect(() => createGuestMeetDriver({ guestName: "Bridgett's assistant" })).toThrow(/AI twin/);
+});
+it("guest join: opens the meeting directly, types the name, mutes, and clicks only Ask to join", async () => {
+  const f = guestFake("admit");
+  const ok = await createGuestMeetDriver({})(f.page, { meetingUrl: A, displayName: "Second Seat AI twin (test)" }, new AbortController().signal);
+  expect(ok).toBe(true);
+  expect(f.gotos).toEqual([A]);
+  expect(f.filled).toEqual(["Bridgett's AI twin"]);
+  expect(f.clicks).toEqual(["Turn off microphone", "Ask to join"]);
+  expect(forbidden(f.names)).toEqual([]);
+});
+it("guest join: a can't-join page is refused without asking to join", async () => {
+  const f = guestFake("admit", true);
+  expect(await createGuestMeetDriver({})(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal)).toBe(false);
+  expect(f.clicks).toEqual([]);
+  expect(f.filled).toEqual([]);
+  const d = guestFake("refuse");
+  expect(await createGuestMeetDriver({})(d.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal)).toBe(false);
+  expect(d.clicks).toEqual(["Turn off microphone", "Ask to join"]);
+  expect(forbidden(d.names)).toEqual([]);
+});
+it("guest join: waits about 5 minutes in the lobby and then gives up", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = guestFake("hang");
+    let done: boolean | null = null;
+    const p = createGuestMeetDriver({})(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal).then((v) => { done = v; });
+    await vi.advanceTimersByTimeAsync(299999);
+    expect(done).toBe(null);
+    await vi.advanceTimersByTimeAsync(1);
+    await p;
+    expect(done).toBe(false);
+  } finally { vi.useRealTimers(); }
+});
+it("guest join: abort while waiting in the lobby cleans up the browser", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = guestFake("hang");
+    let closeCalls = 0;
+    const launch = (): Promise<{ newContext(): Promise<{ newPage(): Promise<MeetGuestPage> }>; close(): Promise<void> }> => Promise.resolve({ newContext: () => Promise.resolve({ newPage: () => Promise.resolve(f.page) }), close: () => { closeCalls += 1; return Promise.resolve(); } });
+    const transport = createMeetAdmissionBrowser<MeetGuestPage>({ meetingUrl: A, displayName: "Bridgett AI twin (test)" }, { launch, admit: createGuestMeetDriver({}) });
+    const ac = new AbortController();
+    const p = transport.join(A, "Bridgett AI twin (test)", ac.signal);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.clicks).toEqual(["Turn off microphone", "Ask to join"]);
+    ac.abort();
+    expect(await p).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closeCalls).toBe(1);
+  } finally { vi.useRealTimers(); }
 });

@@ -1,5 +1,6 @@
 import { test, expect, vi } from "vitest";
 import type { Page } from "@playwright/test";
+import { join, resolve } from "node:path";
 import type { MeetProofBrowser } from "./../src/meetAdmissionBrowser.js";
 import { createLocalMeetCaptureFactory, MeetCaptureStartError, enableMeetCaptions, type MeetCaptionsPage, meetChromeArgs, meetPermissionGrants, launchAttachedMeetChrome, defaultMeetChromePath, resolveMeetProfileDir, meetCaptureOptsFromEnv, type AttachedChild, type AttachedBrowser } from "../src/meetWorkerCapture.js";
 import { collectMeetUiDiagnostic, MEET_CAPTION_REGION_SELECTOR, MEET_CAPTION_REGION_ALT_SELECTOR } from "../src/meetCaptionReader.js";
@@ -412,8 +413,8 @@ test("attached-profile: default mode grants nothing; non-loopback DevTools host,
   await expect(launchAttachedMeetChrome<FP>({ chromePath: "/opt/chrome", profileDir: "/tmp/p", port: 0, args: [], grants: ["microphone"], spawn: () => fakeChild().child, connect: async () => fakeCdp().browser })).rejects.toThrow(/camera/);
 });
 test("attached-profile: profile dir must be absolute and never the main Chrome profile", () => {
-  expect(resolveMeetProfileDir(undefined, "/home/u")).toBe("/home/u/.second-seat/meet-worker-profile");
-  expect(resolveMeetProfileDir("/srv/meet-profile", "/home/u")).toBe("/srv/meet-profile");
+  expect(resolveMeetProfileDir(undefined, "/home/u")).toBe(resolve(join("/home/u", ".second-seat", "meet-worker-profile")));
+  expect(resolveMeetProfileDir("/srv/meet-profile", "/home/u")).toBe(resolve("/srv/meet-profile"));
   expect(() => resolveMeetProfileDir("relative/dir", "/home/u")).toThrow();
   expect(() => resolveMeetProfileDir("/home/u", "/home/u")).toThrow();
   expect(() => resolveMeetProfileDir("/home/u/.config/google-chrome", "/home/u")).toThrow();
@@ -425,7 +426,7 @@ test("attached-profile: profile dir must be absolute and never the main Chrome p
 });
 test("env: browser mode, profile and twin media are read and fail closed", () => {
   expect(meetCaptureOptsFromEnv({})).toEqual({});
-  expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_BROWSER: "attached-profile", SECOND_SEAT_MEET_PROFILE_DIR: "/srv/meet-profile" })).toEqual({ browserMode: "attached-profile", profileDir: "/srv/meet-profile" });
+  expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_BROWSER: "attached-profile", SECOND_SEAT_MEET_PROFILE_DIR: "/srv/meet-profile" })).toEqual({ browserMode: "attached-profile", profileDir: resolve("/srv/meet-profile") });
   expect(() => meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_BROWSER: "main-profile" })).toThrow();
   expect(() => meetCaptureOptsFromEnv({ SECOND_SEAT_TWIN_VIDEO: "/tmp/placeholder/twin.y4m" })).toThrow();
   expect(meetCaptureOptsFromEnv({ SECOND_SEAT_TWIN_VIDEO: TWIN.videoPath, SECOND_SEAT_TWIN_AUDIO: TWIN.audioPath })).toEqual({ cameraMode: "twin-image", twinMedia: TWIN });
@@ -445,4 +446,24 @@ test("factory attached-profile twin-image: spawns via the child launcher, grants
   expect(admit).toHaveBeenCalledTimes(1);
   expect(browserClosed).toBe(1); expect(fc.kills).toEqual(["SIGTERM"]);
   expect(() => createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", browserMode: "attached-profile", profileDir: "rel/dir" })).toThrow();
+});
+test("guest join: env is read, names without AI twin are refused, and captions are enabled after admission", async () => {
+  expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "guest" })).toEqual({ joinMode: "guest" });
+  expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "owner" })).toEqual({});
+  expect(meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "guest", SECOND_SEAT_MEET_GUEST_NAME: "Bridgett's AI twin" })).toEqual({ joinMode: "guest", guestName: "Bridgett's AI twin" });
+  expect(() => meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "visitor" })).toThrow();
+  expect(() => meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "guest", SECOND_SEAT_MEET_GUEST_NAME: "Bridgett" })).toThrow(/AI twin/);
+  expect(() => meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "guest", SECOND_SEAT_MEET_BROWSER: "attached-profile" })).toThrow();
+  expect(() => meetCaptureOptsFromEnv({ SECOND_SEAT_MEET_JOIN: "guest", SECOND_SEAT_TWIN_VIDEO: TWIN.videoPath, SECOND_SEAT_TWIN_AUDIO: TWIN.audioPath })).toThrow();
+  expect(() => createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", joinMode: "guest", guestName: "Bridgett" })).toThrow(/AI twin/);
+  expect(() => createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", joinMode: "guest", browserMode: "attached-profile", profileDir: "/tmp/ss-profile" })).toThrow();
+  const b = mkBrowser(fakePage());
+  const launch = vi.fn(async () => b.browser);
+  const admit = vi.fn(async () => true);
+  const enableCaptions = vi.fn(async () => false);
+  const factory = createLocalMeetCaptureFactory({ expectedOwnerEmail: "owner@example.test", joinMode: "guest", launch, admit, enableCaptions });
+  await expect(factory(scope(() => true), new AbortController().signal)).rejects.toBeInstanceOf(MeetCaptureStartError);
+  expect(admit).toHaveBeenCalledTimes(1);
+  expect(enableCaptions).toHaveBeenCalledTimes(1);
+  expect(b.close).toHaveBeenCalledTimes(1);
 });

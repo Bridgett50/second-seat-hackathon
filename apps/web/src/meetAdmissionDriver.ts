@@ -203,3 +203,86 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
     }
   };
 }
+// Guest join: the twin joins as a visible guest named as an AI twin, and the owner admits it from the lobby.
+export const DEFAULT_MEET_GUEST_NAME = "Bridgett's AI twin";
+export function resolveMeetGuestName(name?: string): string {
+  const n = name === undefined || name.trim() === "" ? DEFAULT_MEET_GUEST_NAME : name.trim();
+  if (n.length > 60) throw new Error("Meet guest name is too long");
+  for (let i = 0; i < n.length; i++) { const c = n.charCodeAt(i); if (c < 32 || c === 127) throw new Error("Meet guest name has a control character"); }
+  if (!n.toLowerCase().includes("ai twin")) throw new Error("Meet guest name must say AI twin");
+  return n;
+}
+export type MeetGuestLocator = {
+  waitFor(options?: { state?: "attached" | "detached" | "visible" | "hidden"; timeout?: number }): Promise<void>;
+  isVisible(): Promise<boolean>;
+  click(): Promise<void>;
+  fill(value: string): Promise<void>;
+};
+export type MeetGuestPage = {
+  goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
+  url(): string;
+  getByRole(role: "button" | "textbox", options: { name: string | RegExp; exact?: boolean }): MeetGuestLocator;
+  getByText(text: RegExp): MeetGuestLocator;
+};
+// Opens the approved meeting link directly (no Google sign-in), types the guest name, keeps the microphone and camera off,
+// clicks only "Ask to join", then waits in the lobby until the owner admits it. It never clicks Join now, Switch here, Sign in or Gemini.
+export function createGuestMeetDriver(opts: { guestName?: string; timeoutMs?: number; lobbyTimeoutMs?: number }) {
+  const guestName = resolveMeetGuestName(opts.guestName);
+  const timeout = opts.timeoutMs ?? 30000;
+  if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 60000) throw new Error("invalid timeoutMs");
+  const lobbyMs = opts.lobbyTimeoutMs ?? 300000;
+  if (!Number.isInteger(lobbyMs) || lobbyMs <= 0 || lobbyMs > 600000) throw new Error("invalid lobbyTimeoutMs");
+  return async (page: MeetGuestPage, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal): Promise<boolean> => {
+    if (signal.aborted) return false;
+    let target: URL;
+    try { target = new URL(scope.meetingUrl); } catch { return false; }
+    const code = target.pathname.slice(1);
+    if (target.href !== scope.meetingUrl || target.origin !== "https://meet.google.com" || target.username !== "" || target.password !== "" || target.search !== "" || target.hash !== "" || !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(code)) return false;
+    const onMeet = (): boolean => {
+      try { const u = new URL(page.url()); return u.origin === "https://meet.google.com" && u.username === "" && u.password === "" && u.pathname === "/" + code; } catch { return false; }
+    };
+    const shown = async (l: MeetGuestLocator): Promise<boolean> => {
+      try { return await l.isVisible(); } catch { return false; }
+    };
+    // Index of the first locator that becomes visible, or -1 on timeout or abort.
+    const firstOf = (ls: MeetGuestLocator[], ms: number): Promise<number> => {
+      if (signal.aborted) return Promise.resolve(-1);
+      return new Promise<number>((done) => {
+        const onAbort = (): void => { done(-1); };
+        signal.addEventListener("abort", onAbort, { once: true });
+        Promise.any(ls.map((l, i) => Promise.resolve().then(() => l.waitFor({ state: "visible", timeout: ms })).then(() => i))).then(
+          (i) => { signal.removeEventListener("abort", onAbort); done(i); },
+          () => { signal.removeEventListener("abort", onAbort); done(-1); }
+        );
+      });
+    };
+    const refused = page.getByText(/can.t join this video call|denied your request|removed from the (call|meeting)|no one responded/i);
+    try {
+      await page.goto(scope.meetingUrl, { waitUntil: "domcontentloaded", timeout });
+      if (signal.aborted || !onMeet()) return false;
+      const nameBox = page.getByRole("textbox", { name: /your name/i });
+      if ((await firstOf([nameBox, refused], timeout)) !== 0) return false;
+      if (signal.aborted || (await shown(refused)) || !onMeet()) return false;
+      await nameBox.fill(guestName);
+      const micOff = page.getByRole("button", { name: "Turn off microphone", exact: true });
+      const camOff = page.getByRole("button", { name: "Turn off camera", exact: true });
+      for (const l of [micOff, camOff]) {
+        if (!(await shown(l))) continue;
+        if (signal.aborted || !onMeet()) return false;
+        await l.click();
+        await l.waitFor({ state: "hidden", timeout });
+      }
+      if ((await shown(micOff)) || (await shown(camOff))) return false;
+      const askBtn = page.getByRole("button", { name: "Ask to join", exact: true });
+      if ((await firstOf([askBtn, refused], timeout)) !== 0) return false;
+      if (signal.aborted || (await shown(refused)) || !onMeet()) return false;
+      await askBtn.click();
+      const leaveBtn = page.getByRole("button", { name: "Leave call", exact: true });
+      if ((await firstOf([leaveBtn, refused], lobbyMs)) !== 0) return false;
+      if (signal.aborted || (await shown(refused)) || !onMeet()) return false;
+      return await shown(leaveBtn);
+    } catch {
+      return false;
+    }
+  };
+}
