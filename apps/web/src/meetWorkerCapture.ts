@@ -77,7 +77,7 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       let fn: (p: Page, sc: Readonly<{ meetingUrl: string; displayName: string }>, sg: AbortSignal) => Promise<boolean>;
       if (capturedAdmit) fn = capturedAdmit as unknown as typeof fn;
       else {
-        const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: capturedEmail, timeoutMs: 60000, allowOwnerTransfer: capturedAllowTransfer });
+        const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: capturedEmail, timeoutMs: 60000, allowOwnerTransfer: capturedAllowTransfer, ownerSignInTimeoutMs: 300000 });
         fn = async (p, sc, sg): Promise<boolean> => {
           if (!admitGuard()) return false;
           return driver(p, sc, sg);

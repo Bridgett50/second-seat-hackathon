@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean }) {
+export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number }) {
   const expectedEmail = opts.expectedOwnerEmail;
   if (typeof expectedEmail !== "string" || expectedEmail.trim() === "" || expectedEmail.length > 320 || /[\x00-\x1F\x7F]/.test(expectedEmail)) {
     throw new Error("invalid expectedOwnerEmail");
@@ -9,6 +9,9 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
   t = Math.min(60000, Math.max(1000, t));
   const allowTransfer = opts.allowOwnerTransfer === true;
   const timeout = t;
+  let ownerSignInTimeoutMs = opts.ownerSignInTimeoutMs ?? timeout;
+  if (!Number.isFinite(ownerSignInTimeoutMs) || !Number.isInteger(ownerSignInTimeoutMs) || ownerSignInTimeoutMs <= 0) throw new Error("invalid ownerSignInTimeoutMs");
+  ownerSignInTimeoutMs = Math.min(300000, ownerSignInTimeoutMs);
   const scopeRe = /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
   return async (page: Page, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal): Promise<boolean> => {
     const approvedUrl = scope.meetingUrl;
@@ -32,7 +35,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         if (!isApprovedUrl()) return false;
         await cont.click();
       }
-      await emailLoc.waitFor({ state: "visible", timeout });
+      await emailLoc.waitFor({ state: "visible", timeout: ownerSignInTimeoutMs });
       if (!(await emailLoc.isVisible())) return false;
       if (signal.aborted) return false;
       let joinBtn = page.getByRole("button", { name: "Join now", exact: true });
@@ -56,6 +59,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         joinBtn = switchBtn;
       }
       if (signal.aborted) return false;
+      if (!(await emailLoc.isVisible()) || signal.aborted) return false;
       if (!isApprovedUrl()) return false;
       await joinBtn.click();
       const leaveBtn = page.getByRole("button", { name: "Leave call", exact: true });
