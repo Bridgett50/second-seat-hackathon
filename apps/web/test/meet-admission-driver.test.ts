@@ -89,7 +89,7 @@ it("regression: email wait that navigates to different meeting must not join", a
     }),
     getByRole: (_role: string, opts: { name: string; exact: boolean }) => {
       if (opts.name === "Continue without microphone and camera") return { count: () => 0 } as unknown as ReturnType<Page["getByRole"]>;
-      if (opts.name === "Join now") return { count: () => 1, isVisible: async () => true, click: async () => { joinClicks++; } } as unknown as ReturnType<Page["getByRole"]>;
+      if (opts.name === "Join now") return { count: () => 1, isVisible: async () => true, click: async () => { joinClicks++; }, waitFor: async () => {} } as unknown as ReturnType<Page["getByRole"]>;
       if (opts.name === "Leave call") return { waitFor: async () => {}, isVisible: async () => true } as unknown as ReturnType<Page["getByRole"]>;
       return { count: () => 0 } as unknown as ReturnType<Page["getByRole"]>;
     },
@@ -108,7 +108,7 @@ it('regression: explicit owner transfer permission required to click Switch here
     getByRole: (_r: unknown, o?: { name?: string }) => {
       if (o?.name === 'Switch here') return { count: () => 1, isVisible: () => true, click: async () => { clicks++; } } as unknown as ReturnType<Page['getByRole']>;
       if (o?.name === 'Continue without microphone and camera') return { count: () => 0 } as unknown as ReturnType<Page['getByRole']>;
-      if (o?.name === 'Join now') return { count: () => 0 } as unknown as ReturnType<Page['getByRole']>;
+      if (o?.name === 'Join now') return { count: () => 0, waitFor: async () => { throw new Error('not visible'); }, or: (other: unknown) => ({ waitFor: async () => {} }) } as unknown as ReturnType<Page['getByRole']>;
       if (o?.name === 'Leave call') return { waitFor: async () => {}, isVisible: () => true } as unknown as ReturnType<Page['getByRole']>;
       return { count: () => 0 } as unknown as ReturnType<Page['getByRole']>;
     },
@@ -121,4 +121,71 @@ it('regression: explicit owner transfer permission required to click Switch here
   const allowed = createAuthenticatedMeetDriver({ expectedOwnerEmail: 'owner@example.test', allowOwnerTransfer: true });
   expect(await allowed(makePage(), scope, signal)).toBe(true);
   expect(clicks).toBe(1);
+});
+it('blocks on Join ready before counting or clicking', async () => {
+  let ready = false;
+  let clicks = 0;
+  let sawWait!: () => void;
+  const sawWaitPromise = new Promise<void>((r) => (sawWait = r));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const page = {
+    goto: async () => {},
+    url: () => A,
+    getByText: (text: string, _opts?: { exact?: boolean }) => ({
+      waitFor: async () => {},
+      isVisible: async () => true,
+    }),
+    getByRole: (_role: string, opts: { name: string }) => {
+      const sel = opts.name;
+      if (sel.includes('Join')) return { waitFor: async () => { sawWait(); await gate; ready = true; }, count: async () => (ready ? 1 : 0), isVisible: async () => ready, click: async () => { clicks++; } };
+      if (sel.includes('Continue') || sel.includes('Switch')) return { count: async () => 0, isVisible: async () => false };
+      if (sel.includes('Leave')) return { waitFor: async () => {}, isVisible: async () => true };
+      return { waitFor: async () => {}, count: async () => 0, isVisible: async () => true };
+    },
+  } as unknown as Page;
+  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: 'owner@example.test' });
+  const scope = { meetingUrl: A, displayName: 'Bridgett AI twin (test)' };
+  const signal = new AbortController().signal;
+  try {
+    const result = driver(page, scope, signal);
+    expect(await Promise.race([result.then(() => 'finished'), sawWaitPromise.then(() => 'waiting')])).toBe('waiting');
+    expect(clicks).toBe(0);
+    release();
+    expect(await result).toBe(true);
+    expect(clicks).toBe(1);
+  } finally { release(); }
+});
+it('allows only google meet pli=1 without authuser/hash/cross-meeting', async () => {
+  const A = 'https://meet.google.com/abc-defg-hij';
+  const B = 'https://meet.google.com/xyz-uvwx-zzz';
+  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: 'owner@example.test' });
+  const scope = { meetingUrl: A, displayName: 'Bridgett AI twin (test)' };
+  const signal = new AbortController().signal;
+  const cases: [string, boolean][] = [
+    [A + '?pli=1', true],
+    [A.replace('com/', 'com/meet/') + '?pli=1', true],
+    [A + '?pli=2', false],
+    [A + '?pli=1&authuser=other', false],
+    [A + '?pli=1#x', false],
+    [B + '?pli=1', false],
+  ];
+  for (const [currentCase, expected] of cases) {
+    let clicks = 0;
+    const fake = {
+      goto: async () => {},
+      url: () => currentCase,
+      getByText: (_t: string) => ({ waitFor: async () => {}, isVisible: async () => true }),
+      getByRole: (role: string, opts?: { name?: string; exact?: boolean }) => {
+        const name = opts?.name ?? '';
+        if (name === 'Continue without mic and camera' || name === 'Continue without microphone and camera') return { count: async () => 0, isVisible: async () => false, waitFor: async () => {}, click: async () => {} };
+        if (name === 'Join now' || name === 'Join') return { count: async () => 1, isVisible: async () => true, waitFor: async () => {}, click: async () => { clicks++; } };
+        if (name === 'Leave call' || name === 'Leave') return { waitFor: async () => {}, isVisible: async () => true, count: async () => 0, click: async () => {} };
+        return { count: async () => 0, isVisible: async () => false, waitFor: async () => {}, click: async () => {} };
+      },
+    };
+    const result = await driver(fake as unknown as Page, scope, signal);
+    expect(result).toBe(expected);
+    expect(clicks).toBe(expected ? 1 : 0);
+  }
 });

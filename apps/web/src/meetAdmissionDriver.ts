@@ -18,7 +18,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
     const approvedTarget = new URL(approvedUrl);
   const isApprovedUrl = () => {
     const u = new URL(page.url());
-    return u.origin === "https://meet.google.com" && !u.username && !u.password && !u.port && u.search === approvedTarget.search && u.hash === approvedTarget.hash && (u.pathname === `/${approvedCode}` || u.pathname === `/meet/${approvedCode}`);
+    return u.origin === "https://meet.google.com" && !u.username && !u.password && !u.port && (u.search === approvedTarget.search || (approvedTarget.search === "" && u.search === "?pli=1")) && u.hash === approvedTarget.hash && (u.pathname === `/${approvedCode}` || u.pathname === `/meet/${approvedCode}`);
   };
     try {
       await page.goto(approvedUrl, { waitUntil: "domcontentloaded", timeout });
@@ -31,10 +31,22 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       const emailLoc = page.getByText(expectedEmail, { exact: true });
       await emailLoc.waitFor({ state: "visible", timeout });
       if (!(await emailLoc.isVisible())) return false;
+      if (signal.aborted) return false;
       let joinBtn = page.getByRole("button", { name: "Join now", exact: true });
+      const switchBtn = page.getByRole("button", { name: "Switch here", exact: true });
+      if (allowTransfer) {
+        await joinBtn.or(switchBtn).waitFor({ state: "visible", timeout });
+      } else {
+        await joinBtn.waitFor({ state: "visible", timeout });
+      }
+      if (signal.aborted) return false;
+      const cont2 = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
+      if ((await cont2.count()) === 1 && (await cont2.isVisible())) {
+        if (signal.aborted) return false;
+        await cont2.click();
+      }
       if ((await joinBtn.count()) !== 1 || !(await joinBtn.isVisible())) {
         if (allowTransfer !== true) return false;
-        const switchBtn = page.getByRole("button", { name: "Switch here", exact: true });
         if ((await switchBtn.count()) !== 1) return false;
         if (!(await switchBtn.isVisible())) return false;
         joinBtn = switchBtn;
