@@ -1,7 +1,7 @@
 import { it, expect } from "vitest";
 import { chromium, type Page } from "@playwright/test";
 import { existsSync } from "node:fs";
-import { createAuthenticatedMeetDriver } from "../src/meetAdmissionDriver.js";
+import { createAuthenticatedMeetDriver, ownerAccountNamePattern } from "../src/meetAdmissionDriver.js";
 const A = "https://meet.google.com/abc-defg-hij";
 const B = "https://meet.google.com/xxx-yyyy-zzz";
 const chromePath = process.env.PLAYWRIGHT_CHROME_PATH ?? (existsSync("/usr/bin/google-chrome") ? "/usr/bin/google-chrome" : undefined);
@@ -79,6 +79,54 @@ it("synthetic admission with redirect regression", async () => {
   } finally { await browser.close(); }
 }, 25000);
 
+it("owner account button: token-bounded name pattern", () => {
+  const p = ownerAccountNamePattern("owner@example.test");
+  expect(p.test("Google Account: Bridgett (owner@example.test)")).toBe(true);
+  expect(p.test("owner@example.test")).toBe(true);
+  expect(p.test("Google Account: Bridgett (OWNER@EXAMPLE.TEST)")).toBe(true);
+  expect(p.test("Google Account: X (bowner@example.test)")).toBe(false);
+  expect(p.test("Google Account: X (owner@example.test.evil)")).toBe(false);
+  expect(p.test("Google Account: X (owner@exampleXtest)")).toBe(false);
+});
+it("real chromium: owner account aria-label is token-bounded", async () => {
+  const browser = await chromium.launch({ headless: true, timeout: 10000, ...(chromePath !== undefined ? { executablePath: chromePath } : {}) });
+  try {
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000 });
+    const scope = { meetingUrl: A, displayName: "Bridgett AI twin" };
+    const acct = (label: string): string => `<!doctype html><html><body data-joins="0"><button id="j">Join now</button><button aria-label="${label}">B</button><script>const b=document.getElementById("j");b&&b.addEventListener("click",()=>{document.body.dataset.joins="1";const n=document.createElement("button");n.textContent="Leave call";document.body.appendChild(n)});<\/script></body></html>`;
+    const bad = acct("Google Account: X (bowner@example.test)");
+    const good = acct("Google Account: Bridgett (owner@example.test)");
+    {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      const traces: string[] = [];
+      await page.route("**/*", async (route) => {
+        const u = route.request().url();
+        traces.push(u);
+        if (u === "https://meet.google.com/" || u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: bad }); return; }
+        await route.abort();
+      });
+      const r = await driver(page, scope, new AbortController().signal);
+      expect(r).toBe(false); expect(traces).toEqual(["https://meet.google.com/"]); expect(page.url()).toBe("https://meet.google.com/");
+      await ctx.close();
+    }
+    {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      const traces: string[] = [];
+      await page.route("**/*", async (route) => {
+        const u = route.request().url();
+        traces.push(u);
+        if (u === "https://meet.google.com/" || u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: good }); return; }
+        await route.abort();
+      });
+      const r = await driver(page, scope, new AbortController().signal);
+      const joins = await page.locator("body").getAttribute("data-joins");
+      expect(r).toBe(true); expect(joins).toBe("1"); expect(traces).toEqual(["https://meet.google.com/", A]);
+      await ctx.close();
+    }
+  } finally { await browser.close(); }
+}, 25000);
 it("regression: email wait that navigates to different meeting must not join", async () => {
   let url = "";
   let gotoCount = 0;
@@ -143,8 +191,8 @@ it('blocks on Join ready before counting or clicking', async () => {
       waitFor: async () => {},
       isVisible: async () => true,
     }),
-    getByRole: (_role: string, opts: { name: string }) => {
-      const sel = opts.name;
+    getByRole: (_role: string, opts: { name: string | RegExp }) => {
+      const sel = typeof opts.name === "string" ? opts.name : "";
       if (sel.includes('Join')) return { waitFor: async () => { sawWait(); await gate; ready = true; }, count: async () => (ready ? 1 : 0), isVisible: async () => ready, click: async () => { clicks++; } };
       if (sel.includes('Continue') || sel.includes('Switch')) return { count: async () => 0, isVisible: async () => false };
       if (sel.includes('Leave')) return { waitFor: async () => {}, isVisible: async () => true };

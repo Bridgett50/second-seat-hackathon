@@ -14,8 +14,9 @@ function makeFake(signedEmail: string, opts?: { failVisible?: boolean; hang?: bo
     url() {
       return gotos[gotos.length - 1] ?? "";
     },
-    getByRole(role: "button", options?: { name?: string }) {
-      const name = options?.name ?? "";
+    getByRole(role: "button", options?: { name?: string | RegExp }) {
+      const raw = options?.name ?? "";
+      const name = typeof raw === "string" ? raw : raw.test("owner@example.test") ? "owner@example.test" : "";
       if (name === "Continue without microphone and camera") {
         const loc: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(other: MeetDriverLocator) { return loc; } };
         return loc;
@@ -128,8 +129,9 @@ it("T1 email on accounts then home proceeds", async () => {
   const page: MeetDriverPage = {
     goto(url: string) { gotos.push(url); loc = url === "https://meet.google.com/" ? "https://accounts.google.com/" : url; return Promise.resolve(); },
     url() { return loc; },
-    getByRole(role: "button", options?: { name?: string }) {
-      const name = options?.name ?? "";
+    getByRole(role: "button", options?: { name?: string | RegExp }) {
+      const raw = options?.name ?? "";
+      const name = typeof raw === "string" ? raw : raw.test(exp) ? exp : "";
       if (name === exp) {
         const loc2: MeetDriverLocator = { waitFor() { return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(other: MeetDriverLocator) { return loc2; } };
         return loc2;
@@ -237,8 +239,9 @@ it("T5 aria-label-only on home and meeting joins", async () => {
   const page: MeetDriverPage = {
     goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
     url() { return loc; },
-    getByRole(role: "button", opts?: { name?: string }) {
-      const name = opts?.name ?? "";
+    getByRole(role: "button", opts?: { name?: string | RegExp }) {
+      const raw = opts?.name ?? "";
+      const name = typeof raw === "string" ? raw : raw.test(exp) ? exp : "";
       if (name === exp) {
         const l: MeetDriverLocator = { waitFor() { return Promise.resolve(); }, count() { return Promise.resolve(1); }, isVisible() { return Promise.resolve(true); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } };
         return l;
@@ -275,8 +278,9 @@ it("T6 meeting aria-label for a different email refuses", async () => {
   const page: MeetDriverPage = {
     goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
     url() { return loc; },
-    getByRole(role: "button", opts?: { name?: string }) {
-      const name = opts?.name ?? "";
+    getByRole(role: "button", opts?: { name?: string | RegExp }) {
+      const raw = opts?.name ?? "";
+      const name = typeof raw === "string" ? raw : raw.test(exp) ? exp : "";
       if (name === exp) {
         const l: MeetDriverLocator = { waitFor() { return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(0); }, isVisible() { return Promise.resolve(false); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } };
         return l;
@@ -318,8 +322,9 @@ it("T4 aria-label-only on home still joins", async () => {
   const page: MeetDriverPage = {
     goto(url: string) { gotos.push(url); loc = url; return Promise.resolve(); },
     url() { return loc; },
-    getByRole(role: "button", opts?: { name?: string }) {
-      const name = opts?.name ?? "";
+    getByRole(role: "button", opts?: { name?: string | RegExp }) {
+      const raw = opts?.name ?? "";
+      const name = typeof raw === "string" ? raw : raw.test(exp) ? exp : "";
       if (name === exp) {
         const onHome = (): boolean => loc === "https://meet.google.com/";
         const l: MeetDriverLocator = { waitFor() { if (onHome()) return Promise.resolve(); return Promise.reject(new Error("hidden")); }, count() { return Promise.resolve(onHome() ? 1 : 0); }, isVisible() { return Promise.resolve(onHome()); }, click() { return Promise.resolve(); }, or(o: MeetDriverLocator) { return l; } };

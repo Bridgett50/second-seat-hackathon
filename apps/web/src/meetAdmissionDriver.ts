@@ -8,9 +8,13 @@ export type MeetDriverLocator = {
 export type MeetDriverPage = {
   goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
   url(): string;
-  getByRole(role: "button", options?: { name?: string; exact?: boolean }): MeetDriverLocator;
+  getByRole(role: "button", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
   getByText(text: string, options?: { exact?: boolean }): MeetDriverLocator;
 };
+export function ownerAccountNamePattern(email: string): RegExp {
+  const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[\\s(<:,])${escaped}($|[\\s)>,])`, "i");
+}
 export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number }) {
   const expectedEmail = opts.expectedOwnerEmail;
   if (typeof expectedEmail !== "string" || expectedEmail.trim() === "" || expectedEmail.length > 320 || /[\x00-\x1F\x7F]/.test(expectedEmail)) {
@@ -60,7 +64,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       await page.goto("https://meet.google.com/", { waitUntil: "domcontentloaded", timeout });
       const emailLoc = page.getByText(expectedEmail, { exact: true });
       const ownerText = emailLoc;
-      const ownerBtn = page.getByRole("button", { name: expectedEmail });
+      const ownerBtn = page.getByRole("button", { name: ownerAccountNamePattern(expectedEmail) });
       const onMeetHome = (): boolean => {
         const u = new URL(page.url());
         return u.origin === "https://meet.google.com" && !u.username && !u.password && !u.port && (u.pathname === "/" || u.pathname === "/landing");
