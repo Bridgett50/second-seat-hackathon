@@ -83,3 +83,40 @@ test("meet caption buffer chrome sample ingest", async () => {
     await browser.close();
   }
 });
+
+test("meet caption buffer keeps sampling past 256 rows, reads structural rows, and ignores the query string", async () => {
+  const target = "https://meet.google.com/abc-defg-hij";
+  const html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><button aria-label=\"Leave call\"></button><div role=\"region\" aria-label=\"Captions\"></div></body></html>";
+  const legacy = (n: number): string => "<div class=\"nMcdL\"><div class=\"adE6rb\"><div class=\"KcIKyf\">Alice</div></div><div class=\"ygicle\">line " + String(n) + "</div></div>";
+  const structural = (n: number): string => "<div><div><span>Speaker " + String(n) + "</span></div><div>words " + String(n) + "</div></div>";
+  const chromePath = process.env.PLAYWRIGHT_CHROME_PATH;
+  const launchOptions: { executablePath?: string } = {};
+  if (chromePath) launchOptions.executablePath = chromePath;
+  else if (existsSync("/usr/bin/google-chrome")) launchOptions.executablePath = "/usr/bin/google-chrome";
+  const browser = await chromium.launch(launchOptions);
+  try {
+    const page = await browser.newPage();
+    await page.route("**/*", async (route) => {
+      await route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html });
+    });
+    await page.goto(target + "?authuser=1&hl=en");
+    const buffer = createMeetCaptionBuffer({ page, meetingUrl: target, meetingId: "m-rolling", signal: new AbortController().signal, isCurrent: () => true });
+    const region = page.locator('div[role="region"][aria-label="Captions"]');
+    let total = 0;
+    for (let round = 0; round < 20; round++) {
+      const parts: string[] = [];
+      for (let i = 0; i < 30; i++) parts.push(legacy(round * 30 + i));
+      await region.evaluate((el: { innerHTML: string }, h: string) => { el.innerHTML = h; }, parts.join(""));
+      const got = await buffer.sample();
+      expect(got.length).toBe(30);
+      total += got.length;
+    }
+    expect(total).toBe(600);
+    await region.evaluate((el: { innerHTML: string }, h: string) => { el.innerHTML = h; }, structural(1) + structural(2));
+    const s = await buffer.sample();
+    expect(s.map((r) => [r.event.speaker, r.event.text])).toEqual([["Speaker 1", "words 1"], ["Speaker 2", "words 2"]]);
+    expect(s.map((r) => r.event.sequence)).toEqual([601, 602]);
+  } finally {
+    await browser.close();
+  }
+}, 30000);

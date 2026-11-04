@@ -218,7 +218,7 @@ test("trusted callback null/throw invalidates lease permanently", () => {
 });
 
 // 7 - TTL boundaries
-test("TTL: consume at +119999 succeeds and stays current past ticket deadline; at+1800000 not current; ticket expiry null", () => {
+test("TTL: consume at +119999 succeeds and stays current past ticket deadline; at+7200000 not current; ticket expiry null", () => {
   const s = setup();
   s.setBinding("callerA", "room1", s.mkBinding());
   s.setNow(1000);
@@ -230,7 +230,7 @@ test("TTL: consume at +119999 succeeds and stays current past ticket deadline; a
   // remains current after ticket deadline (120000)
   s.setNow(1000 + 130000);
   expect(lease!.isCurrent()).toBe(true);
-  s.setNow(1000 + 1800000);
+  s.setNow(1000 + 7200000);
   expect(lease!.isCurrent()).toBe(false);
   s.setNow(1000);
   expect(lease!.isCurrent()).toBe(false);
@@ -282,7 +282,7 @@ test("cap 128 enforcement, replacement at cap, revoke and expiry free slots", ()
     s3.setBinding("callerA", `r${i}`, { roomId: `r${i}`, ownerId: "o1", meetingId: `m${i}`, epoch: 1 });
     expect(s3.pairing.approve("callerA", `r${i}`, s3.validUrl, s3.validName)).not.toBeNull();
   }
-  // leases expiry cleans: advance past 1800000
+  // leases expiry cleans: advance past 7200000
   s3.setNow(1000 + 1800001);
   // need to trigger cleanup - new approval should succeed after leases expired
   s3.setBinding("callerA", "rNew", { roomId: "rNew", ownerId: "o1", meetingId: "mNew", epoch: 1 });

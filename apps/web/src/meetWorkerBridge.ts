@@ -96,6 +96,7 @@ try{const mid=(ev as Record<string,unknown>)["meetingId"];if(mid!==rec.binding.m
 if(!rec.lease.isCurrent()||rec.controller.signal.aborted){void beginStop(rec);break}
 let res:ReturnType<MeetingRoomService["ingestConversationAs"]>;
 try{res=service.ingestConversationAs(callerKey as string,roomId as string,ev as unknown)}catch{void beginStop(rec);break}
+if(res.status===409)continue;
 if(res.status!==200){void beginStop(rec);break}
 rec.accepted++}
 return freezeReply(200,rec.state,rec.accepted)}catch{void beginStop(rec);return freezeReply(200,rec.state,rec.accepted)}finally{rec.sampling=false}},

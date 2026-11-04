@@ -106,3 +106,29 @@ test('aborts after DOM extraction started but before resolve when current become
   expect(Object.isFrozen(rows)).toBe(true);
   expect(evaluateCallCount).toBe(1);
 });
+test("caption region with zero rows logs one redacted role/name snapshot; query string ignored", async () => {
+  let executablePath: string | undefined;
+  if (process.env.PLAYWRIGHT_CHROME_PATH) executablePath = process.env.PLAYWRIGHT_CHROME_PATH;
+  else if (existsSync("/usr/bin/google-chrome")) executablePath = "/usr/bin/google-chrome";
+  const browser = await chromium.launch(executablePath ? { executablePath } : {});
+  const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const page = await browser.newPage();
+    const body = '<!doctype html><meta charset="utf-8"><button aria-label="Leave call">Leave</button><button aria-label="Account owner@example.com">x</button><div role="region" aria-label="Captions"></div>';
+    await page.route("**/*", (route) => route.fulfill({ status: 200, contentType: "text/html", body }));
+    await page.goto(CANONICAL + "?authuser=0");
+    const signal = new AbortController().signal;
+    for (let i = 0; i < 25; i++) expect(await readMeetCaptionRows(page, { meetingUrl: CANONICAL }, signal, () => true)).toEqual([]);
+    const logs = spy.mock.calls.map((c) => String(c[0])).filter((s) => s.startsWith("[meet-diagnostic]"));
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain("0 rows");
+    expect(logs[0]).toContain("region: Captions");
+    expect(logs[0]).toContain("[email]");
+    expect(logs[0]).not.toContain("owner@example.com");
+    await page.locator('[role="region"]').evaluate((el: { innerHTML: string }) => { el.innerHTML = "<div><div>Dana</div><div>structural caption</div></div>"; });
+    expect(await readMeetCaptionRows(page, { meetingUrl: CANONICAL }, signal, () => true)).toEqual([{ rowIndex: 0, speaker: "Dana", text: "structural caption", verified: false }]);
+  } finally {
+    spy.mockRestore();
+    await browser.close();
+  }
+}, 30000);

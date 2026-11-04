@@ -165,4 +165,24 @@ describe("meet-worker-bridge stage2", () => {
     await f.bridge.stop(f.key, f.room);
     expect(closed).toBe(1);
   });
+  it("F a 409 meeting mismatch skips that caption and keeps the worker listening", async () => {
+    const svc = createMeetingRoomService({ env: { SECOND_SEAT_TEST_MODE: "1" }, conversationInput: true, candidateAutoDispatch: false, sessionPolicy: true, now: () => 1000 });
+    const headers: Record<string, string> = { host: "127.0.0.1:4174" }; const key = "owner-browser";
+    const room = svc.open("", headers, key).roomId;
+    let ingests = 0;
+    const wrapped: typeof svc = { ...svc, ingestConversationAs: (k: string | null, r: unknown, ev: unknown) => { ingests++; if (ingests === 1) return { ...svc.ingestConversationAs("nobody", r, ev), status: 409 }; return svc.ingestConversationAs(k, r, ev); } };
+    const entered = deferred<Scope>();
+    let stops = 0;
+    const bridge = createMeetWorkerBridge({ service: wrapped, now: () => 1000, startCapture: (scope: Scope): Promise<Capture> => { entered.resolve(scope); return Promise.resolve({ sample: () => Promise.resolve([{ event: { version: 1, meetingId: scope.binding.meetingId, utteranceId: "u1", sequence: 1, revision: 1, speaker: "Alice", text: "skipped row" }, verified: false }, { event: { version: 1, meetingId: scope.binding.meetingId, utteranceId: "u2", sequence: 1, revision: 1, speaker: "Alice", text: "kept row" }, verified: false }]), stop: () => { stops++; return Promise.resolve(); } }); } });
+    expect(bridge.connect(key, room, "https://meet.google.com/abc-defg-hij", "Second Seat").status).toBe(202);
+    await entered.promise; await Promise.resolve(); await Promise.resolve();
+    expect(bridge.status(key, room).body.status).toBe("listening");
+    const r = await bridge.sample(key, room);
+    expect(r.body.accepted).toBe(1);
+    expect(ingests).toBe(2);
+    expect(bridge.status(key, room).body.status).toBe("listening");
+    expect(stops).toBe(0);
+    await bridge.stop(key, room);
+    expect(stops).toBe(1);
+  });
 });

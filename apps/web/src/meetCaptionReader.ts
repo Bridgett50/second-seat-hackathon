@@ -10,12 +10,12 @@ const m1=path.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})$/);
 const m2=path.match(/^\/meet\/([a-z]{3}-[a-z]{4}-[a-z]{3})$/);
 if(m1)code=m1[1]??null;else if(m2)code=m2[1]??null;else return null;
 if(code===null)return null;
-if(p.search===""||p.search==="?pli=1")return `https://meet.google.com/${code}`;
-return null;
+// match the meeting code only; the query string (authuser, hl, pli, ...) is ignored
+return `https://meet.google.com/${code}`;
 }catch{return null;}
 }
 export const MEET_CAPTION_REGION_SELECTOR='[role="region"][aria-label="Captions"]';
-export const MEET_CAPTION_REGION_ALT_SELECTOR='[role="region"][aria-label*="captions" i]';
+export const MEET_CAPTION_REGION_ALT_SELECTOR='[role="region"][aria-label*="captions" i]:not([aria-label*="translat" i]):not([aria-label*="gemini" i])';
 type DiagLoc={getAttribute(name:string):Promise<string|null>;innerText():Promise<string>};
 export type MeetDiagPage={locator(selector:string):{all():Promise<DiagLoc[]>}};
 export function redactMeetDiagnostic(s:string):string{return s.replace(/[^\s@()<>,;:"'\[\]]+@[^\s@()<>,;:"'\[\]]+/g,"[email]");}
@@ -35,11 +35,13 @@ lines.push(role+": "+(n===""?"(unnamed)":n));
 }
 return lines.join("\n");
 }
-let meetDiagnosticLogged=false;
-export async function logMeetUiDiagnosticOnce(page:MeetDiagPage,log:(s:string)=>void=(s)=>{console.log(s);}):Promise<void>{
-if(meetDiagnosticLogged)return;
-meetDiagnosticLogged=true;
-try{log("[meet-diagnostic] caption UI controls (role: name):\n"+await collectMeetUiDiagnostic(page));}catch{}
+const meetDiagnosticLogged=new Set<string>();
+let zeroRowReads=0;
+export async function logMeetUiDiagnosticOnce(page:MeetDiagPage,log:(s:string)=>void=(s)=>{console.log(s);},tag:"enable"|"zero-rows"="enable"):Promise<void>{
+if(meetDiagnosticLogged.has(tag))return;
+meetDiagnosticLogged.add(tag);
+const head=tag==="zero-rows"?"[meet-diagnostic] caption region present but 0 rows; caption UI controls (role: name):\n":"[meet-diagnostic] caption UI controls (role: name):\n";
+try{log(head+await collectMeetUiDiagnostic(page));}catch{}
 }
 type CapsuleNode={
 readonly children:ArrayLike<CapsuleNode>;
@@ -82,7 +84,12 @@ if(regionCount!==1){void logMeetUiDiagnosticOnce(page);return fail();}
 if(!guard())return fail();
 const regionVisible=await region.isVisible();
 if(!guard())return fail();
-if(!regionVisible)return fail();
+const zeroRows=async():Promise<readonly Row[]>=>{
+zeroRowReads+=1;
+if(zeroRowReads===20)await logMeetUiDiagnosticOnce(page,undefined,"zero-rows");
+return empty();
+};
+if(!regionVisible)return zeroRows();
 if(!guard())return fail();
 const raw=await region.evaluate((regionEl: CapsuleNode)=>{
 type StyleBag={readonly display:string;readonly visibility:string};
@@ -96,6 +103,20 @@ if(s.visibility==="hidden")return false;
 return true;
 };
 const rows=Array.from(regionEl.children).filter((e:CapsuleNode)=>e.tagName==="DIV"&&e.classList.contains("nMcdL"));
+if(rows.length===0){
+// structure-based fallback: a visible row DIV with >=2 visible DIV children (speaker block first, text block last)
+const kidsOf=(n:CapsuleNode):CapsuleNode[]=>Array.from(n.children).filter((k:CapsuleNode)=>k.tagName==="DIV"&&isVis(k));
+return Array.from(regionEl.children).filter((e:CapsuleNode)=>e.tagName==="DIV"&&isVis(e)&&kidsOf(e).length>=2).map((r:CapsuleNode)=>{
+const kids=kidsOf(r);
+const sh=kids[0]??null;
+const st=kids[kids.length-1]??null;
+if(sh===null||st===null)return null;
+const speaker=(sh.innerText.split("\n")[0]??"").trim();
+const text=st.innerText.trim();
+if(!speaker||!text)return null;
+return {speaker,text};
+});
+}
 return rows.map((r: CapsuleNode)=>{
 const headers=r.querySelectorAll(":scope > div.adE6rb");
 const texts=r.querySelectorAll(":scope > div.ygicle");
@@ -119,7 +140,8 @@ return {speaker,text};
 });
 if(!guard())return fail();
 if(!raw)return fail();
-if(raw.length===0)return empty();
+if(raw.length===0)return zeroRows();
+zeroRowReads=0;
 if(raw.length>30)return fail();
 const out:{rowIndex:number;speaker:string;text:string;verified:false}[]=[];
 for(let i=0;i<raw.length;i++){

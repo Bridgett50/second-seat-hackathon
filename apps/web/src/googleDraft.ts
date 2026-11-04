@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 export type GoogleDraftPackage = Readonly<{ to: string; subject: string; body: string }>;
-type ReceiptDenied = Readonly<{ status: "denied"; packageHash?: string }>;
-type ReceiptUnconfirmed = Readonly<{ status: "unconfirmed"; packageHash: string }>;
+type ReceiptDenied = Readonly<{ status: "denied"; packageHash?: string; reason?: string }>;
+type ReceiptUnconfirmed = Readonly<{ status: "unconfirmed"; packageHash: string; reason?: string }>;
+const RECONNECT_GMAIL = "Reconnect Gmail";
 type ReceiptCreated = Readonly<{ status: "created"; draftId: string; messageId: string; packageHash: string }>;
 type Receipt = ReceiptDenied | ReceiptUnconfirmed | ReceiptCreated;
 const MAX_BROWSER_KEY = 256, MAX_TOKEN = 8192, MAX_ID = 512;
@@ -104,7 +105,7 @@ export function createGoogleDraftAdapter(deps: {
     const init: RequestInit = { method: "POST", redirect: "error", headers: { Authorization: "", "Content-Type": "application/json" }, signal: signal as AbortSignal, body: bodyStr };
     let token: string | null;
     try { token = getToken(browserKey as string); } catch { return denied({ packageHash: pkgHash }); }
-    if (typeof token !== "string" || !validToken(token)) return denied({ packageHash: pkgHash });
+    if (typeof token !== "string" || !validToken(token)) { const reconnect: ReceiptDenied = Object.freeze({ status: "denied", packageHash: pkgHash, reason: RECONNECT_GMAIL }); return reconnect; }
     (init.headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
     let cur: boolean; try { cur = isCurrent(browserKey as string, pkgHash); } catch { return denied({ packageHash: pkgHash }); }
     if (!cur) return denied({ packageHash: pkgHash });
@@ -118,7 +119,11 @@ export function createGoogleDraftAdapter(deps: {
     let resp: Response;
     try { resp = await fetcher("https://gmail.googleapis.com/gmail/v1/users/me/drafts", init as RequestInit); } catch { return Object.freeze({ status: "unconfirmed", packageHash: pkgHash } as const); }
     let ok: boolean; try { ok = resp.ok; } catch { return Object.freeze({ status: "unconfirmed", packageHash: pkgHash } as const); }
-    if (!ok) return Object.freeze({ status: "unconfirmed", packageHash: pkgHash } as const);
+    if (!ok) {
+      let code = 0; try { code = resp.status; } catch { code = 0; }
+      const r: ReceiptUnconfirmed = code === 401 ? Object.freeze({ status: "unconfirmed", packageHash: pkgHash, reason: RECONNECT_GMAIL }) : Object.freeze({ status: "unconfirmed", packageHash: pkgHash });
+      return r;
+    }
     let j: unknown; try { j = await resp.json(); } catch { return Object.freeze({ status: "unconfirmed", packageHash: pkgHash } as const); }
     try {
       if (typeof j !== "object" || j === null) throw new Error("bad");

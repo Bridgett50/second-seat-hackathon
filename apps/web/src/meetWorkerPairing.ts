@@ -3,7 +3,7 @@ export type MeetWorkerBinding = Readonly<{ roomId: string; ownerId: string; meet
 type Deps = { readBinding: (callerKey: string | null, roomId: unknown) => MeetWorkerBinding | null; now?: () => number; };
 type ApproveResult = Readonly<{ token: string; expiresAt: number; binding: MeetWorkerBinding; meetingUrl: string; displayName: string; }>;
 type ConsumeResult = Readonly<{ binding: MeetWorkerBinding; meetingUrl: string; displayName: string; isCurrent(): boolean; revoke(): void; }>;
-const TTL_MS = 120_000; const LEASE_MS = 1_800_000; const MAX_LIVE = 128;
+const TTL_MS = 120_000; const LEASE_MS = 7_200_000; const MAX_LIVE = 128;
 const MEET_RE = /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
 function isNonBlankString(v: unknown): v is string { return typeof v === "string" && v.trim().length > 0; }
 function isValidDisplayName(v: unknown): v is string {
