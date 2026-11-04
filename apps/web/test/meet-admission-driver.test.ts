@@ -46,7 +46,7 @@ it("synthetic admission with redirect regression", async () => {
         await route.abort();
       });
       const r2 = await driver(page, scope, new AbortController().signal);
-      expect(r2).toBe(false); expect(traces).toEqual(["https://meet.google.com/"]); expect(page.url()).toBe("https://meet.google.com/");
+      expect(r2).toBe(false); expect(traces).toEqual([A]); expect(page.url()).toBe(A);
       await ctx.close();
     }
     ctx = await browser.newContext();
@@ -63,7 +63,7 @@ it("synthetic admission with redirect regression", async () => {
       });
       const r3 = await driver(page, scope, new AbortController().signal);
       const joins3 = await page.locator("body").getAttribute("data-joins");
-      expect(r3).toBe(false); expect(joins3).toBe("0"); expect(traces).toEqual(["https://meet.google.com/", A]); expect(page.url()).toBe(B);
+      expect(r3).toBe(false); expect(joins3).toBe("0"); expect(traces).toEqual([A]); expect(page.url()).toBe(B);
       await ctx.close();
     }
     ctx = await browser.newContext();
@@ -107,7 +107,7 @@ it("real chromium: owner account aria-label is token-bounded", async () => {
         await route.abort();
       });
       const r = await driver(page, scope, new AbortController().signal);
-      expect(r).toBe(false); expect(traces).toEqual(["https://meet.google.com/"]); expect(page.url()).toBe("https://meet.google.com/");
+      expect(r).toBe(false); expect(traces).toEqual([A]); expect(page.url()).toBe(A);
       await ctx.close();
     }
     {
@@ -122,9 +122,35 @@ it("real chromium: owner account aria-label is token-bounded", async () => {
       });
       const r = await driver(page, scope, new AbortController().signal);
       const joins = await page.locator("body").getAttribute("data-joins");
-      expect(r).toBe(true); expect(joins).toBe("1"); expect(traces).toEqual(["https://meet.google.com/", A]);
+      expect(r).toBe(true); expect(joins).toBe("1"); expect(traces).toEqual([A]);
       await ctx.close();
     }
+  } finally { await browser.close(); }
+}, 25000);
+it("real chromium: signed-out meeting page waits and never joins as guest", async () => {
+  const browser = await chromium.launch({ headless: true, timeout: 10000, ...(chromePath !== undefined ? { executablePath: chromePath } : {}) });
+  try {
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 1000, ownerSignInTimeoutMs: 1500 });
+    const scope = { meetingUrl: A, displayName: "Bridgett AI twin" };
+    const guest = `<!doctype html><html><body data-asks="0" data-signins="0"><input aria-label="Your name" value=""><button id="ask">Ask to join</button><button id="si">Sign in</button><script>document.getElementById("ask").addEventListener("click",()=>{document.body.dataset.asks="1"});document.getElementById("si").addEventListener("click",()=>{document.body.dataset.signins="1"});<\/script></body></html>`;
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    const traces: string[] = [];
+    await page.route("**/*", async (route) => {
+      const u = route.request().url();
+      traces.push(u);
+      if (u === A) { await route.fulfill({ status: 200, contentType: "text/html", body: guest }); return; }
+      await route.abort();
+    });
+    const t0 = Date.now();
+    const r = await driver(page, scope, new AbortController().signal);
+    const waited = Date.now() - t0;
+    const asks = await page.locator("body").getAttribute("data-asks");
+    const signins = await page.locator("body").getAttribute("data-signins");
+    const typed = await page.getByLabel("Your name").inputValue();
+    expect(r).toBe(false); expect(asks).toBe("0"); expect(signins).toBe("0"); expect(typed).toBe(""); expect(traces).toEqual([A]); expect(page.url()).toBe(A);
+    expect(waited).toBeGreaterThanOrEqual(1000);
+    await ctx.close();
   } finally { await browser.close(); }
 }, 25000);
 it("regression: email wait that navigates to different meeting must not join", async () => {
@@ -133,9 +159,9 @@ it("regression: email wait that navigates to different meeting must not join", a
   let joinClicks = 0;
   const fakePage = {
     goto: async (u: string) => { gotoCount += 1; url = u; },
-    url: () => gotoCount === 1 ? "https://meet.google.com/" : url,
+    url: () => url,
     getByText: () => ({
-      waitFor: async () => { if (gotoCount >= 2) url = B; },
+      waitFor: async () => { if (gotoCount >= 1) url = B; },
       isVisible: async () => true,
     }),
     getByRole: (_role: string, opts: { name: string; exact: boolean }) => {
@@ -145,7 +171,7 @@ it("regression: email wait that navigates to different meeting must not join", a
       return { count: () => 0 } as unknown as ReturnType<Page["getByRole"]>;
     },
   };
-  const driver = createAuthenticatedMeetDriver({expectedOwnerEmail: "owner@example.test"});
+  const driver = createAuthenticatedMeetDriver({expectedOwnerEmail: "owner@example.test", timeoutMs: 1000, ownerSignInTimeoutMs: 500});
   const result = await driver(fakePage as unknown as Page, {meetingUrl: A, displayName: 'Bridgett AI twin (test)'}, new AbortController().signal);
   expect(result).toBe(false);
   expect(joinClicks).toBe(0);
@@ -156,7 +182,7 @@ it('regression: explicit owner transfer permission required to click Switch here
     let gotoCount = 0;
     return ({
       goto: async () => { gotoCount += 1; },
-      url: () => gotoCount <= 1 ? "https://meet.google.com/" : A,
+      url: () => gotoCount >= 1 ? A : "",
     getByText: () => ({ waitFor: async () => {}, isVisible: () => true }),
     getByRole: (_r: unknown, o?: { name?: string }) => {
       if (o?.name === 'Switch here') return { count: () => 1, isVisible: () => true, click: async () => { clicks++; } } as unknown as ReturnType<Page['getByRole']>;
@@ -186,7 +212,7 @@ it('blocks on Join ready before counting or clicking', async () => {
   let gotoCount = 0;
   const page = {
     goto: async () => { gotoCount += 1; },
-    url: () => gotoCount <= 1 ? "https://meet.google.com/" : A,
+    url: () => gotoCount >= 1 ? A : "",
     getByText: (text: string, _opts?: { exact?: boolean }) => ({
       waitFor: async () => {},
       isVisible: async () => true,
@@ -214,7 +240,7 @@ it('blocks on Join ready before counting or clicking', async () => {
 it('allows only google meet pli=1 without authuser/hash/cross-meeting', async () => {
   const A = 'https://meet.google.com/abc-defg-hij';
   const B = 'https://meet.google.com/xyz-uvwx-zzz';
-  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: 'owner@example.test' });
+  const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: 'owner@example.test', ownerSignInTimeoutMs: 300 });
   const scope = { meetingUrl: A, displayName: 'Bridgett AI twin (test)' };
   const signal = new AbortController().signal;
   const cases: [string, boolean][] = [
@@ -230,7 +256,7 @@ it('allows only google meet pli=1 without authuser/hash/cross-meeting', async ()
     let gotoCount = 0;
     const fake = {
       goto: async () => { gotoCount += 1; },
-      url: () => gotoCount <= 1 ? "https://meet.google.com/" : currentCase,
+      url: () => gotoCount >= 1 ? currentCase : "",
       getByText: (_t: string) => ({ waitFor: async () => {}, isVisible: async () => true }),
       getByRole: (role: string, opts?: { name?: string; exact?: boolean }) => {
         const name = opts?.name ?? '';

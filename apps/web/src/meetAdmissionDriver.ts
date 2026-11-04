@@ -61,13 +61,15 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       });
     };
     try {
-      await page.goto("https://meet.google.com/", { waitUntil: "domcontentloaded", timeout });
+      await page.goto(approvedUrl, { waitUntil: "domcontentloaded", timeout });
       const emailLoc = page.getByText(expectedEmail, { exact: true });
       const ownerText = emailLoc;
       const ownerBtn = page.getByRole("button", { name: ownerAccountNamePattern(expectedEmail) });
-      const onMeetHome = (): boolean => {
-        const u = new URL(page.url());
-        return u.origin === "https://meet.google.com" && !u.username && !u.password && !u.port && (u.pathname === "/" || u.pathname === "/landing");
+      const cont = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
+      const signInBtn = page.getByRole("button", { name: /^\s*sign in\b/i });
+      const askBtn = page.getByRole("button", { name: "Ask to join", exact: true });
+      const shown = async (l: MeetDriverLocator): Promise<boolean> => {
+        try { return (await l.count()) > 0 && (await l.isVisible()); } catch { return false; }
       };
       const deadline = Date.now() + ownerSignInTimeoutMs;
       const firstVisible = (a: MeetDriverLocator, b: MeetDriverLocator, left: number): Promise<void> => {
@@ -94,14 +96,22 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         if (signal.aborted) return false;
         const left = deadline - Date.now();
         if (left <= 0) return false;
-        const seen = await waitOrAbort(firstVisible(ownerText, ownerBtn, left));
-        if (!seen) return false;
+        const seen = await waitOrAbort(firstVisible(ownerText, ownerBtn, Math.min(left, 10000)));
         if (signal.aborted) return false;
-        let vt = false;
-        try { vt = await ownerText.isVisible(); } catch { vt = false; }
-        let vb = false;
-        try { vb = await ownerBtn.isVisible(); } catch { vb = false; }
-        if (onMeetHome() && (vt || vb)) break;
+        if (seen) {
+          let vt = false;
+          try { vt = await ownerText.isVisible(); } catch { vt = false; }
+          let vb = false;
+          try { vb = await ownerBtn.isVisible(); } catch { vb = false; }
+          if (isApprovedUrl() && (vt || vb)) break;
+        } else if (isApprovedUrl()) {
+          if (await shown(cont)) {
+            if (signal.aborted) return false;
+            await cont.click();
+            continue;
+          }
+          if (!(await shown(signInBtn)) && !(await shown(askBtn))) return false;
+        }
         const remain = deadline - Date.now();
         if (remain <= 0) return false;
         if (signal.aborted) return false;
@@ -109,9 +119,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         const ok = await pause(ms);
         if (!ok) return false;
       }
-      await page.goto(approvedUrl, { waitUntil: "domcontentloaded", timeout });
       if (!isApprovedUrl()) return false;
-      const cont = page.getByRole("button", { name: "Continue without microphone and camera", exact: true });
       try { await Promise.any([Promise.resolve().then(() => emailLoc.or(cont).waitFor({ state: "visible", timeout })), Promise.resolve().then(() => ownerBtn.waitFor({ state: "visible", timeout }))]); } catch {}
       if (signal.aborted) return false;
       if ((await cont.count()) === 1 && (await cont.isVisible())) {
