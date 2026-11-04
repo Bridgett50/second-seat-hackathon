@@ -25,6 +25,8 @@ import {
   renderMeetingRoomBody,
   renderMeetingRoomPage,
 } from "./meetingRoomRender.js";
+import type { createMeetWorkerHttp } from "./meetWorkerHttp.js";
+import type { createOwnerGoogleHttp } from "./ownerGoogleHttp.js";
 import type { createCandidateApprovalApi } from "./candidateApprovalApi.js";
 import { createCandidateRuntime } from "./candidateRuntime.js";
 
@@ -76,6 +78,12 @@ export const POST_FIELD_ALLOWLISTS: Readonly<Record<string, ReadonlySet<string>>
   "/api/meeting-room/conversation": new Set(["roomId", "event"]),
   "/api/meeting-room/conversation/finish": new Set(["roomId"]),
   "/api/meeting-room/candidate-context": new Set(["roomId", "action", "requestId", "version", "previewHash", "text"]),
+  "/api/meeting-room/worker/connect": new Set(["roomId", "meetingUrl", "displayName"]),
+  "/api/meeting-room/worker/stop": new Set(["roomId"]),
+  "/api/meeting-room/worker/correct": new Set(["roomId", "utteranceId", "expectedRevision", "text"]),
+  "/api/meeting-room/worker/prepare": new Set(["roomId"]),
+  "/api/google/connect": new Set(["purpose"]),
+  "/api/google/disconnect": new Set([]),
 };
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -146,6 +154,8 @@ export interface WebServerDeps {
   /** Meeting room service; defaults to a new one (tests inject a fake-transport service). */
   meetingRoom?: MeetingRoomService;
   candidateApprovalApi?: ReturnType<typeof createCandidateApprovalApi>;
+  meetWorkerHttp?: ReturnType<typeof createMeetWorkerHttp>;
+  googleHttp?: ReturnType<typeof createOwnerGoogleHttp>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -372,7 +382,7 @@ export function createWebServer(deps?: WebServerDeps) {
         }
         throw err;
       }
-      const html = renderMeetingRoomPage(snapshot, aiSelf?.url ?? null, contextApprovalApi !== undefined && snapshot.demo === null);
+      const html = renderMeetingRoomPage(snapshot, aiSelf?.url ?? null, contextApprovalApi !== undefined && snapshot.demo === null, deps?.meetWorkerHttp !== undefined && snapshot.demo === null, deps?.googleHttp !== undefined && snapshot.demo === null);
       const headers: Record<string, string> = {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
@@ -406,6 +416,103 @@ export function createWebServer(deps?: WebServerDeps) {
       }
       res.writeHead(404, { "content-type": "text/plain" });
       res.end("not found");
+      return;
+    }
+    if (url.pathname.startsWith("/api/google/")) {
+      res.setHeader("Cache-Control", "no-store");
+      if (!deps?.googleHttp) {
+        json(res, 404, { error: "Not found" });
+        return;
+      }
+      const api = deps.googleHttp;
+      void (async () => {
+        try {
+          let raw: string | null = null;
+          let parsed: unknown = null;
+          if (req.method === "POST") {
+            raw = await readBody(req);
+            try {
+              parsed = raw ? JSON.parse(raw) : null;
+            } catch {
+              parsed = null;
+            }
+            const validationError = validatePostBody(url.pathname, req.headers["content-type"] ?? "", raw, parsed);
+            if (validationError) {
+              json(res, 400, { error: validationError });
+              return;
+            }
+          }
+          const reply = await api({
+            method: req.method ?? "",
+            path: url.pathname,
+            callerKey: meetingRoomStoreKey(req.headers.cookie),
+            origin: typeof req.headers.origin === "string" ? req.headers.origin : null,
+            host: typeof req.headers.host === "string" ? req.headers.host : null,
+            remoteAddress: req.socket.remoteAddress ?? null,
+            body: parsed,
+            query: url.searchParams,
+          });
+          for (const [k, v] of Object.entries(reply.headers)) {
+            res.setHeader(k, v);
+          }
+          if (reply.status === 303) {
+            res.writeHead(reply.status, { "cache-control": "no-store" });
+            res.end();
+            return;
+          }
+          json(res, reply.status, reply.body);
+        } catch {
+          if (!res.writableEnded && !res.headersSent) {
+            json(res, 503, { error: "Unavailable" });
+          }
+        }
+      })();
+      return;
+    }
+    if (url.pathname.startsWith("/api/meeting-room/worker/")) {
+      res.setHeader("Cache-Control", "no-store");
+      if (!deps?.meetWorkerHttp) {
+        json(res, 404, { error: "Not found" });
+        return;
+      }
+      const api = deps.meetWorkerHttp;
+      void (async () => {
+        try {
+          let raw: string | null = null;
+          let parsed: unknown = null;
+          if (req.method === "POST") {
+            raw = await readBody(req);
+            try {
+              parsed = raw ? JSON.parse(raw) : null;
+            } catch {
+              parsed = null;
+            }
+            const validationError = validatePostBody(url.pathname, req.headers["content-type"] ?? "", raw, parsed);
+            if (validationError) {
+              json(res, 400, { error: validationError });
+              return;
+            }
+          }
+          const reply = await api({
+            method: req.method ?? "",
+            path: url.pathname,
+            callerKey: meetingRoomStoreKey(req.headers.cookie),
+            origin: typeof req.headers.origin === "string" ? req.headers.origin : null,
+            host: typeof req.headers.host === "string" ? req.headers.host : null,
+            remoteAddress: req.socket.remoteAddress ?? null,
+            body: parsed,
+            query: url.searchParams,
+          });
+          for (const [k, v] of Object.entries(reply.headers)) {
+            res.setHeader(k, v);
+          }
+          json(res, reply.status, reply.body);
+        } catch {
+          if (!res.writableEnded && !res.headersSent) {
+            json(res, 503, { error: "Unavailable" });
+          }
+        }
+      })();
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/meeting-room/candidate-context") {
