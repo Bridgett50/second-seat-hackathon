@@ -863,8 +863,8 @@ ${twinStage}
 ${CLIENT_JS}
 ${CANDIDATE_CONTEXT_CLIENT_JS}
 ${MEETING_INPUT_CLIENT_JS}
-${MEET_WORKER_CLIENT_JS}
-${GOOGLE_CONNECT_CLIENT_JS}
+${workerConfigured && snap.demo===null ? MEET_WORKER_CLIENT_JS : ''}
+${googleConfigured && snap.demo===null ? GOOGLE_CONNECT_CLIENT_JS : ''}
 </script>
 </body>
 </html>`;
