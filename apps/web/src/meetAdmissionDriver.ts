@@ -2,7 +2,8 @@ export type MeetDriverLocator = {
   waitFor(options?: { state?: "attached" | "detached" | "visible" | "hidden"; timeout?: number }): Promise<void>;
   count(): Promise<number>;
   isVisible(): Promise<boolean>;
-  click(options?: { timeout?: number }): Promise<void>;
+  click(options?: { timeout?: number; trial?: boolean }): Promise<void>;
+  press?(key: string, options?: { timeout?: number }): Promise<void>;
   or(locator: MeetDriverLocator): MeetDriverLocator;
 };
 export type MeetDriverPage = {
@@ -152,6 +153,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if (!mt && !mb) return fail("ownerCheck");
       if (signal.aborted) return false;
       let joinBtn = page.getByRole("button", { name: "Join now", exact: true });
+      let viaJoinHere = false;
       const switchBtn = page.getByRole("button", { name: "Switch here", exact: true });
       const otherWays = page.getByRole("button", { name: "Other ways to join", exact: true });
       step = "joinOptions.wait";
@@ -196,6 +198,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
           if (!(await shown(joinHere))) return fail("joinHere.visible");
           if (signal.aborted || !isApprovedUrl()) return false;
           joinBtn = joinHere;
+          viaJoinHere = true;
         }
       }
       const micOff = page.getByRole("button", { name: "Turn off microphone" });
@@ -220,8 +223,53 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if (signal.aborted) return false;
       if (!ft && !fb) return fail("ownerCheck");
       if (!isApprovedUrl()) return fail("urlRecheck");
-      step = "joinHere.click";
-      await joinBtn.click({ timeout: clickMs });
+      if (viaJoinHere) {
+        // The "Switch the call here" tip can appear seconds after the join list and cover Join here too.
+        // Wait up to 8 s for Join here too to be actionable (trial click) or for the tip's own Got it button.
+        const lateTip = page.getByText("Switch the call here", { exact: false });
+        const lateGotIt = page.getByRole("button", { name: "Got it", exact: true });
+        step = "joinHere.actionable";
+        let ready = false;
+        const until = Date.now() + 8000;
+        while (Date.now() < until) {
+          if (signal.aborted) return false;
+          try { await joinBtn.click({ timeout: 500, trial: true }); ready = true; } catch { ready = false; }
+          if (ready) break;
+          if (signal.aborted) return false;
+          if ((await shown(lateTip)) && (await lateGotIt.count()) === 1 && (await lateGotIt.isVisible())) {
+            if (!isApprovedUrl()) return fail("urlRecheck");
+            step = "gotIt.click";
+            await lateGotIt.click({ timeout: clickMs });
+            step = "joinHere.actionable";
+            continue;
+          }
+          if (!(await pause(250))) return false;
+        }
+        if (ready) {
+          if (signal.aborted) return false;
+          if (!isApprovedUrl()) return fail("urlRecheck");
+          step = "joinHere.click";
+          await joinBtn.click({ timeout: clickMs });
+        } else {
+          // Enter fallback: only after rechecking the owner, the URL, abort, mic off and that the twin has not already joined.
+          if (signal.aborted) return false;
+          let et = false; try { et = await ownerText.isVisible(); } catch { et = false; }
+          let eb = false; try { eb = await ownerBtn.isVisible(); } catch { eb = false; }
+          if (!et && !eb) return fail("ownerCheck");
+          if (!isApprovedUrl()) return fail("urlRecheck");
+          if ((await shown(micOff)) || (!twin && (await shown(camOff)))) return fail("micOff.confirm");
+          const leaveNow = page.getByRole("button", { name: "Leave call", exact: true });
+          if (!(await shown(leaveNow))) {
+            if (signal.aborted) return false;
+            if (joinBtn.press === undefined) return fail("joinHere.enter");
+            step = "joinHere.enter";
+            await joinBtn.press("Enter", { timeout: clickMs });
+          }
+        }
+      } else {
+        step = "joinHere.click";
+        await joinBtn.click({ timeout: clickMs });
+      }
       const leaveBtn = page.getByRole("button", { name: "Leave call", exact: true });
       step = "leave.wait";
       await leaveBtn.waitFor({ state: "visible", timeout });
