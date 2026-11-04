@@ -5,6 +5,8 @@ export type MeetDriverLocator = {
   click(options?: { timeout?: number; trial?: boolean }): Promise<void>;
   press?(key: string, options?: { timeout?: number }): Promise<void>;
   or(locator: MeetDriverLocator): MeetDriverLocator;
+  nth?(index: number): MeetDriverLocator;
+  getAttribute?(name: string, options?: { timeout?: number }): Promise<string | null>;
 };
 export type MeetDriverPage = {
   goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
@@ -12,6 +14,12 @@ export type MeetDriverPage = {
   getByRole(role: "button" | "link" | "menuitem", options?: { name?: string | RegExp; exact?: boolean }): MeetDriverLocator;
   getByText(text: string | RegExp, options?: { exact?: boolean }): MeetDriverLocator;
 };
+// Diagnostic only: mic control labels with anything shaped like an email removed, capped in length.
+export function redactMeetMicLabel(label: string): string {
+  return label.replace(/[^ <>()]*@[^ <>()]*/g, "[email]").slice(0, 80);
+}
+// Twin mode: a mic control whose name says the microphone is not live (never a Turn off microphone control).
+export const MEET_MIC_NOT_LIVE = /^(?!turn off microphone)(?=.*mic).*(turn on microphone|microphone is off|problem|blocked|permission|not found|not allowed)/i;
 export function ownerAccountNamePattern(email: string): RegExp {
   const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[\\s(<:,])${escaped}($|[\\s)>,])`, "i");
@@ -210,6 +218,25 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       const allowAv = page.getByRole("button", { name: "Allow microphone and camera", exact: true });
       const avPrompt = page.getByText("Do you want people to see and hear you?", { exact: false });
       const micBlocked = async (): Promise<boolean> => (await shown(micPermission)) || (await shown(micProblem)) || (await shown(allowAv)) || (await shown(avPrompt));
+      const micNotLive = page.getByRole("button", { name: MEET_MIC_NOT_LIVE });
+      // On a failed mic-off confirmation, log the mic-related control labels (redacted) so the live label can be matched.
+      const logMicControls = async (): Promise<void> => {
+        const names: string[] = [];
+        try {
+          const all = page.getByRole("button", { name: /mic/i });
+          const n = Math.min(await all.count(), 8);
+          for (let i = 0; i < n; i++) {
+            if (all.nth === undefined) break;
+            const one = all.nth(i);
+            const label = one.getAttribute === undefined ? null : await one.getAttribute("aria-label", { timeout: 1000 });
+            const muted = one.getAttribute === undefined ? null : await one.getAttribute("data-is-muted", { timeout: 1000 });
+            names.push("button:" + redactMeetMicLabel(label ?? "(no aria-label)") + (muted === null ? "" : " muted=" + redactMeetMicLabel(muted)));
+          }
+        } catch {
+          names.push("(unavailable)");
+        }
+        console.warn("[meet-step] mic controls: " + (names.length === 0 ? "none" : names.join(" | ")));
+      };
       let micTreatedOff = false;
       const micStillOn = async (): Promise<boolean> => (await shown(micOff)) && !(micTreatedOff && (await micBlocked()));
       if (await shown(micOff)) {
@@ -235,8 +262,8 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         await camOff.click({ timeout: clickMs });
       }
       if (!(await pause(500))) return false;
-      if ((await micStillOn()) || (!twin && (await shown(camOff)))) return fail("micOff.confirm");
-      if (twin && !(micTreatedOff && (await micBlocked())) && !(await shown(micMuted))) return fail("micOff.confirm");
+      if ((await micStillOn()) || (!twin && (await shown(camOff)))) { await logMicControls(); return fail("micOff.confirm"); }
+      if (twin && !(micTreatedOff && (await micBlocked())) && !(await shown(micMuted)) && !(await shown(micNotLive)) && !(!(await shown(micOff)) && (await shown(micPermission)))) { await logMicControls(); return fail("micOff.confirm"); }
       if (signal.aborted) return false;
       let ft = false; try { ft = await ownerText.isVisible(); } catch { ft = false; }
       let fb = false; try { fb = await ownerBtn.isVisible(); } catch { fb = false; }
@@ -277,7 +304,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
           let eb = false; try { eb = await ownerBtn.isVisible(); } catch { eb = false; }
           if (!et && !eb) return fail("ownerCheck");
           if (!isApprovedUrl()) return fail("urlRecheck");
-          if ((await micStillOn()) || (!twin && (await shown(camOff)))) return fail("micOff.confirm");
+          if ((await micStillOn()) || (!twin && (await shown(camOff)))) { await logMicControls(); return fail("micOff.confirm"); }
           const leaveNow = page.getByRole("button", { name: "Leave call", exact: true });
           if (!(await shown(leaveNow))) {
             if (signal.aborted) return false;

@@ -1,5 +1,5 @@
 import { it, expect, vi } from "vitest";
-import { createAuthenticatedMeetDriver, type MeetDriverPage, type MeetDriverLocator, createGuestMeetDriver, resolveMeetGuestName, type MeetGuestPage, type MeetGuestLocator } from "../src/meetAdmissionDriver.js";
+import { createAuthenticatedMeetDriver, MEET_MIC_NOT_LIVE, redactMeetMicLabel, type MeetDriverPage, type MeetDriverLocator, createGuestMeetDriver, resolveMeetGuestName, type MeetGuestPage, type MeetGuestLocator } from "../src/meetAdmissionDriver.js";
 import { createMeetAdmissionBrowser } from "../src/meetAdmissionBrowser.js";
 const A = "https://meet.google.com/abc-defg-hij";
 const SA = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(A)}`;
@@ -969,6 +969,99 @@ it("T35 Permission needed shown after a failed trial click counts the microphone
   } finally {
     vi.useRealTimers();
   }
+});
+function micLabelFake(labels: string[], live: boolean): { page: MeetDriverPage; clicks: string[] } {
+  const clicks: string[] = [];
+  const visible = new Set<string>(["text:owner@example.test", "button:Join now", ...labels]);
+  const nameOf = (k: string): string => k.slice(k.indexOf(":") + 1);
+  const matching = (role: string, name: string | RegExp | undefined, exact: boolean): string[] => [...visible].filter((k) => {
+    if (!k.startsWith(role + ":")) return false;
+    const n = nameOf(k);
+    if (name === undefined) return false;
+    if (typeof name !== "string") return name.test(n);
+    return exact ? n === name : n.toLowerCase().includes(name.toLowerCase());
+  });
+  const mk = (keys: () => string[]): MeetDriverLocator => {
+    const loc: MeetDriverLocator = {
+      waitFor() { return keys().length > 0 ? Promise.resolve() : Promise.reject(new Error("hidden")); },
+      count() { return Promise.resolve(keys().length); },
+      isVisible() { return Promise.resolve(keys().length > 0); },
+      click(o?: { timeout?: number; trial?: boolean }) {
+        const k = keys()[0];
+        if (k === undefined) return Promise.reject(new Error("hidden"));
+        if (o?.trial === true) return Promise.resolve();
+        clicks.push(k);
+        if (k === "button:Turn off microphone" && !live) { visible.delete(k); visible.add("button:Turn on microphone"); }
+        if (k === "button:Join now") visible.add("button:Leave call");
+        return Promise.resolve();
+      },
+      or(o: MeetDriverLocator) { return loc; },
+      nth(i: number) { return mk(() => keys().slice(i, i + 1)); },
+      getAttribute(name: string) { const k = keys()[0]; return Promise.resolve(k === undefined || name !== "aria-label" ? null : nameOf(k)); },
+    };
+    return loc;
+  };
+  const page: MeetDriverPage = {
+    goto() { return Promise.resolve(); },
+    url() { return A; },
+    getByRole(role: "button" | "link" | "menuitem", options?: { name?: string | RegExp; exact?: boolean }) { return mk(() => matching(role, options?.name, options?.exact === true)); },
+    getByText(text: string | RegExp, options?: { exact?: boolean }) { return mk(() => matching("text", text, options?.exact === true)); },
+  };
+  return { page, clicks };
+}
+for (const label of ["Turn on microphone", "Microphone permission is needed", "Microphone is off", "Microphone problem. Show more info", "Microphone blocked", "Microphone: Permission needed", "Microphone not found", "Microphone not allowed"]) {
+  it("T37 twin mode accepts the not-live mic control " + label, async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const f = micLabelFake(["button:" + label], false);
+      const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+      const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await p).toBe(true);
+      expect(f.clicks).toEqual(["button:Join now"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+}
+it("T38 twin mode accepts Permission needed on the mic row when no Turn off microphone is shown", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = micLabelFake(["text:Permission needed"], false);
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Join now"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T39 twin mode with a live Turn off microphone that never flips refuses and logs redacted mic controls", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = micLabelFake(["button:Turn off microphone", "button:Mic settings for owner@example.test"], true);
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual(["button:Turn off microphone"]);
+    const logged = warn.mock.calls.map((c) => c.map(String).join(" "));
+    expect(logged).toEqual(["[meet-step] mic controls: button:Turn off microphone | button:Mic settings for [email]", "[meet-step] failed: micOff.confirm"]);
+    expect(logged.join(" ")).not.toContain("@");
+    expect(f.clicks.filter((k) => /allow|switch here|gemini|translate/i.test(k))).toEqual([]);
+  } finally {
+    warn.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T40 the not-live pattern never matches Turn off microphone and the redactor strips emails", () => {
+  expect(MEET_MIC_NOT_LIVE.test("Turn off microphone")).toBe(false);
+  expect(MEET_MIC_NOT_LIVE.test("Turn off microphone (ctrl + d)")).toBe(false);
+  expect(MEET_MIC_NOT_LIVE.test("Allow microphone and camera")).toBe(false);
+  expect(MEET_MIC_NOT_LIVE.test("Turn on microphone")).toBe(true);
+  expect(redactMeetMicLabel("Microphone for a.b@example.test (owner)")).toBe("Microphone for [email] (owner)");
 });
 it("T36 microphone not blocked whose click times out still fails closed", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
