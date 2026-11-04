@@ -1244,9 +1244,9 @@ it("guest join: abort while waiting in the lobby cleans up the browser", async (
 });
 // Strict fake: like Playwright, isVisible, waitFor and click reject when the locator matches more than one element.
 // Keys ending in ~N are duplicate controls with the same accessible name.
-function strictFake(labels: string[], o: { micFlips: boolean; camFlips: boolean }): { page: MeetDriverPage; clicks: string[] } {
+function strictFake(labels: string[], o: { micFlips: boolean; camFlips: boolean; askOnly?: boolean }): { page: MeetDriverPage; clicks: string[]; visible: Set<string> } {
   const clicks: string[] = [];
-  const visible = new Set<string>(["text:owner@example.test", "text:owner@example.test~2", "button:Join now", "button:Join now~2", ...labels]);
+  const visible = new Set<string>(["text:owner@example.test", "text:owner@example.test~2", ...(o.askOnly === true ? ["button:Ask to join", "button:Ask to join~2"] : ["button:Join now", "button:Join now~2"]), ...labels]);
   const roleOf = (k: string): string => k.slice(0, k.indexOf(":"));
   const nameOf = (k: string): string => k.slice(k.indexOf(":") + 1).replace(/~[0-9]+$/, "");
   const matching = (role: string, name: string | RegExp | undefined, exact: boolean): string[] => [...visible].filter((k) => {
@@ -1308,7 +1308,7 @@ function strictFake(labels: string[], o: { micFlips: boolean; camFlips: boolean 
     getByRole(role: "button" | "link" | "menuitem", options?: { name?: string | RegExp; exact?: boolean }) { return mk(() => matching(role, options?.name, options?.exact === true)); },
     getByText(text: string | RegExp, options?: { exact?: boolean }) { return mk(() => matching("text", text, options?.exact === true)); },
   };
-  return { page, clicks };
+  return { page, clicks, visible };
 }
 it("T41 twin mode with two matching not-live mic controls (live 3:41 PM labels) confirms mic off and joins", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -1506,6 +1506,127 @@ it("T52 twin mode with no twin camera in the menu refuses at camera.device and n
     expect(await p).toBe(false);
     expect(warn.mock.calls.some((c) => String(c[0]) === "[meet-step] failed: camera.device")).toBe(true);
     expect(f.clicks).toEqual(["button:Camera: Integrated Webcam"]);
+  } finally {
+    warn.mockRestore();
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+const TWIN_ASK = ["button:Turn on microphone", "button:Turn off camera", "button:Camera: " + WIN_TWIN, "button:Allow microphone and camera"];
+const NEVER = /allow|switch here|gemini|translate|join now|leave call/i;
+it("T53 verified owner on an Ask-only page (two Ask to join buttons) clicks Ask to join once, waits in the lobby, and is in the call once admitted", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    let t = 1000;
+    const f = strictFake(TWIN_ASK, { micFlips: false, camFlips: false, askOnly: true });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image", twinVideoPath: WIN_TWIN, now: () => t });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    void p.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(f.clicks).toEqual(["button:Ask to join"]);
+    t += 240000;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(settled).toBe(false);
+    expect(f.clicks).toEqual(["button:Ask to join"]);
+    f.visible.add("button:Leave call");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Ask to join"]);
+    expect(await f.page.getByRole("button", { name: "Leave call", exact: true }).isVisible()).toBe(true);
+    expect(log.mock.calls.some((c) => String(c[0]) === "[meet-step] asked to join; waiting for admission")).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T54 Ask-only page without the expected owner email never clicks Ask to join", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const f = strictFake(TWIN_ASK, { micFlips: false, camFlips: false, askOnly: true });
+    f.visible.delete("text:owner@example.test");
+    f.visible.delete("text:owner@example.test~2");
+    f.visible.add("text:other@example.test");
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 5000, cameraMode: "twin-image", twinVideoPath: WIN_TWIN });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(await p).toBe(false);
+    expect(f.clicks).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("T55 abort while waiting in the lobby after Ask to join stops the wait and closes the browser", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = strictFake(TWIN_ASK, { micFlips: false, camFlips: false, askOnly: true });
+    let closeCalls = 0;
+    const launch = (): Promise<{ newContext(): Promise<{ newPage(): Promise<MeetDriverPage> }>; close(): Promise<void> }> => Promise.resolve({ newContext: () => Promise.resolve({ newPage: () => Promise.resolve(f.page) }), close: () => { closeCalls += 1; return Promise.resolve(); } });
+    const admit = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image", twinVideoPath: WIN_TWIN });
+    const transport = createMeetAdmissionBrowser<MeetDriverPage>({ meetingUrl: A, displayName: "Bridgett AI Twin (test)" }, { launch, admit });
+    const ac = new AbortController();
+    const p = transport.join(A, "Bridgett AI Twin (test)", ac.signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(f.clicks).toEqual(["button:Ask to join"]);
+    ac.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await p).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closeCalls).toBe(1);
+    expect(f.clicks).toEqual(["button:Ask to join"]);
+  } finally {
+    warn.mockRestore();
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T56 a denied request in the lobby fails fast with a meet-step tag and never clicks anything else", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    let t = 0;
+    const f = strictFake(TWIN_ASK, { micFlips: false, camFlips: false, askOnly: true });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image", twinVideoPath: WIN_TWIN, now: () => t });
+    let settled = false;
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    void p.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(settled).toBe(false);
+    t += 1000;
+    f.visible.add("text:Someone in the call denied your request to join");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await p).toBe(false);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual(["[meet-step] failed: lobby.denied"]);
+    expect(f.clicks).toEqual(["button:Ask to join"]);
+    expect(f.clicks.filter((k) => NEVER.test(k))).toEqual([]);
+  } finally {
+    warn.mockRestore();
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T57 nobody admits the twin within 5 minutes (injected clock): lobby.timeout, Ask to join clicked once", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    let t = 0;
+    const f = strictFake(TWIN_ASK, { micFlips: false, camFlips: false, askOnly: true });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image", twinVideoPath: WIN_TWIN, now: () => t });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    t += 300000;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await p).toBe(false);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual(["[meet-step] failed: lobby.timeout"]);
+    expect(f.clicks).toEqual(["button:Ask to join"]);
   } finally {
     warn.mockRestore();
     log.mockRestore();

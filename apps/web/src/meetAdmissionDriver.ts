@@ -54,7 +54,7 @@ export function ownerAccountNamePattern(email: string): RegExp {
   const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[\\s(<:,])${escaped}($|[\\s)>,])`, "i");
 }
-export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number; unrecognizedGraceMs?: number | undefined; cameraMode?: "off" | "twin-image" | undefined; twinVideoPath?: string | undefined }) {
+export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number; unrecognizedGraceMs?: number | undefined; cameraMode?: "off" | "twin-image" | undefined; twinVideoPath?: string | undefined; lobbyTimeoutMs?: number | undefined; now?: (() => number) | undefined }) {
   const expectedEmail = opts.expectedOwnerEmail;
   if (typeof expectedEmail !== "string" || expectedEmail.trim() === "" || expectedEmail.length > 320 || /[\x00-\x1F\x7F]/.test(expectedEmail)) {
     throw new Error("invalid expectedOwnerEmail");
@@ -70,6 +70,10 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
   let ownerSignInTimeoutMs = opts.ownerSignInTimeoutMs ?? timeout;
   if (!Number.isFinite(ownerSignInTimeoutMs) || !Number.isInteger(ownerSignInTimeoutMs) || ownerSignInTimeoutMs <= 0) throw new Error("invalid ownerSignInTimeoutMs");
   ownerSignInTimeoutMs = Math.min(300000, ownerSignInTimeoutMs);
+  // Ask to join (an external owner account): the lobby wait is capped at 5 minutes and read from an injectable clock.
+  const lobbyMs = opts.lobbyTimeoutMs ?? 300000;
+  if (!Number.isInteger(lobbyMs) || lobbyMs <= 0 || lobbyMs > 300000) throw new Error("invalid lobbyTimeoutMs");
+  const clock = opts.now ?? ((): number => Date.now());
   const graceMs = opts.unrecognizedGraceMs ?? 20000;
   if (!Number.isInteger(graceMs) || graceMs <= 0 || graceMs > 300000) throw new Error("invalid unrecognizedGraceMs");
   const scopeRe = /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
@@ -196,6 +200,9 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       let viaJoinHere = false;
       const switchBtn = visibleFirst(page.getByRole("button", { name: "Switch here", exact: true }));
       const otherWays = visibleFirst(page.getByRole("button", { name: "Other ways to join", exact: true }));
+      // An external account (the renamed twin Gmail) gets only "Ask to join"; it is clicked once, after every check below.
+      const askJoin = visibleFirst(page.getByRole("button", { name: "Ask to join", exact: true }));
+      let askOnly = false;
       step = "joinOptions.wait";
       if (allowTransfer) {
         await visibleFirst(joinBtn.or(switchBtn)).waitFor({ state: "visible", timeout });
@@ -203,7 +210,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         // An already expanded join list (Join here too) or a collapsed one (Other ways to join) also counts as ready.
         const joinHereMenu = visibleFirst(page.getByRole("menuitem", { name: "Join here too", exact: true }));
         const joinHereButton = visibleFirst(page.getByRole("button", { name: "Join here too", exact: true }));
-        if ((await firstOf([joinBtn, switchBtn, joinHereMenu, joinHereButton, otherWays], timeout)) < 0) return fail("joinOptions.wait");
+        if ((await firstOf([joinBtn, switchBtn, joinHereMenu, joinHereButton, otherWays, askJoin], timeout)) < 0) return fail("joinOptions.wait");
       }
       if (signal.aborted) return false;
       const cont2 = visibleFirst(page.getByRole("button", { name: "Continue without microphone and camera", exact: true }));
@@ -216,6 +223,9 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if (!(await shown(joinBtn))) {
         if (allowTransfer === true && (await shown(switchBtn))) {
           joinBtn = switchBtn;
+        } else if ((await shown(askJoin)) && !(await shown(switchBtn)) && !(await shown(otherWays)) && !(await shown(page.getByRole("menuitem", { name: "Join here too", exact: true }))) && !(await shown(page.getByRole("button", { name: "Join here too", exact: true })))) {
+          // Ask-only page: the owner, URL, mic and camera checks below still run before the single Ask to join click.
+          askOnly = true;
         } else {
           const joinHere = visibleFirst(page.getByRole("menuitem", { name: "Join here too", exact: true }).or(page.getByRole("button", { name: "Join here too", exact: true })));
           // Meet can show a "Switch the call here" tip over the join list; dismiss only that tip's own "Got it" button.
@@ -336,7 +346,26 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
       if (signal.aborted) return false;
       if (!ft && !fb) return fail("ownerCheck");
       if (!isApprovedUrl()) return fail("urlRecheck");
-      if (viaJoinHere) {
+      if (askOnly) {
+        // Refused, denied or removed: fail fast. Never types a guest name or credentials.
+        const lobbyRefused = page.getByText(/can.t join this video call|denied your request|removed from the (call|meeting)|no one responded/i);
+        if (signal.aborted) return false;
+        if (await shown(lobbyRefused)) return fail("lobby.denied");
+        step = "askToJoin.click";
+        await askJoin.click({ timeout: clickMs });
+        console.log("[meet-step] asked to join; waiting for admission");
+        const lobbyLeave = visibleFirst(page.getByRole("button", { name: "Leave call", exact: true }));
+        const lobbyUntil = clock() + lobbyMs;
+        step = "lobby.wait";
+        while (true) {
+          if (signal.aborted) return fail("lobby.aborted");
+          if (await shown(lobbyRefused)) return fail("lobby.denied");
+          if (!isApprovedUrl()) return fail("urlRecheck");
+          if (await shown(lobbyLeave)) break;
+          if (clock() >= lobbyUntil) return fail("lobby.timeout");
+          if (!(await pause(1000))) return fail("lobby.aborted");
+        }
+      } else if (viaJoinHere) {
         // The "Switch the call here" tip can appear seconds after the join list and cover Join here too.
         // Wait up to 8 s for Join here too to be actionable (trial click) or for the tip's own Got it button.
         const lateTip = page.getByText("Switch the call here", { exact: false });
