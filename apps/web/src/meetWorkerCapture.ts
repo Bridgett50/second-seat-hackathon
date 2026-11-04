@@ -302,7 +302,7 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
           return guest(p, sc, sg);
         };
       } else {
-        const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: capturedEmail, timeoutMs: 60000, allowOwnerTransfer: capturedAllowTransfer, ownerSignInTimeoutMs: 300000, unrecognizedGraceMs: capturedGrace, cameraMode: capturedCameraMode });
+        const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: capturedEmail, timeoutMs: 60000, allowOwnerTransfer: capturedAllowTransfer, ownerSignInTimeoutMs: 300000, unrecognizedGraceMs: capturedGrace, cameraMode: capturedCameraMode, twinVideoPath: opts.twinMedia?.videoPath });
         fn = async (p, sc, sg): Promise<boolean> => {
           if (!admitGuard()) return false;
           return driver(p, sc, sg);

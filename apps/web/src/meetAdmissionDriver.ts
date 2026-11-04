@@ -19,6 +19,28 @@ export type MeetDriverPage = {
 export function redactMeetMicLabel(label: string): string {
   return label.replace(/[^ <>()]*@[^ <>()]*/g, "[email]").slice(0, 80);
 }
+// Windows paths use the backslash separator; built from its char code so both separator styles are handled.
+const PATH_BACKSLASH = String.fromCharCode(92);
+// Last segment of a Windows or POSIX path.
+export function meetPathBasename(p: string): string {
+  const parts = p.split(PATH_BACKSLASH).join("/").split("/");
+  return parts[parts.length - 1] ?? "";
+}
+// Twin camera: Chrome names the file-backed fake camera "fake_device_N" or after the video file path (live 3:31 PM CT: a C: path to twin.y4m).
+// Matches "fake", ".y4m", or the basename of SECOND_SEAT_TWIN_VIDEO, case-insensitive.
+export function twinCameraNamePattern(twinVideoPath?: string): RegExp {
+  const base = twinVideoPath === undefined ? "" : meetPathBasename(twinVideoPath);
+  const safe = /^[A-Za-z0-9._ -]+$/.test(base) ? base.split("").map((c) => (/[A-Za-z0-9 _-]/.test(c) ? c : "[" + c + "]")).join("") : "";
+  return new RegExp("fake|[.]y4m" + (safe === "" ? "" : "|" + safe), "i");
+}
+// Diagnostic only: camera labels with any file path cut to its last segment (no user folders) and emails removed.
+export function redactMeetCameraLabel(label: string): string {
+  const norm = label.split(PATH_BACKSLASH).join("/");
+  const firstSlash = norm.indexOf("/");
+  if (firstSlash < 0) return redactMeetMicLabel(norm);
+  const wordStart = norm.lastIndexOf(" ", firstSlash) + 1;
+  return redactMeetMicLabel(norm.slice(0, wordStart) + ".../" + norm.slice(norm.lastIndexOf("/") + 1));
+}
 // Twin mode: a mic control whose name says the microphone is not live (never a Turn off microphone control).
 export const MEET_MIC_NOT_LIVE = /^(?!turn off microphone)(?=.*mic).*(turn on microphone|microphone is off|problem|blocked|permission|not found|not allowed)/i;
 // Playwright locators are strict: isVisible, waitFor and click throw when a locator matches more than one element.
@@ -32,7 +54,7 @@ export function ownerAccountNamePattern(email: string): RegExp {
   const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[\\s(<:,])${escaped}($|[\\s)>,])`, "i");
 }
-export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number; unrecognizedGraceMs?: number | undefined; cameraMode?: "off" | "twin-image" | undefined }) {
+export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string; timeoutMs?: number; allowOwnerTransfer?: boolean; ownerSignInTimeoutMs?: number; unrecognizedGraceMs?: number | undefined; cameraMode?: "off" | "twin-image" | undefined; twinVideoPath?: string | undefined }) {
   const expectedEmail = opts.expectedOwnerEmail;
   if (typeof expectedEmail !== "string" || expectedEmail.trim() === "" || expectedEmail.length > 320 || /[\x00-\x1F\x7F]/.test(expectedEmail)) {
     throw new Error("invalid expectedOwnerEmail");
@@ -43,6 +65,7 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
   const allowTransfer = opts.allowOwnerTransfer === true;
   // twin-image: keep the camera on (fake twin video), never press "Continue without...", and only turn the microphone off.
   const twin = opts.cameraMode === "twin-image";
+  const twinCamera = twinCameraNamePattern(opts.twinVideoPath);
   const timeout = t;
   let ownerSignInTimeoutMs = opts.ownerSignInTimeoutMs ?? timeout;
   if (!Number.isFinite(ownerSignInTimeoutMs) || !Number.isInteger(ownerSignInTimeoutMs) || ownerSignInTimeoutMs <= 0) throw new Error("invalid ownerSignInTimeoutMs");
@@ -256,22 +279,22 @@ export function createAuthenticatedMeetDriver(opts: { expectedOwnerEmail: string
         if (!(await shown(camDevice)) || camDevice.getAttribute === undefined) return null;
         try { return await camDevice.getAttribute("aria-label", { timeout: 1000 }); } catch { return null; }
       };
-      const logCamDevice = (label: string | null): void => { console.log("[meet-step] camera device: " + (label === null ? "(no camera picker)" : redactMeetMicLabel(label))); };
+      const logCamDevice = (label: string | null): void => { console.log("[meet-step] camera device: " + (label === null ? "(no camera picker)" : redactMeetCameraLabel(label))); };
       const twinCameraDevice = async (): Promise<boolean> => {
         const label = await camDeviceLabel();
         logCamDevice(label);
-        if (label === null || /fake/i.test(label)) return true;
+        if (label === null || twinCamera.test(label)) return true;
         if (signal.aborted || !isApprovedUrl()) return false;
         step = "camDevice.open";
         await camDevice.click({ timeout: clickMs });
-        const fakeItem = visibleFirst(page.getByRole("menuitemradio", { name: /fake/i }).or(page.getByRole("menuitem", { name: /fake/i })).or(page.getByRole("option", { name: /fake/i })));
+        const fakeItem = visibleFirst(page.getByRole("menuitemradio", { name: twinCamera }).or(page.getByRole("menuitem", { name: twinCamera })).or(page.getByRole("option", { name: twinCamera })));
         if (!(await shown(fakeItem))) return false;
         if (signal.aborted || !isApprovedUrl()) return false;
         step = "camDevice.select";
         await fakeItem.click({ timeout: clickMs });
         const after = await camDeviceLabel();
         logCamDevice(after);
-        return after !== null && /fake/i.test(after);
+        return after !== null && twinCamera.test(after);
       };
       let micTreatedOff = false;
       const micStillOn = async (): Promise<boolean> => (await shown(micOff)) && !(micTreatedOff && (await micBlocked()));

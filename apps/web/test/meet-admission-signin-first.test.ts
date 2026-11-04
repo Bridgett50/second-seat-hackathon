@@ -1,5 +1,5 @@
 import { it, expect, vi } from "vitest";
-import { createAuthenticatedMeetDriver, MEET_MIC_NOT_LIVE, redactMeetMicLabel, type MeetDriverPage, type MeetDriverLocator, createGuestMeetDriver, resolveMeetGuestName, type MeetGuestPage, type MeetGuestLocator } from "../src/meetAdmissionDriver.js";
+import { createAuthenticatedMeetDriver, MEET_MIC_NOT_LIVE, redactMeetMicLabel, twinCameraNamePattern, redactMeetCameraLabel, meetPathBasename, type MeetDriverPage, type MeetDriverLocator, createGuestMeetDriver, resolveMeetGuestName, type MeetGuestPage, type MeetGuestLocator } from "../src/meetAdmissionDriver.js";
 import { createMeetAdmissionBrowser } from "../src/meetAdmissionBrowser.js";
 const A = "https://meet.google.com/abc-defg-hij";
 const SA = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(A)}`;
@@ -1285,7 +1285,7 @@ function strictFake(labels: string[], o: { micFlips: boolean; camFlips: boolean 
         else if (n === "button:Turn off camera") swap("Turn off camera", "Turn on camera");
         else if (n === "button:Turn on camera" && o.camFlips) swap("Turn on camera", "Turn off camera");
         else if (n === "button:Join now") { visible.add("button:Leave call"); visible.add("button:Leave call~2"); }
-        else if ((roleOf(k) === "menuitemradio" || roleOf(k) === "option") && /fake/i.test(nameOf(k))) {
+        else if ((roleOf(k) === "menuitemradio" || roleOf(k) === "option") && /fake|y4m|twin/i.test(nameOf(k))) {
           for (const c of [...visible]) if (roleOf(c) === "button" && /^camera:/i.test(nameOf(c))) visible.delete(c);
           visible.add("button:Camera: " + nameOf(k));
         }
@@ -1437,6 +1437,75 @@ it("T48 twin mode with only a real webcam refuses at camera.device and never joi
     expect(await p).toBe(false);
     expect(warn.mock.calls.some((c) => String(c[0]) === "[meet-step] failed: camera.device")).toBe(true);
     expect(f.clicks.some((c) => /join now|allow/i.test(c))).toBe(false);
+  } finally {
+    warn.mockRestore();
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+// MSF32: live 3:31 PM CT the twin camera was listed under its video file path (a Windows path to twin.y4m), not "fake".
+const BS = String.fromCharCode(92);
+const WIN_TWIN = ["C:", "Users", "bri", "second-seat", "twin.y4m"].join(BS);
+it("T49 camera matcher: fake, .y4m and the SECOND_SEAT_TWIN_VIDEO basename (Windows or POSIX) match; a webcam does not; paths are redacted", () => {
+  expect(meetPathBasename(WIN_TWIN)).toBe("twin.y4m");
+  expect(meetPathBasename("/srv/media/ai-twin.mjpeg")).toBe("ai-twin.mjpeg");
+  expect(twinCameraNamePattern().test("Camera: " + WIN_TWIN)).toBe(true);
+  expect(twinCameraNamePattern().test("fake_device_0")).toBe(true);
+  expect(twinCameraNamePattern().test("Integrated Webcam")).toBe(false);
+  expect(twinCameraNamePattern().test("AI-TWIN.MJPEG")).toBe(false);
+  expect(twinCameraNamePattern(["D:", "media", "ai-twin.mjpeg"].join(BS)).test("Camera: AI-TWIN.MJPEG")).toBe(true);
+  expect(twinCameraNamePattern("/srv/media/ai-twin.mjpeg").test("ai-twinXmjpeg")).toBe(false);
+  expect(redactMeetCameraLabel("Camera: " + WIN_TWIN)).toBe("Camera: .../twin.y4m");
+  expect(redactMeetCameraLabel("Camera: /home/bri sanders/twin.y4m")).toBe("Camera: .../twin.y4m");
+  expect(redactMeetCameraLabel("Camera: Webcam (user@example.com)")).toBe("Camera: Webcam ([email])");
+});
+it("T50 twin mode on the twin.y4m file-path camera (Windows label) is accepted with no menu switch, and the log hides the user folder", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn on microphone", "button:Turn off camera", "button:Camera: " + WIN_TWIN, "button:Allow microphone and camera"], { micFlips: false, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image", twinVideoPath: WIN_TWIN });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Join now"]);
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("[meet-step] camera device: "));
+    expect(lines).toEqual(["[meet-step] camera device: Camera: .../twin.y4m"]);
+    expect(log.mock.calls.some((c) => String(c[0]).includes("Users"))).toBe(false);
+  } finally {
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T51 twin mode on a real webcam switches to the twin.y4m menu option and joins, never clicking Allow", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn on microphone", "button:Turn off camera", "button:Camera: Integrated Webcam", "menuitemradio:Integrated Webcam", "menuitemradio:" + WIN_TWIN, "button:Allow microphone and camera"], { micFlips: false, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image", twinVideoPath: "/srv/media/twin.y4m" });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(true);
+    expect(f.clicks).toEqual(["button:Camera: Integrated Webcam", "menuitemradio:" + WIN_TWIN, "button:Join now"]);
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("[meet-step] camera device: "));
+    expect(lines).toEqual(["[meet-step] camera device: Camera: Integrated Webcam", "[meet-step] camera device: Camera: .../twin.y4m"]);
+  } finally {
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
+it("T52 twin mode with no twin camera in the menu refuses at camera.device and never joins or clicks Allow", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = strictFake(["button:Turn on microphone", "button:Turn off camera", "button:Camera: Integrated Webcam", "menuitemradio:Integrated Webcam", "menuitemradio:USB Camera", "button:Allow microphone and camera"], { micFlips: false, camFlips: false });
+    const driver = createAuthenticatedMeetDriver({ expectedOwnerEmail: "owner@example.test", timeoutMs: 60000, ownerSignInTimeoutMs: 300000, cameraMode: "twin-image", twinVideoPath: WIN_TWIN });
+    const p = driver(f.page, { meetingUrl: A, displayName: "x" }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe(false);
+    expect(warn.mock.calls.some((c) => String(c[0]) === "[meet-step] failed: camera.device")).toBe(true);
+    expect(f.clicks).toEqual(["button:Camera: Integrated Webcam"]);
   } finally {
     warn.mockRestore();
     log.mockRestore();
