@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { readMeetCaptionRows } from "./meetCaptionReader.js";
+import { readMeetCaptionRows, MEET_CAPTION_REGION_SELECTOR, MEET_CAPTION_REGION_ALT_SELECTOR } from "./meetCaptionReader.js";
 const CANON = /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
 function parseMeetUrl(u: string): string | null {
   try {
@@ -52,7 +52,9 @@ export function createMeetCaptionBuffer(opts: { page: Page; meetingUrl: string; 
       const expectedRows: readonly { speaker: string; text: string }[] = rows.map((r) => ({ speaker: r.speaker, text: r.text }));
       let matched: { rowKeys: string[]; rows: { speaker: string; text: string }[]; counter: number } | null;
       try {
-        const region = (page as unknown as { locator: (s: string) => { evaluate: (fn: (el: unknown, arg: unknown) => unknown, arg: unknown) => Promise<unknown> } }).locator('[role="region"][aria-label="Captions"]');
+        const regionSel = (await page.locator(MEET_CAPTION_REGION_SELECTOR).count()) > 0 ? MEET_CAPTION_REGION_SELECTOR : MEET_CAPTION_REGION_ALT_SELECTOR;
+        if (!guard()) { stop(); return freezeEmpty(); }
+        const region = (page as unknown as { locator: (s: string) => { evaluate: (fn: (el: unknown, arg: unknown) => unknown, arg: unknown) => Promise<unknown> } }).locator(regionSel);
         if (!guard()) { stop(); return freezeEmpty(); }
         const res = await region.evaluate((regionEl: unknown, arg: unknown) => {
           const a = arg as { expectedRows: { speaker: string; text: string }[]; namespace: string };

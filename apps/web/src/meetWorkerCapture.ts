@@ -3,20 +3,16 @@ import { createAuthenticatedMeetDriver } from "./meetAdmissionDriver.js";
 import { createMeetAdmissionBrowser, type MeetProofBrowser } from "./meetAdmissionBrowser.js";
 import { createMeetAdmissionProof, type MeetAdmissionTransport } from "./meetAdmissionProof.js";
 import { createMeetCaptionBuffer } from "./meetCaptionBuffer.js";
+import { logMeetUiDiagnosticOnce, MEET_CAPTION_REGION_SELECTOR, MEET_CAPTION_REGION_ALT_SELECTOR } from "./meetCaptionReader.js";
 import type { MeetWorkerBinding } from "./meetWorkerPairing.js";
 type FactoryOpts = { expectedOwnerEmail: string; chromePath?: string; allowOwnerTransfer?: boolean; ownerUnrecognizedGraceMs?: number; launch?: () => Promise<MeetProofBrowser<Page>>; admit?: (page: Page, scope: Readonly<{ meetingUrl: string; displayName: string }>, signal: AbortSignal) => Promise<boolean>; enableCaptions?: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean>; };
 type Scope = { meetingUrl: string; displayName: string; binding: MeetWorkerBinding; isCurrent: () => boolean; };
 type CaptureHandle = Readonly<{ sample: ReturnType<typeof createMeetCaptionBuffer>["sample"]; stop: () => Promise<void>; }>;
 export class MeetCaptureStartError extends Error { readonly cleanupConfirmed: boolean; constructor(cleanupConfirmed: boolean) { super(cleanupConfirmed ? "Meet capture unavailable" : "Meet proof cleanup unconfirmed"); this.cleanupConfirmed = cleanupConfirmed; this.name = "MeetCaptureStartError"; } }
-export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope, externalSignal: AbortSignal) => Promise<CaptureHandle> {
-  const capturedEmail = opts.expectedOwnerEmail;
-  const capturedChromePath = opts.chromePath;
-  const capturedAllowTransfer = opts.allowOwnerTransfer === true;
-  const capturedLaunch = opts.launch;
-  const capturedAdmit = opts.admit;
-  const capturedGrace = opts.ownerUnrecognizedGraceMs;
-  const capturedEnableCaptions = opts.enableCaptions;
-  const defaultEnableCaptions = async (page: Page, signal: AbortSignal, isCurrent: () => boolean): Promise<boolean> => {
+type CapLoc = { count(): Promise<number>; isVisible(): Promise<boolean>; click(): Promise<void>; waitFor(options: { state: "visible"; timeout: number }): Promise<void>; getAttribute(name: string): Promise<string | null>; or(other: CapLoc): CapLoc };
+export type MeetCaptionsPage = { getByRole(role: "button" | "checkbox" | "switch" | "region", options: { name: string | RegExp; exact?: boolean }): CapLoc; getByText(text: string, options: { exact: boolean }): CapLoc; locator(selector: string): CapLoc };
+export async function enableMeetCaptions(page: MeetCaptionsPage, signal: AbortSignal, isCurrent: () => boolean, onFail: () => Promise<void> = async () => {}): Promise<boolean> {
+  const run = async (): Promise<boolean> => {
     const guard = (): boolean => !signal.aborted && isCurrent();
     if (!guard()) return false;
     try {
@@ -25,6 +21,19 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       if (!guard()) return false;
       if (count === 1) { const vis = await region.isVisible(); if (!guard()) return false; if (vis) return true; }
       if (!guard()) return false;
+      const live = /live captions/i;
+      const chip = page.getByRole("button", { name: live }).or(page.getByRole("checkbox", { name: live })).or(page.getByRole("switch", { name: live }));
+      const chipCount = await chip.count(); if (!guard()) return false;
+      if (chipCount > 1) return false;
+      if (chipCount === 1) {
+        if (!await chip.isVisible()) return false; if (!guard()) return false;
+        const pressed = await chip.getAttribute("aria-pressed"); if (!guard()) return false;
+        const checked = await chip.getAttribute("aria-checked"); if (!guard()) return false;
+        if (pressed !== "true" && checked !== "true") { await chip.click(); if (!guard()) return false; }
+        const anyRegion = page.locator(MEET_CAPTION_REGION_SELECTOR).or(page.locator(MEET_CAPTION_REGION_ALT_SELECTOR));
+        await anyRegion.waitFor({ state: "visible", timeout: 10000 }); if (!guard()) return false;
+        count = await anyRegion.count(); if (!guard()) return false; return count === 1;
+      }
       const toggle = page.getByRole("button", { name: "Captions and translation", exact: true }).or(page.getByRole("checkbox", { name: "Captions and translation", exact: true }));
       count = await toggle.count(); if (!guard()) return false; if (count !== 1) return false;
       if (!await toggle.isVisible()) return false; if (!guard()) return false;
@@ -39,6 +48,19 @@ export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope,
       const v2 = await region.isVisible(); if (!guard()) return false; return v2;
     } catch { return false; }
   };
+  const ok = await run();
+  if (!ok && !signal.aborted) { try { await onFail(); } catch {} }
+  return ok;
+}
+export function createLocalMeetCaptureFactory(opts: FactoryOpts): (scope: Scope, externalSignal: AbortSignal) => Promise<CaptureHandle> {
+  const capturedEmail = opts.expectedOwnerEmail;
+  const capturedChromePath = opts.chromePath;
+  const capturedAllowTransfer = opts.allowOwnerTransfer === true;
+  const capturedLaunch = opts.launch;
+  const capturedAdmit = opts.admit;
+  const capturedGrace = opts.ownerUnrecognizedGraceMs;
+  const capturedEnableCaptions = opts.enableCaptions;
+  const defaultEnableCaptions = (page: Page, signal: AbortSignal, isCurrent: () => boolean): Promise<boolean> => enableMeetCaptions(page, signal, isCurrent, () => logMeetUiDiagnosticOnce(page));
   const enableFn: (page: Page, signal: AbortSignal, isCurrent: () => boolean) => Promise<boolean> = capturedEnableCaptions ?? defaultEnableCaptions;
   return async (scope: Scope, externalSignal: AbortSignal): Promise<CaptureHandle> => {
     const capturedScopeMeetingUrl = scope.meetingUrl;

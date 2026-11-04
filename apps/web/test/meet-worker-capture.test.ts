@@ -1,7 +1,8 @@
 import { test, expect, vi } from "vitest";
 import type { Page } from "@playwright/test";
 import type { MeetProofBrowser } from "./../src/meetAdmissionBrowser.js";
-import { createLocalMeetCaptureFactory, MeetCaptureStartError } from "../src/meetWorkerCapture.js";
+import { createLocalMeetCaptureFactory, MeetCaptureStartError, enableMeetCaptions, type MeetCaptionsPage } from "../src/meetWorkerCapture.js";
+import { collectMeetUiDiagnostic, MEET_CAPTION_REGION_SELECTOR, MEET_CAPTION_REGION_ALT_SELECTOR } from "../src/meetCaptionReader.js";
 
 type D<T>={promise:Promise<T>;resolve:(v:T)=>void;reject:(e:unknown)=>void};
 function deferred<T>():D<T>{let r!:D<T>["resolve"],j!:D<T>["reject"];const p=new Promise<T>((a,b)=>{r=a;j=b});return{promise:p,resolve:r,reject:j}}
@@ -188,3 +189,100 @@ test("9 readiness modal forces decline before identity", async()=>{
   }
 });
 
+type FL = { count(): Promise<number>; isVisible(): Promise<boolean>; click(): Promise<void>; waitFor(o: { state: "visible"; timeout: number }): Promise<void>; getAttribute(n: string): Promise<string | null>; or(o: FL): FL };
+function capPage(init: { chip?: { role: string; attr: string; on: boolean }; oldUi?: boolean; regionOn?: boolean; noRegion?: boolean }): { page: MeetCaptionsPage; clicks: string[]; asked: string[] } {
+  const clicks: string[] = [];
+  const asked: string[] = [];
+  let regionOn = init.regionOn === true;
+  let menuOpen = false;
+  const chip = init.chip;
+  const orL = (a: FL, b: FL): FL => {
+    const l: FL = {
+      count: async () => (await a.count()) + (await b.count()),
+      isVisible: async () => (await a.isVisible()) || (await b.isVisible()),
+      click: async () => { if (await a.isVisible()) await a.click(); else await b.click(); },
+      waitFor: async () => { if (!(await a.isVisible()) && !(await b.isVisible())) throw new Error("timeout"); },
+      getAttribute: async (n: string) => ((await a.count()) > 0 ? a.getAttribute(n) : b.getAttribute(n)),
+      or: (o: FL) => orL(l, o),
+    };
+    return l;
+  };
+  const loc = (key: string, vis: () => boolean, attrs: () => Record<string, string> = () => ({}), onClick: () => void = () => {}): FL => {
+    const l: FL = {
+      count: async () => (vis() ? 1 : 0),
+      isVisible: async () => vis(),
+      click: async () => { clicks.push(key); onClick(); },
+      waitFor: async () => { if (!vis()) throw new Error("timeout"); },
+      getAttribute: async (n: string) => attrs()[n] ?? null,
+      or: (o: FL) => orL(l, o),
+    };
+    return l;
+  };
+  const page: MeetCaptionsPage = {
+    getByRole(role: "button" | "checkbox" | "switch" | "region", options: { name: string | RegExp; exact?: boolean }) {
+      const name = options.name;
+      asked.push(role + ":" + String(name));
+      if (role === "region" && name === "Captions") return loc("region:Captions", () => init.oldUi === true && regionOn);
+      if (name instanceof RegExp) {
+        if (chip && role === chip.role && name.test("Live captions")) return loc("chip:Live captions", () => true, () => ({ [chip.attr]: chip.on ? "true" : "false" }), () => { chip.on = true; regionOn = true; });
+        return loc(role + ":?", () => false);
+      }
+      if (name === "Captions and translation") return loc(role + ":" + name, () => init.oldUi === true && role === "button", () => ({}), () => { menuOpen = true; });
+      if (name === "Let Gemini take notes" || name === "Translate speech") return loc(role + ":" + name, () => true);
+      return loc(role + ":" + name, () => false);
+    },
+    getByText(text: string) {
+      return loc("text:" + text, () => text === "Turn on captions" && menuOpen, () => ({}), () => { regionOn = true; });
+    },
+    locator(selector: string) {
+      if (selector === MEET_CAPTION_REGION_SELECTOR) return loc("css:old-region", () => init.oldUi === true && regionOn);
+      if (selector === MEET_CAPTION_REGION_ALT_SELECTOR) return loc("css:alt-region", () => init.oldUi !== true && regionOn && init.noRegion !== true);
+      return loc("css:" + selector, () => false);
+    },
+  };
+  return { page, clicks, asked };
+}
+test("captions: Live captions chip that is off is clicked exactly once", async () => {
+  const f = capPage({ chip: { role: "button", attr: "aria-pressed", on: false } });
+  const onFail = vi.fn(async () => {});
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true, onFail)).toBe(true);
+  expect(f.clicks).toEqual(["chip:Live captions"]);
+  expect(onFail).not.toHaveBeenCalled();
+});
+test("captions: Live captions chip that is already on is not clicked", async () => {
+  const f = capPage({ chip: { role: "switch", attr: "aria-checked", on: true }, regionOn: true });
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true)).toBe(true);
+  expect(f.clicks).toEqual([]);
+});
+test("captions: old Captions and translation path still works when there is no chip", async () => {
+  const f = capPage({ oldUi: true });
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true)).toBe(true);
+  expect(f.clicks).toEqual(["button:Captions and translation", "text:Turn on captions"]);
+});
+test("captions: Gemini and Translate are never clicked or looked up; failure runs the diagnostic once", async () => {
+  const f = capPage({ chip: { role: "checkbox", attr: "aria-checked", on: true }, noRegion: true });
+  const onFail = vi.fn(async () => {});
+  expect(await enableMeetCaptions(f.page, new AbortController().signal, () => true, onFail)).toBe(false);
+  expect(f.clicks).toEqual([]);
+  expect(f.asked.some((a) => /gemini|translate/i.test(a))).toBe(false);
+  expect(onFail).toHaveBeenCalledTimes(1);
+});
+test("captions: diagnostic lists only role and name, redacts emails, and skips caption text", async () => {
+  const el = (label: string | null, text: string) => ({ getAttribute: async () => label, innerText: async () => text });
+  const page = {
+    locator(selector: string) {
+      if (selector.includes('"button"')) return { all: async () => [el("Google Account: Owner (owner@example.test)", "Owner owner@example.test"), el(null, "Live captions\nmore")] };
+      if (selector.includes('"switch"')) return { all: async () => [el("Translate speech", "")] };
+      if (selector.includes('"region"')) return { all: async () => [el("Captions", "Alice: secret caption words"), el(null, "Bob: another secret caption")] };
+      return { all: async () => [] };
+    },
+  };
+  const out = await collectMeetUiDiagnostic(page);
+  expect(out).toContain("button: Live captions");
+  expect(out).toContain("button: Google Account: Owner ([email])");
+  expect(out).toContain("switch: Translate speech");
+  expect(out).toContain("region: Captions");
+  expect(out).toContain("region: (unnamed)");
+  expect(out).not.toContain("@");
+  expect(out).not.toContain("secret caption");
+});

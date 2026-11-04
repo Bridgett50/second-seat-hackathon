@@ -14,6 +14,33 @@ if(p.search===""||p.search==="?pli=1")return `https://meet.google.com/${code}`;
 return null;
 }catch{return null;}
 }
+export const MEET_CAPTION_REGION_SELECTOR='[role="region"][aria-label="Captions"]';
+export const MEET_CAPTION_REGION_ALT_SELECTOR='[role="region"][aria-label*="captions" i]';
+type DiagLoc={getAttribute(name:string):Promise<string|null>;innerText():Promise<string>};
+export type MeetDiagPage={locator(selector:string):{all():Promise<DiagLoc[]>}};
+export function redactMeetDiagnostic(s:string):string{return s.replace(/[^\s@()<>,;:"'\[\]]+@[^\s@()<>,;:"'\[\]]+/g,"[email]");}
+export async function collectMeetUiDiagnostic(page:MeetDiagPage):Promise<string>{
+const kinds:[string,string][]=[["button",'button:not([role]), [role="button"]'],["checkbox",'input[type="checkbox"]:not([role]), [role="checkbox"]'],["switch",'[role="switch"]'],["region",'[role="region"]']];
+const lines:string[]=[];
+for(const [role,sel] of kinds){
+let els:DiagLoc[]=[];
+try{els=await page.locator(sel).all();}catch{els=[];}
+for(const el of els.slice(0,60)){
+let name:string|null=null;
+try{name=await el.getAttribute("aria-label");}catch{name=null;}
+if((name===null||name.trim()==="")&&role!=="region"){try{name=(await el.innerText()).split("\n")[0]??"";}catch{name=null;}}
+const n=redactMeetDiagnostic((name??"").replace(/\s+/g," ").trim()).slice(0,80);
+lines.push(role+": "+(n===""?"(unnamed)":n));
+}
+}
+return lines.join("\n");
+}
+let meetDiagnosticLogged=false;
+export async function logMeetUiDiagnosticOnce(page:MeetDiagPage,log:(s:string)=>void=(s)=>{console.log(s);}):Promise<void>{
+if(meetDiagnosticLogged)return;
+meetDiagnosticLogged=true;
+try{log("[meet-diagnostic] caption UI controls (role: name):\n"+await collectMeetUiDiagnostic(page));}catch{}
+}
 type CapsuleNode={
 readonly children:ArrayLike<CapsuleNode>;
 readonly tagName:string;
@@ -46,11 +73,12 @@ const leaveVisible=await leaveBtn.isVisible();
 if(!guard())return fail();
 if(!leaveVisible)return fail();
 if(!guard())return fail();
-const region=page.locator('[role="region"][aria-label="Captions"]');
+let region=page.locator(MEET_CAPTION_REGION_SELECTOR);
 if(!guard())return fail();
-const regionCount=await region.count();
+let regionCount=await region.count();
 if(!guard())return fail();
-if(regionCount!==1)return fail();
+if(regionCount===0){region=page.locator(MEET_CAPTION_REGION_ALT_SELECTOR);regionCount=await region.count();if(!guard())return fail();}
+if(regionCount!==1){void logMeetUiDiagnosticOnce(page);return fail();}
 if(!guard())return fail();
 const regionVisible=await region.isVisible();
 if(!guard())return fail();
