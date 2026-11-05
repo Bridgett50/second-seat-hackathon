@@ -2,6 +2,15 @@ Pre-existing: the idea, an earlier prototype, and my AI-self portrait. Built dur
 
 # Second Seat
 
+## Public demos
+
+- Final demo video (with voiceover, `main` `3922d0e`): https://drive.google.com/file/d/1fHH-3l52XmAqQQHZIogwGGM0O1gY2tw0/view
+  This is the verified demo recording. It includes a live Google Meet join with captions. The follow-up and Gmail draft path in that recording is labeled offline.
+- Hosted offline meeting-room demo: https://second-seat-offline-demo.onrender.com/meeting-room?demo=1
+  This hosted page is the scripted offline demo only. It does not join a live Meet call, and it does not send real Gmail.
+
+The founder story below describes that scripted path. Live Meet join is in the Drive recording, not on the hosted page.
+
 ## Founder story
 
 I'm a solo founder running Mo'ja Liquor and Loving Grace Technologies. There are days when I need to be in three different meetings at the exact same time. I can't clone myself, but I can build an AI twin to sit in the second seat.
@@ -60,7 +69,7 @@ SECOND_SEAT_MODE=live GLIMMER_BASE_URL=<your Modal Glimmer URL> META_API_KEY=<se
   pnpm --filter @second-seat/web serve
 ```
 
-Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The Oct 28 live run has an owner-attested run summary (`second-seat-live3-run-summary.md`, private). That is a recorded output, not a screen-recorded video. Rehearsals at `8c00c32` and on the November 15 prompt fix (#116) are owner-attested live calls; this repository does not independently verify those private summaries. The public link is demo mode with recorded examples. Video URL and user observations are still pending.
+Then choose **Live** in the header, or open http://localhost:4173/session?mode=live. If Live isn't configured, the page says so and stays Offline. Run `scripts/warmup.sh` first so the Glimmer container is warm. Live end-to-end was verified on Oct 28, 2026 on `main` at `0365fdb`: 3/3 runs passed against the real endpoints. Glimmer on a Modal A100 redacted in about 12.5 s, and Spark `muse-spark-1.3` wrote the brief in 13–19 s. All names, phones and emails were masked, and GPU cost was about $0.22. The Oct 28 live run has an owner-attested run summary (`second-seat-live3-run-summary.md`, private). That is a recorded output, not a screen-recorded video. Rehearsals at `8c00c32` and on the November 15 prompt fix (#116) are owner-attested live calls; this repository does not independently verify those private summaries. The public hosted page is the offline meeting-room demo linked under Public demos above. The screen-recorded demo video is the Drive file linked there (voiceover, `main` `3922d0e`). User observations are still pending.
 
 The image / SAM path is experimental. It is hidden from the UI and makes no calls unless `SECOND_SEAT_EXPERIMENTAL_IMAGES=1`.
 
@@ -146,8 +155,8 @@ The Glimmer Modal endpoint has no auth (F1). It is deployed only during owner-ru
 
 These are human tasks. They are not done by tests or by this repair:
 
-- Record the founder clip and the demo on a machine whose citation and clipboard checks have actually passed.
-- Keep user tryouts and the video URL pending until she supplies them.
+- Record the founder clip on a machine whose citation and clipboard checks have actually passed. The demo video is the Drive recording linked under Public demos.
+- User tryouts stay pending until she supplies them. The demo video is the Drive recording linked under Public demos above.
 - Review any X post herself before it is posted. Nothing here sends it.
 
 The recorded reviews (Opus and Codex, with Grok; see PROVENANCE.md and docs/engineering-log.md) covered the reviewed pull request heads and the test suites listed at those heads; they do not show that every intermediate commit was reviewed or that the full suite passed on every commit.
