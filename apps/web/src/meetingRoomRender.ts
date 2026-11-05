@@ -847,7 +847,26 @@ textarea{width:100%;font:inherit}
 pre{white-space:pre-wrap;word-break:break-word}
 button{margin:.25rem;padding:.45rem 1rem;font:inherit;border-radius:.5rem;border:1px solid #c8c8c8;background:#fff;color:#1a1a1a;cursor:pointer}
 button:disabled{opacity:.45;cursor:not-allowed}
-${THEME_CSS}</style>
+${THEME_CSS}
+/* Guided layout: hero, then Step 1 send the twin, Step 2 live transcript, Step 3 stop and review, Step 4 follow-up draft; developer panels last and muted. */
+main{display:flex;flex-direction:column;gap:.75rem}
+main>.ss-shell{order:0;background:linear-gradient(135deg,#fdf6ff,#eef4ff);border:1px solid #e3dcf5;border-radius:1rem;padding:1rem}
+main>.ss-shell h1::after{content:"Bridgett AI Twin joins your meeting, listens, and drafts the follow-up for your approval.";display:block;font-size:.95rem;font-weight:400;color:#555;margin-top:.25rem}
+main>#mr-integration-plugins{order:1}
+main>#mr-root{order:2;display:flex;flex-direction:column}
+#mr-root>section{order:6}
+#mr-root>section:has(#mr-meeting-heading){order:1}
+#mr-root>section:has(#mr-stream-heading){order:2}
+#mr-root>section:has(#mr-package-heading){order:3}
+#mr-root>section:has(#mr-plugins-heading){order:4}
+#mr-root>section:has(#mr-approval-heading){order:5}
+#mr-root>section:has(#mr-guidance-heading),#mr-root>section:has(#mr-takeover-heading),#mr-root>section:has(#mr-evidence-heading),#mr-root>section:has(#compare-input){order:9;opacity:.7;font-size:.9rem;background:#fafafa}
+#mr-root>section:has(#mr-guidance-heading)::before{content:"Advanced / evidence";display:block;font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:#777;margin-bottom:.25rem}
+#mr-meet-controls h2::before,#mr-meet-controls>h3::before{content:"Step 1 · Send your Twin to a meeting — ";color:#6b4bd8}
+#mr-stream-heading::before{content:"Step 2 · Live transcript — ";color:#6b4bd8}
+#mr-meet-review>h2::before,#mr-meet-review>h3::before{content:"Step 3 · Stop & review — ";color:#6b4bd8}
+#mr-package-heading::before{content:"Step 4 · Follow-up draft — ";color:#6b4bd8}
+</style>
 </head>
 <body data-ai-drafting="${aiConfigured && snap.demo === null ? "1" : "0"}" data-meet-worker="${workerConfigured && snap.demo === null ? "1" : "0"}" data-google-connect="${googleConfigured && snap.demo === null ? "1" : "0"}" data-google-draft="${googleDraftConfigured && workerConfigured && googleConfigured && snap.demo === null ? "1" : "0"}">
 <main>
